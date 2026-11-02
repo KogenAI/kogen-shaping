@@ -601,6 +601,7 @@ func (sh *shaping) shape(ctx context.Context, st *state) (int, error) {
 	role := sh.role
 
 	defs := agent.Defs(sh.mainTools()...)
+	defs = append(defs, dataStoresDef())
 	defs = append(defs, agent.Defs(agent.ProposeFilesTool, agent.SubmitTool)...)
 	if sh.cfg.ShapeWorkers.Enabled {
 		defs = append(defs, agent.Defs(agent.ShapeBatchTool)...)
@@ -846,6 +847,12 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 				}
 				sh.batchUsed = true
 				outputs = append(outputs, toolOutput(c, string(text)))
+			case c.Name == dataStoresTool:
+				text, err := sh.dataStores(c.Args())
+				if err != nil {
+					return outcome{}, usage, err
+				}
+				outputs = append(outputs, toolOutput(c, text))
 			case c.Name == agent.ProposeFilesTool:
 				text, err := sh.proposeFiles(c.Args())
 				if err != nil {
@@ -906,7 +913,7 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 // rules, and Kogen's actual feedback returns to the same session. Three invalid submissions in
 // a row end it like the native shaper.
 func (sh *shaping) converseExternal(ctx context.Context, blocks []any) (outcome, *extSession, error) {
-	stable := ShaperInstructions() + "\n\n" + externalNote + "\n\n" + blocksText(blocks)
+	stable := ShaperInstructions() + externalDataStoresGuidance + "\n\n" + externalNote + "\n\n" + blocksText(blocks)
 	x, err := startExternal(ctx, sh.ext, sh.extMax, sh.repo, sh.root, sh.s.Getenv("HOME"),
 		filepath.Join(sh.ev.Dir, "executor-shape"), sh.slug, sh.role, stable, "", schemaOf(agent.SubmitTool), sh.ev.Record,
 		func(e map[string]any) {
@@ -1341,6 +1348,11 @@ func (sh *shaping) checkSubmission(ctx context.Context, files []string) (string,
 		return "", outcome{}, err
 	}
 	if text, out, refused := sh.contractRefusal(hash); refused {
+		return text, out, nil
+	}
+	if text, out, refused, err := sh.dataStoresGate(); err != nil {
+		return "", outcome{}, err
+	} else if refused {
 		return text, out, nil
 	}
 	if sh.cfg.ShapeDecisionCheck.Enabled {
