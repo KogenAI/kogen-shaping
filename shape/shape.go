@@ -602,7 +602,7 @@ func (sh *shaping) overlay() map[string][]byte {
 }
 
 func (sh *shaping) mainTools() []string {
-	return []string{tools.ReadFileTool, tools.ViewImageTool, tools.ListFilesTool, tools.SearchTextTool, agent.ProbeTool, tools.DocumentationTool}
+	return []string{tools.ReadFileTool, tools.ViewImageTool, tools.ListFilesTool, tools.SearchTextTool, ProbeTool, tools.DocumentationTool}
 }
 
 // outcomeKind is how a conversation ended.
@@ -633,9 +633,9 @@ func (sh *shaping) shape(ctx context.Context, st *state) (int, error) {
 	role := sh.role
 
 	defs := ShaperToolDefinitions(sh.mainTools()...)
-	defs = append(defs, ShaperToolDefinitions(agent.ProposeFilesTool, agent.SubmitTool)...)
+	defs = append(defs, ShaperToolDefinitions(ProposeFilesTool, SubmitTool)...)
 	if sh.cfg.ShapeWorkers.Enabled {
-		defs = append(defs, ShaperToolDefinitions(agent.ShapeBatchTool)...)
+		defs = append(defs, ShaperToolDefinitions(ShapeBatchTool)...)
 	}
 	sh.toolDefs = agent.AsAny(defs)
 
@@ -890,7 +890,7 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 				continue
 			}
 			switch {
-			case c.Name == agent.ShapeBatchTool && sh.cfg.ShapeWorkers.Enabled:
+			case c.Name == ShapeBatchTool && sh.cfg.ShapeWorkers.Enabled:
 				var batch map[string]any
 				if sh.batchUsed {
 					batch = map[string]any{"status": "refused", "reason": "one batch per conversation", "jobs": []any{}}
@@ -903,14 +903,14 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 				}
 				sh.batchUsed = true
 				outputs = append(outputs, toolOutput(c, string(text)))
-			case c.Name == agent.ProposeFilesTool:
+			case c.Name == ProposeFilesTool:
 				var text string
 				err := sh.toolSpan(func() (err error) { text, err = sh.proposeFiles(c.Args()); return })
 				if err != nil {
 					return outcome{}, usage, err
 				}
 				outputs = append(outputs, toolOutput(c, text))
-			case c.Name == agent.SubmitTool:
+			case c.Name == SubmitTool:
 				sh.priorInvalid = turns.invalid
 				text, r, err := sh.submit(ctx, c.Args())
 				if err != nil {
@@ -1161,7 +1161,7 @@ func (sh *shaping) runTool(ctx context.Context, c tools.Call) (tools.Output, err
 	args := c.Args()
 	tl := sh.agentTools(ctx, sh.mainTools())
 	sh.noteReach(c.Name, args)
-	if c.Name != agent.ProbeTool {
+	if c.Name != ProbeTool {
 		return tl.Run(c.Name, args)
 	}
 	sh.progress("kogen: probe: " + textOf(args["command"]))

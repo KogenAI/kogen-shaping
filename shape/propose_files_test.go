@@ -12,7 +12,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/KogenAI/kogen-executor/agent"
 	"github.com/KogenAI/kogen-executor/executor"
 )
 
@@ -366,7 +365,7 @@ func TestProposeFilesNativeOnly(t *testing.T) {
 		if err := json.Unmarshal(task.Schema, &got); err != nil {
 			t.Fatal(err)
 		}
-		b, _ := json.Marshal(agent.Defs(agent.SubmitTool)[0]["parameters"])
+		b, _ := json.Marshal(ShaperToolDefinitions(SubmitTool)[0]["parameters"])
 		json.Unmarshal(b, &want)
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("schema %s differs from submit's parameters %s", task.Schema, b)

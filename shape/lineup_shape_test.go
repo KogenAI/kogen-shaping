@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/KogenAI/kogen-coordinator/project"
-	"github.com/KogenAI/kogen-executor/agent"
 	"github.com/KogenAI/kogen-executor/executor"
 	"kogen-loop/sys"
 )
@@ -209,7 +208,7 @@ func TestClaudeLineupShapeSubmission(t *testing.T) {
 		shpEq(t, "model", task.Model, "claude-opus-5-5")
 		shpEq(t, "effort", task.Effort, "xhigh")
 		shpEq(t, "rounds", task.MaxRounds, 6)
-		wantSchema, _ := json.Marshal(ShaperToolDefinitions(agent.SubmitTool)[0]["parameters"])
+		wantSchema, _ := json.Marshal(ShaperToolDefinitions(SubmitTool)[0]["parameters"])
 		if string(task.Schema) != string(wantSchema) {
 			t.Fatalf("external schema differs from local submit: %s != %s", task.Schema, wantSchema)
 		}

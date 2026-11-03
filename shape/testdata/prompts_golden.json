@@ -1,0 +1,22 @@
+{
+  "feasibility-guidance": {
+    "bytes": 4928,
+    "sha256": "f275e69b376cb9e696cce7ae672d62dc4a5ea600128c60691887657b421fa9ab"
+  },
+  "readiness-acknowledgment-guidance": {
+    "bytes": 578,
+    "sha256": "adbff73a12e3e1810f7c9fe457105689726ca77f2126cfd967a69c180417dbf3"
+  },
+  "refine": {
+    "bytes": 9696,
+    "sha256": "043331c9b58c8fa46f21b9904558f4ba912ff6b9214076f70bdb46ee31a1a576"
+  },
+  "shaper": {
+    "bytes": 15978,
+    "sha256": "d3c6641b8c6915ce51eff8ff6454691e33f21d5ca1d124b33f2b601fba50bf40"
+  },
+  "shaper-context-guidance": {
+    "bytes": 392,
+    "sha256": "68664d8356a86075b377c89ecec0fb736291b27e928b9acf414792f0d001c59e"
+  }
+}

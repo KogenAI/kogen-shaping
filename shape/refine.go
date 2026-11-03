@@ -338,7 +338,7 @@ func (r *refine) run(ctx context.Context) (exit int, err error) {
 		return 0, err
 	}
 	input := []any{map[string]any{"role": "user", "content": blocks}}
-	defs := agent.AsAny(agent.Defs(tools.ReadFileTool, tools.ListFilesTool, tools.SearchTextTool, agent.ProbeTool, tools.DocumentationTool, agent.SubmitRefinementTool))
+	defs := agent.AsAny(RefineToolDefinitions(tools.ReadFileTool, tools.ListFilesTool, tools.SearchTextTool, ProbeTool, tools.DocumentationTool, SubmitRefinementTool))
 	r.window = newRefineWindow(r.evidence, input)
 	r.cacheID = startConversation(r.ev, "refine")
 	var changes map[string]string
@@ -801,7 +801,7 @@ func (r *refine) context() ([]any, error) {
 // refineInstructions is the correction conversation's policy: the discovery rules, the
 // feasibility guidance, the refinement rules and the context guidance.
 func refineInstructions() string {
-	return agent.Prompt(agent.Refine) + agent.Prompt(agent.ShaperContextGuidance)
+	return shaperPrompt("refine") + contextGuidance()
 }
 
 type refineKind int
@@ -829,7 +829,7 @@ type refineOutcome struct {
 func (r *refine) converseExternal(ctx context.Context, role project.Role, blocks []any) (map[string]string, *verify.Ready, error) {
 	stable := refineInstructions() + "\n\n" + externalNote + "\n\n" + blocksText(blocks)
 	x, err := startExternal(ctx, r.ext, r.extMax, r.repo, r.root, r.s.Getenv("HOME"),
-		filepath.Join(r.evidence, "executor-refine"), r.slug, role, stable, "", schemaOf(agent.SubmitRefinementTool), r.ev, nil)
+		filepath.Join(r.evidence, "executor-refine"), r.slug, role, stable, "", schemaOf(SubmitRefinementTool), r.ev, nil)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -973,7 +973,7 @@ func (r *refine) converse(ctx context.Context, role project.Role, defs []any, in
 			switch {
 			case result.kind != refineNone:
 				outputs = append(outputs, toolOutput(c, "ignored: only one submission counts"))
-			case c.Name == agent.SubmitRefinementTool:
+			case c.Name == SubmitRefinementTool:
 				text, out, err := r.submit(ctx, c.Args())
 				if err != nil {
 					return nil, nil, usage, err
@@ -1032,11 +1032,11 @@ func (r *refine) converse(ctx context.Context, role project.Role, defs []any, in
 func (r *refine) runTool(ctx context.Context, c tools.Call) (tools.Output, error) {
 	tl := &tools.Tools{
 		Root: r.scratch, Session: r.s, Repo: agent.Git(r.scratchR),
-		Enabled:       []string{tools.ReadFileTool, tools.ListFilesTool, tools.SearchTextTool, agent.ProbeTool, tools.DocumentationTool},
+		Enabled:       []string{tools.ReadFileTool, tools.ListFilesTool, tools.SearchTextTool, ProbeTool, tools.DocumentationTool},
 		Probe:         func(command string, files any) (string, error) { return r.probe(ctx, command, files) },
 		Documentation: tools.Documentation{UserAgent: documentationAgent(r.client)},
 	}
-	if c.Name != agent.ProbeTool {
+	if c.Name != ProbeTool {
 		return tl.Run(c.Name, c.Args())
 	}
 	var out tools.Output

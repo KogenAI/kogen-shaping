@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/KogenAI/kogen-coordinator/project"
-	"github.com/KogenAI/kogen-executor/agent"
 	"kogen-loop/sys"
 )
 
@@ -163,13 +162,13 @@ func TestShapeBatchRunsWorkersAndReturnsTheirResults(t *testing.T) {
 			t.Fatalf("captured tools differ from local policy: %s != %s", got, want)
 		}
 	}
-	checkPolicyTools(main[0], append(append((&shaping{}).mainTools(), agent.ProposeFilesTool, agent.SubmitTool), agent.ShapeBatchTool))
+	checkPolicyTools(main[0], append(append((&shaping{}).mainTools(), ProposeFilesTool, SubmitTool), ShapeBatchTool))
 	for _, w := range workers {
 		role := "draft"
 		if workerJobID(w) == "inspect" {
 			role = "probe"
 		}
-		checkPolicyTools(w, append(workerNames(role), agent.WorkerResultTool))
+		checkPolicyTools(w, append(workerNames(role), WorkerResultTool))
 	}
 
 	result := batchResult(t, main[1], "b1")
