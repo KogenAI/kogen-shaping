@@ -22,7 +22,7 @@ const (
 	pfStepsPath   = "features/steps/is_even_steps.js"
 	pfCustody     = ".kogen/local/shaping/is-even/proposed/"
 
-	pfNativeTools = "read_file, view_image, list_files, search_text, probe, documentation, data_stores, propose_files, submit"
+	pfNativeTools = "read_file, view_image, list_files, search_text, probe, documentation, propose_files, submit"
 )
 
 // pfIntentDraft is a first, shorter version of the Intent that later proposals replace.
@@ -336,7 +336,7 @@ func TestProposeFilesNativeOnly(t *testing.T) {
 		}
 		reqs := shpShaperRequests(f.Prov.requests())
 		shpEq(t, "requests", len(reqs), 1)
-		shpEq(t, "tools", strings.Join(shpToolNames(reqs[0]), ", "), "read_file, view_image, list_files, search_text, probe, documentation, data_stores, propose_files, submit, shape_batch")
+		shpEq(t, "tools", strings.Join(shpToolNames(reqs[0]), ", "), "read_file, view_image, list_files, search_text, probe, documentation, propose_files, submit, shape_batch")
 	})
 
 	t.Run("refine does not offer it", func(t *testing.T) {
