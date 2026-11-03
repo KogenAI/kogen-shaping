@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/executor"
 	"kogen-loop/provider"
 	"kogen-loop/sys"
@@ -207,11 +206,8 @@ func markedStatement(statement string) bool {
 }
 
 // assumptionLines are the Decisions lines marked as assumptions, without their leading "- ",
-// for the approval card; nil unless the decision check is enabled.
-func assumptionLines(cfg *project.Config, intent string) []string {
-	if !cfg.ShapeDecisionCheck.Enabled {
-		return nil
-	}
+// for the approval card; nil without such a line.
+func assumptionLines(intent string) []string {
 	var out []string
 	for _, l := range decisionLines(intent) {
 		if strings.Contains(l, "(assumption:") {

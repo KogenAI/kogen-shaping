@@ -552,6 +552,8 @@ type shaping struct {
 	environmentRefusals int             // environment-only question refusals in this run
 	probed              map[string]bool // the commands of the probe calls of this run
 	ranCommand          bool            // the external session completed a Bash call
+	readPaths           map[string]bool // the cleaned path arguments of the read_file calls of the main conversation
+	listedPaths         map[string]bool // the cleaned path arguments of the list_files calls of the main conversation
 
 	contractUsage    provider.Usage               // the native contract review and confirmation calls' tokens
 	contractRounds   int                          // the external contract review and confirmation sessions' rounds
@@ -1104,12 +1106,31 @@ func (sh *shaping) writeManifest(revision Revision) (map[string]any, error) {
 	return map[string]any{"proposed": proposed, "originals": originals}, nil
 }
 
+// noteReach keeps the cleaned path of a read_file or list_files call of the main conversation,
+// whatever the call returns; a missing or empty list_files path is the whole repository.
+func (sh *shaping) noteReach(name string, args map[string]any) {
+	path, _ := args["path"].(string)
+	switch name {
+	case tools.ReadFileTool:
+		if sh.readPaths == nil {
+			sh.readPaths = map[string]bool{}
+		}
+		sh.readPaths[cleanCitedPath(path)] = true
+	case tools.ListFilesTool:
+		if sh.listedPaths == nil {
+			sh.listedPaths = map[string]bool{}
+		}
+		sh.listedPaths[cleanCitedPath(path)] = true
+	}
+}
+
 var probeSummary = regexp.MustCompile(`\Aexit status: -?\d+\ntimed_out: (?:true|false)\nwall: [\d.]+ s(?:\n|\z)`)
 
 // runTool runs one of the shaper's read-only tools or its probe.
 func (sh *shaping) runTool(ctx context.Context, c tools.Call) (tools.Output, error) {
 	args := c.Args()
 	tl := sh.agentTools(ctx, sh.mainTools())
+	sh.noteReach(c.Name, args)
 	if c.Name != agent.ProbeTool {
 		return tl.Run(c.Name, args)
 	}

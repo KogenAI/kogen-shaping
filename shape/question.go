@@ -140,6 +140,7 @@ func questionsText(questions []map[string]any) string {
 const questionHeadline = "Question check: %d of %d question(s) are not UI/UX choices left to the user; nothing was asked. " +
 	"Investigate and decide each one yourself: read the repository or run a probe, then record a Decisions line that cites what you read or ran before its source tag, " +
 	"as - <decision> (evidence: <repository path>) (source: request) or - <decision> (evidence: ran `<command>`) (source: request). " +
+	"Where the repository has no evidence or conflicting evidence, record the uncertainty you decided under instead, as - <decision> (assumption: <the uncertainty>) (source: request); the user confirms or reverses it at approval. " +
 	"Ask the user only UI/UX questions that the request and the answers leave open, or a mandatory authentication or security handoff."
 
 // questionInstruction is what the shaper does with a refused question of the class.

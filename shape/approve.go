@@ -197,7 +197,7 @@ func approveLocked(ctx context.Context, s *sys.Session, in ApproveInput, repo *g
 		s.Puts(fmt.Sprintf("Scenarios: %d (%d fail now, %d pass now)", len(ready.Scenarios), failing, passing))
 	}
 	if moved && ready.AcceptanceExit == 0 {
-		approveCard(s, slug, sha, approver, ready, baseline, assumptionLines(cfg, ready.Intent.Text), unresolvedLines(root, slug)...)
+		approveCard(s, slug, sha, approver, ready, baseline, assumptionLines(ready.Intent.Text), unresolvedLines(root, slug)...)
 		return 0, sys.Fail("intent", "not_ready", "scenarios already pass on the new base; correct the obsolete contract with kogen intent refine "+slug+" "+sha+" <correction-file>", 1)
 	}
 	if prefix == "" {
@@ -215,7 +215,7 @@ func approveLocked(ctx context.Context, s *sys.Session, in ApproveInput, repo *g
 			return 0, err
 		}
 		s.Puts(card)
-		approveCard(s, slug, sha, approver, ready, baseline, assumptionLines(cfg, ready.Intent.Text), unresolvedLines(root, slug)...)
+		approveCard(s, slug, sha, approver, ready, baseline, assumptionLines(ready.Intent.Text), unresolvedLines(root, slug)...)
 		return 5, nil
 	}
 

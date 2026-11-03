@@ -2,6 +2,7 @@ package shape
 
 import (
 	"fmt"
+	"path"
 	"strings"
 )
 
@@ -71,6 +72,25 @@ func parseEvidenceItem(s string) evidenceItem {
 	return evidenceItem{path: s, empty: s == ""}
 }
 
+// cleanCitedPath is a cited or tool path after path.Clean of its trimmed text; empty is the
+// whole repository.
+func cleanCitedPath(p string) string {
+	return path.Clean(strings.TrimSpace(p))
+}
+
+// listedCovers reports whether a list_files call covered the directory: the directory itself,
+// an ancestor of it or the whole repository.
+func (sh *shaping) listedCovers(dir string) bool {
+	for d := dir; ; d = path.Dir(d) {
+		if sh.listedPaths[d] {
+			return true
+		}
+		if d == "." || d == "/" {
+			return false
+		}
+	}
+}
+
 // evidenceProblems checks the (evidence: ...) markers of a written intent.md's Decisions: the
 // problem lines, empty when there is no marker or every item holds.
 func (sh *shaping) evidenceProblems(intent string) ([]string, error) {
@@ -112,8 +132,17 @@ func (sh *shaping) evidenceProblems(intent string) ([]string, error) {
 							break
 						}
 					}
-					if !found {
+					switch dir := strings.HasSuffix(it.path, "/"); {
+					case !found:
 						problems = append(problems, fmt.Sprintf("- decision %d: %s is not a file or directory tracked at HEAD", n, it.path))
+					case sh.ext != nil:
+						if !sh.inspected {
+							problems = append(problems, fmt.Sprintf("- decision %d: this shaping's session read nothing, so %s was not read", n, it.path))
+						}
+					case dir && !sh.listedCovers(cleanCitedPath(it.path)):
+						problems = append(problems, fmt.Sprintf("- decision %d: this shaping did not list %s", n, it.path))
+					case !dir && !sh.readPaths[cleanCitedPath(it.path)]:
+						problems = append(problems, fmt.Sprintf("- decision %d: this shaping did not read %s", n, it.path))
 					}
 				}
 			}
@@ -123,7 +152,7 @@ func (sh *shaping) evidenceProblems(intent string) ([]string, error) {
 }
 
 // evidenceGate refuses a written candidate whose Decisions cite a path that is not tracked at
-// HEAD or a command this shaping did not run; ok is true for a refusal.
+// HEAD, a file this shaping did not read, a directory it did not list or a command it did not run; ok is true for a refusal.
 func (sh *shaping) evidenceGate(intent string) (string, outcome, bool, error) {
 	problems, err := sh.evidenceProblems(intent)
 	if err != nil || len(problems) == 0 {
@@ -131,7 +160,8 @@ func (sh *shaping) evidenceGate(intent string) (string, outcome, bool, error) {
 	}
 	sh.refused("decision_evidence", problems)
 	headline := fmt.Sprintf("Decision evidence: %d problem(s) with what the Decisions cite; nothing was published. "+
-		"A Decision's (evidence: ...) names files or directories tracked at HEAD, or ran `<command>` for a command this shaping ran, separated by \"; \". "+
+		"A Decision's (evidence: ...) names files this shaping read or directories it listed, tracked at HEAD, or ran `<command>` for a command this shaping ran, separated by \"; \". "+
+		"Where the repository has no evidence or conflicting evidence, mark the Decision (assumption: <the uncertainty you decided under>) instead. "+
 		"Resubmitting this candidate unchanged is refused again.", len(problems))
 	return strings.Join(append([]string{headline}, problems...), "\n"), outcome{kind: outInvalid, problems: problems}, true, nil
 }

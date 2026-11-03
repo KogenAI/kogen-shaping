@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/executor"
 )
 
@@ -63,12 +62,11 @@ func TestDecisionOutcomeRules(t *testing.T) {
 func TestAssumptionLines(t *testing.T) {
 	parallel(t)
 	intent := "## Decisions\n- A. (source: request)\n- B. (assumption: x) (source: request)\n\n## Tests\n- C (assumption: y)\n"
-	on := &project.Config{ShapeDecisionCheck: project.DecisionCheck{Enabled: true}}
-	if got := assumptionLines(on, intent); !slices.Equal(got, []string{"B. (assumption: x)"}) {
+	if got := assumptionLines(intent); !slices.Equal(got, []string{"B. (assumption: x)"}) {
 		t.Errorf("got %q", got)
 	}
-	if got := assumptionLines(&project.Config{}, intent); got != nil {
-		t.Errorf("off: %q", got)
+	if got := assumptionLines("## Decisions\n- A. (source: request)\n"); got != nil {
+		t.Errorf("none: %q", got)
 	}
 }
 

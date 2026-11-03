@@ -178,7 +178,7 @@ func TestShapeQuestionCheckRequestAndPublication(t *testing.T) {
 	}
 }
 
-const qcHeadline = "Question check: %s question(s) are not UI/UX choices left to the user; nothing was asked. Investigate and decide each one yourself: read the repository or run a probe, then record a Decisions line that cites what you read or ran before its source tag, as - <decision> (evidence: <repository path>) (source: request) or - <decision> (evidence: ran `<command>`) (source: request). Ask the user only UI/UX questions that the request and the answers leave open, or a mandatory authentication or security handoff."
+const qcHeadline = "Question check: %s question(s) are not UI/UX choices left to the user; nothing was asked. Investigate and decide each one yourself: read the repository or run a probe, then record a Decisions line that cites what you read or ran before its source tag, as - <decision> (evidence: <repository path>) (source: request) or - <decision> (evidence: ran `<command>`) (source: request). Where the repository has no evidence or conflicting evidence, record the uncertainty you decided under instead, as - <decision> (assumption: <the uncertainty>) (source: request); the user confirms or reverses it at approval. Ask the user only UI/UX questions that the request and the answers leave open, or a mandatory authentication or security handoff."
 
 func TestShapeQuestionCheckRefusesTheWholeSubmission(t *testing.T) {
 	parallel(t)
@@ -393,7 +393,7 @@ func TestExternalShapeQuestionCheck(t *testing.T) {
 
 // ---- (evidence: ...) in the Decisions ----
 
-const evHeadline = "Decision evidence: %d problem(s) with what the Decisions cite; nothing was published. A Decision's (evidence: ...) names files or directories tracked at HEAD, or ran `<command>` for a command this shaping ran, separated by \"; \". Resubmitting this candidate unchanged is refused again."
+const evHeadline = "Decision evidence: %d problem(s) with what the Decisions cite; nothing was published. A Decision's (evidence: ...) names files this shaping read or directories it listed, tracked at HEAD, or ran `<command>` for a command this shaping ran, separated by \"; \". Where the repository has no evidence or conflicting evidence, mark the Decision (assumption: <the uncertainty you decided under>) instead. Resubmitting this candidate unchanged is refused again."
 
 func TestShapeDecisionEvidenceNative(t *testing.T) {
 	parallel(t)
@@ -403,16 +403,19 @@ func TestShapeDecisionEvidenceNative(t *testing.T) {
 		"- Odd numbers are not. (evidence: README.md; ; ran `true`) (source: request)",
 		"- Floats raise. (evidence: ran `uname -a`; ran `echo \"(x)\"`) (source: request)")
 	probe := shpAnswer(shpCall("p1", "probe", map[string]any{"command": `echo "(x)"`}))
+	inspect := shpAnswer(shpCall("p2", "list_files", map[string]any{"path": "./features"}), shpCall("p3", "read_file", map[string]any{"path": "./calc.js"}))
 	good := shpFilesWithDecisions(
 		"- Zero is even. (evidence: README.md; features/steps/; `calc.js`) (source: request)",
 		"- Floats raise. (evidence: ran `echo \"(x)\"`) (evidence: `README.md`) (source: request)",
 		"- Plain decisions need no evidence. (source: request)")
-	f := newShpFx(t, probe, shpSubmit("c1", bad), shpSubmit("c2", bad), shpSubmit("c3", good), shpAck("c4"))
+	f := newShpFx(t, probe, shpSubmit("c1", bad), shpSubmit("c2", bad), inspect, shpSubmit("c3", good), shpAck("c4"))
 	if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 0 {
 		t.Fatalf("exit %d, err %v\n%s", exit, err, f.Stderr)
 	}
 	want := strings.Join([]string{
-		strings.Replace(evHeadline, "%d", "5", 1),
+		strings.Replace(evHeadline, "%d", "7", 1),
+		"- decision 1: this shaping did not list features/steps/",
+		"- decision 1: this shaping did not read calc.js",
 		"- decision 2: nothing/here.rb is not a file or directory tracked at HEAD",
 		"- decision 2: lib/ is not a file or directory tracked at HEAD",
 		"- decision 3: an empty (evidence: ...) item",
@@ -426,8 +429,25 @@ func TestShapeDecisionEvidenceNative(t *testing.T) {
 	refused := shpNamed(f.events(), "submission_refused")
 	shpEq(t, "refusals", len(refused), 2)
 	shpEq(t, "gate", refused[0]["gate"].(string), "decision_evidence")
-	shpEq(t, "problems", len(refused[0]["problems"].([]any)), 5)
+	shpEq(t, "problems", len(refused[0]["problems"].([]any)), 7)
 	shpEq(t, "published", f.read(".kogen/intents/is-even/intent.md") != "", true)
+}
+
+// TestEvidenceProblemsExternalRead: an external session that reported no completed read-only
+// inspection call cannot have read a cited file.
+func TestEvidenceProblemsExternalRead(t *testing.T) {
+	parallel(t)
+	f := newShpFx(t)
+	intent := "## Decisions\n- Zero is even. (evidence: calc.js; features/steps/) (source: request)\n"
+	sh := &shaping{repo: f.Repo, ext: &shapeExec{t: t}}
+	got, err := sh.evidenceProblems(intent)
+	shpEq(t, "err", err, nil)
+	shpEq(t, "unread", strings.Join(got, "\n"),
+		"- decision 1: this shaping's session read nothing, so calc.js was not read\n- decision 1: this shaping's session read nothing, so features/steps/ was not read")
+	sh.inspected = true
+	got, err = sh.evidenceProblems(intent)
+	shpEq(t, "err", err, nil)
+	shpEq(t, "read", len(got), 0)
 }
 
 func TestShapeDecisionEvidenceExternal(t *testing.T) {

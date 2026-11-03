@@ -28,6 +28,7 @@ type shapeExec struct {
 	seq      int
 	calls    int  // rounds over every session
 	bash     bool // the main shaper session completes a Bash call in its first round
+	noRead   bool // the main shaper session completes no Read call in its first round
 	// contract, when set, answers the contract review and confirmation sessions in order (the
 	// last repeats); they do not count in rounds or calls, and starts holds only the other
 	// sessions. Without it every review finds no contradiction.
@@ -104,7 +105,9 @@ func (s *shapeSession) Round(_ context.Context, in executor.Input) (executor.Rou
 	fn := s.x.rounds[i]
 	s.x.mu.Unlock()
 	if s.n == 1 {
-		s.emit(map[string]any{"event": "executor_tool", "name": "Read", "tool_use_id": "t1", "denied": false})
+		if !s.x.noRead {
+			s.emit(map[string]any{"event": "executor_tool", "name": "Read", "tool_use_id": "t1", "denied": false})
+		}
 		if s.x.bash {
 			s.emit(map[string]any{"event": "executor_tool", "name": "Bash", "tool_use_id": "t2", "denied": false})
 		}

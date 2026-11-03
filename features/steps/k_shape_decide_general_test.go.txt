@@ -1,0 +1,336 @@
+package shape
+
+// The acceptance harness of k-shape-decide-non-ux-general. Its acceptance step overlays it into
+// ./shape, builds the shape test binary with `go test -c` and runs this test once per KSDG_MODE.
+// decides, asks-ui and environment drive the native shaper (Shape) against the package's scripted
+// local provider; external drives Shape with the package's scripted Claude Code shaper. The
+// fixture is an invented orchard frost alarm. It prints one KSDG observation line and judges
+// nothing itself: the step compares the observations with the feature's values.
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+
+	"github.com/KogenAI/kogen-executor/executor"
+	"kogen-loop/sys"
+)
+
+// The synthetic orchard fixture: readings are stored in tenths of a degree, the alarm compares
+// the latest reading with a limit, and the siren is simulated without a hardware driver.
+var ksdgFixture = map[string]string{
+	"lib/sensors.js": "// Orchard sensor readings, stored in tenths of a degree Celsius (215 is 21.5 °C).\n" +
+		"exports.readings = function (block) {\n  return block.readings\n}\n",
+	"lib/alarm.js": "const sensors = require('./sensors')\n\n// The frost alarm reports a block whose latest reading is below the limit.\nexports.LIMIT = 20\n" +
+		"exports.frosty = function (block) {\n  const r = sensors.readings(block)\n  return r.length > 0 && r[r.length - 1] < exports.LIMIT\n}\n",
+	"lib/siren.js": "// The siren is simulated: sound() records the call, and no hardware driver is needed.\n" +
+		"exports.calls = []\nexports.sound = function (block) {\n  exports.calls.push(block.name)\n}\n",
+}
+
+const ksdgFrostRequest = "`bin/frost` must warn about every orchard block whose average reading over the last hour is below 2 °C.\n"
+
+const ksdgDashboardRequest = "Show a frost warning on the orchard dashboard when a block falls below 2 °C.\n"
+
+const ksdgProbe = "ls lib"
+
+func ksdgQ(text string, options ...string) map[string]any {
+	list := []any{}
+	for i, o := range options {
+		list = append(list, map[string]any{"label": o, "recommended": i == 0})
+	}
+	return map[string]any{"question": text, "options": list}
+}
+
+var (
+	ksdgUnits  = ksdgQ("In which unit are the orchard sensor readings stored?", "Degrees Celsius", "Tenths of a degree Celsius")
+	ksdgSilent = ksdgQ("Should a block with no reading in the last hour be warned about?", "Yes, warn about it", "No, skip it")
+	ksdgSiren  = ksdgQ("Is a siren hardware driver installed where bin/frost runs?", "Assume it is installed", "Assume it is not")
+	ksdgKey    = ksdgQ("Is a weather service API key available in this environment?", "Assume one is set", "Assume none is set")
+	ksdgBanner = ksdgQ("Should the frost warning appear as a banner across the top of the dashboard or as a badge on the affected block?", "A banner across the top", "A badge on the block")
+)
+
+func ksdgQuestions(qs ...map[string]any) map[string]any {
+	list := make([]any, len(qs))
+	for i, q := range qs {
+		list[i] = q
+	}
+	return map[string]any{"questions": list}
+}
+
+// ksdgCheck is a question check answer: one class per question, numbered in order.
+func ksdgCheck(id string, classes ...string) shpStep {
+	items := []any{}
+	for i, c := range classes {
+		items = append(items, map[string]any{"number": i + 1, "class": c, "why": "synthetic " + c + " question"})
+	}
+	return shpAnswer(shpCall(id, "submit_question_check", map[string]any{"items": items}))
+}
+
+func ksdgIntent(title, prose string, decisions ...string) string {
+	return "# " + title + "\n\nSlug: is-even\nModel: not applicable — one command without state\nAcceptance:\n" +
+		"- .kogen/intents/is-even/acceptance.feature\n- features/steps/is_even_steps.js\n\n" + prose + "\n\n" +
+		"## Decisions\n" + strings.Join(decisions, "\n") + "\n\n" +
+		"## Source comparison\n- addressed: the request; source request; contract acceptance.feature.\n\n" +
+		"## Tests\n- The requested behavior: the acceptance scenarios (scenario)\n\n## Feasibility\n- none\n"
+}
+
+const (
+	ksdgDecUnits  = "- Readings stay in tenths of a degree Celsius, so 2 °C is 20 (evidence: lib/sensors.js) (source: request)"
+	ksdgDecSilent = "- A block with no reading in the last hour is skipped (assumption: neither the request nor the repository says whether a block without readings is warned about) (source: request)"
+	ksdgDecSiren  = "- bin/frost proceeds without a siren driver: lib/siren.js simulates the siren (evidence: lib/siren.js; ran `" + ksdgProbe + "`) (source: request)"
+)
+
+var (
+	ksdgFrostTitle = "Warn about frosty orchard blocks"
+	ksdgFrostProse = "`bin/frost` warns about every block whose last-hour average is below 2 °C."
+	ksdgIntentBad  = ksdgIntent(ksdgFrostTitle, ksdgFrostProse,
+		"- Readings stay in tenths of a degree Celsius, so 2 °C is 20 (evidence: lib/alarm.js) (source: request)",
+		"- A block with no reading in the last hour is skipped (evidence: lib/blocks.js) (source: request)",
+		"- bin/frost proceeds without a siren driver: lib/siren.js simulates the siren (evidence: lib/siren.js; ran `ls -l lib`) (source: request)")
+	ksdgIntentGood      = ksdgIntent(ksdgFrostTitle, ksdgFrostProse, ksdgDecUnits, ksdgDecSilent, ksdgDecSiren)
+	ksdgIntentExternal  = ksdgIntent(ksdgFrostTitle, ksdgFrostProse, ksdgDecUnits)
+	ksdgIntentDashboard = ksdgIntent("Show a frost warning on the dashboard", "The dashboard warns when a block falls below 2 °C.",
+		"- The frost warning appears as a banner across the top of the dashboard (source: answer 1)")
+)
+
+func ksdgPackage(intent string) map[string]any {
+	return map[string]any{"files": []any{
+		map[string]any{"path": ".kogen/intents/is-even/intent.md", "content": intent},
+		map[string]any{"path": ".kogen/intents/is-even/acceptance.feature", "content": shpFeature},
+		map[string]any{"path": "features/steps/is_even_steps.js", "content": shpSteps},
+	}}
+}
+
+func ksdgCommitFixture(f *shpFx) {
+	for p, c := range ksdgFixture {
+		f.write(p, c)
+	}
+	f.git("add", "-A")
+	f.git("commit", "-qm", "Add the orchard fixture")
+}
+
+// ksdgIsCheck is whether a request is a question check: it offers submit_question_check.
+func ksdgIsCheck(req map[string]any) bool {
+	for _, n := range shpToolNames(req) {
+		if n == "submit_question_check" {
+			return true
+		}
+	}
+	return false
+}
+
+// ksdgUserText is the text of the request's first user message.
+func ksdgUserText(req map[string]any) string {
+	input, _ := req["input"].([]any)
+	for _, it := range input {
+		m, _ := it.(map[string]any)
+		if m["role"] != "user" {
+			continue
+		}
+		switch c := m["content"].(type) {
+		case string:
+			return c
+		case []any:
+			var b strings.Builder
+			for _, blk := range c {
+				if bm, _ := blk.(map[string]any); bm != nil {
+					s, _ := bm["text"].(string)
+					b.WriteString(s)
+				}
+			}
+			return b.String()
+		}
+	}
+	return ""
+}
+
+// ksdgSubmitID are the call ids of the scripted shaper's submissions.
+var ksdgSubmitID = regexp.MustCompile(`^[qf][0-9]$`)
+
+func ksdgLastLine(s string) string {
+	lines := strings.Split(strings.TrimSuffix(s, "\n"), "\n")
+	return lines[len(lines)-1]
+}
+
+func ksdgError(obs map[string]any, prefix string, exit int, err error) {
+	obs[prefix+"exit"], obs[prefix+"error"], obs[prefix+"error_lines"] = exit, "", []string{}
+	if err != nil {
+		obs[prefix+"error"] = err.Error()
+		if e, ok := sys.AsError(err); ok {
+			obs[prefix+"exit"] = e.Exit
+			if e.Lines != nil {
+				obs[prefix+"error_lines"] = e.Lines
+			}
+		}
+	}
+}
+
+// ksdgCard shows the approval card of the published Intent (kogen intent approve is-even with no
+// hash) and observes its exit and the lines of its "Assumptions to confirm" block.
+func ksdgCard(f *shpFx, obs map[string]any) {
+	f.newSession()
+	exit, err := Approve(context.Background(), f.S, ApproveInput{Project: f.Root, Slug: "is-even"})
+	ksdgError(obs, "card_", exit, err)
+	assumptions, in := []string{}, false
+	for _, line := range strings.Split(f.Stdout.String(), "\n") {
+		switch {
+		case line == "Assumptions to confirm":
+			in = true
+		case in && strings.HasPrefix(line, "  - "):
+			assumptions = append(assumptions, strings.TrimPrefix(line, "  - "))
+		default:
+			in = false
+		}
+	}
+	obs["card_assumptions"] = assumptions
+}
+
+func TestKShapeDecideGeneralAcceptance(t *testing.T) {
+	mode := os.Getenv("KSDG_MODE")
+	obs := map[string]any{"mode": mode}
+	var f *shpFx
+	var x *shapeExec
+	request, want := "", ""
+	switch mode {
+	case "decides":
+		f = newShpFx(t,
+			shpAnswer(shpCall("q1", "submit", ksdgQuestions(ksdgUnits, ksdgSilent, ksdgSiren))),
+			ksdgCheck("qc1", "repository_fact", "product_policy", "environment"),
+			shpAnswer(shpCall("r1", "read_file", map[string]any{"path": "lib/sensors.js"}), shpCall("r2", "read_file", map[string]any{"path": "lib/siren.js"}),
+				shpCall("p1", "probe", map[string]any{"command": ksdgProbe})),
+			shpSubmit("f1", ksdgPackage(ksdgIntentBad)),
+			shpSubmit("f2", ksdgPackage(ksdgIntentGood)))
+		ksdgCommitFixture(f)
+		request, want = ksdgFrostRequest, ksdgIntentGood
+	case "asks-ui":
+		f = newShpFx(t,
+			shpAnswer(shpCall("q1", "submit", ksdgQuestions(ksdgBanner))),
+			ksdgCheck("qc1", "ui_ux"),
+			shpSubmit("f1", ksdgPackage(ksdgIntentDashboard)))
+		request, want = ksdgDashboardRequest, ksdgIntentDashboard
+	case "environment":
+		f = newShpFx(t,
+			shpAnswer(shpCall("q1", "submit", ksdgQuestions(ksdgKey))),
+			ksdgCheck("qc1", "environment"),
+			shpAnswer(shpCall("q2", "submit", ksdgQuestions(ksdgKey))),
+			ksdgCheck("qc2", "environment"))
+		ksdgCommitFixture(f)
+		request = ksdgFrostRequest
+	case "external":
+		f = newShpFx(t)
+		f.useExternalShape(6)
+		ksdgCommitFixture(f)
+		x = &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){
+			result(ksdgQuestions(ksdgUnits)),
+			result(map[string]any{"items": []any{map[string]any{"number": 1, "class": "repository_fact", "why": "synthetic repository_fact question"}}}),
+			result(ksdgPackage(ksdgIntentExternal))}}
+		request, want = ksdgFrostRequest, ksdgIntentExternal
+	default:
+		t.Fatalf("KSDG_MODE must be decides, asks-ui, environment or external, not %q", mode)
+	}
+	f.setReport("PASSED", 0)
+
+	var exit int
+	var err error
+	if x != nil {
+		exit, err = f.shapeWith(x, request)
+	} else {
+		exit, err = f.shape(request)
+	}
+	if mode == "asks-ui" {
+		ksdgError(obs, "first_", exit, err)
+		obs["first_stdout"] = f.Stdout.String()
+		obs["first_questions_pending"] = f.exists(".kogen/local/shaping/is-even/questions.json")
+		exit, err = f.shape("all: recommended")
+	}
+	ksdgError(obs, "", exit, err)
+	obs["last_stdout_line"] = ksdgLastLine(f.Stdout.String())
+
+	var shaper, checks []map[string]any
+	for _, r := range f.Prov.requests() {
+		if ksdgIsCheck(r) {
+			checks = append(checks, r)
+		} else {
+			shaper = append(shaper, r)
+		}
+	}
+	obs["shaper_requests"] = len(shaper)
+	obs["question_check_requests"] = len(checks)
+	if len(shaper) > 0 {
+		ins, _ := shaper[0]["instructions"].(string)
+		sum := sha256.Sum256([]byte(ins))
+		obs["instructions_sha256"] = hex.EncodeToString(sum[:])
+		obs["tools"] = strings.Join(shpToolNames(shaper[0]), ", ")
+	}
+	if len(checks) > 0 {
+		obs["question_check_tools"] = strings.Join(shpToolNames(checks[0]), ", ")
+		obs["question_check_input"] = ksdgUserText(checks[0])
+	}
+	for _, r := range shaper {
+		for id, out := range shpOutputs(r) {
+			if ksdgSubmitID.MatchString(id) {
+				obs["feedback_"+id] = out
+			}
+		}
+	}
+	if x != nil {
+		sessions, schemas := 0, 0
+		for _, s := range x.starts {
+			if strings.Contains(string(s.Schema), `"ui_ux"`) {
+				schemas++
+			} else {
+				sessions++
+			}
+		}
+		obs["shaper_sessions"], obs["question_check_sessions"], obs["rounds"] = sessions, schemas, x.calls
+		for i, in := range x.inputs {
+			obs[fmt.Sprintf("round_%d_feedback", i+1)] = strings.SplitN(in.Feedback, "\n\nCumulative proposal manifest: ", 2)[0]
+		}
+	}
+
+	gates, classes := []any{}, []any{}
+	if b, rerr := os.ReadFile(filepath.Join(f.Root, ".kogen/local/shaping/is-even/events.ndjson")); rerr == nil {
+		for _, line := range strings.Split(string(b), "\n") {
+			var ev map[string]any
+			if line == "" || json.Unmarshal([]byte(line), &ev) != nil {
+				continue
+			}
+			switch ev["event"] {
+			case "submission_refused":
+				gates = append(gates, ev["gate"])
+			case "question_check":
+				var cs []any
+				items, _ := ev["items"].([]any)
+				for _, it := range items {
+					if m, _ := it.(map[string]any); m != nil {
+						cs = append(cs, m["class"])
+					}
+				}
+				classes = append(classes, cs)
+			}
+		}
+	}
+	obs["refused_gates"], obs["question_check_classes"] = gates, classes
+	obs["questions_pending"] = f.exists(".kogen/local/shaping/is-even/questions.json")
+	published := false
+	if b, rerr := os.ReadFile(filepath.Join(f.Root, ".kogen/intents/is-even/intent.md")); rerr == nil {
+		published = want != "" && string(b) == want && f.exists(".kogen/local/readiness/is-even.json")
+	}
+	obs["published"] = published
+	obs["intent_exists"] = f.exists(".kogen/intents/is-even/intent.md")
+	if mode == "decides" && published {
+		ksdgCard(f, obs)
+	}
+	b, jerr := json.Marshal(obs)
+	if jerr != nil {
+		t.Fatal(jerr)
+	}
+	fmt.Println("KSDG " + string(b))
+}
