@@ -11,6 +11,7 @@ import (
 
 	"github.com/KogenAI/kogen-coordinator/git"
 	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-verification/verify"
 	"kogen-loop/sys"
 )
 
@@ -61,7 +62,15 @@ func Preflight(ctx context.Context, s *sys.Session, in PreflightInput) (int, err
 		fn   func() error
 	}{
 		{"configuration", func() error { return nil }},
-		{"package", func() error { return preflightPackage(root, slug) }},
+		{"package", func() error {
+			if err := sharedStepCollision(root, slug, cfg); err != nil {
+				return err
+			}
+			if err := bindingCollision(ctx, root, slug, s, verify.Tools{}); err != nil {
+				return err
+			}
+			return preflightPackage(root, slug)
+		}},
 		{"approval", func() error { return preflightApproval(repo, root, slug, cfg) }},
 		{"cleanliness", func() error { return preflightClean(repo, root, slug) }},
 		{"conflict", func() error { return preflightConflict(repo, root) }},

@@ -155,7 +155,7 @@ func TestShapeBudgetRolesShape(t *testing.T) {
 
 	t.Run("refine sends every request under thirty minutes and records it once", func(t *testing.T) {
 		parallel(t)
-		f := newRefFx(t, refOpts{red: true}, shpAnswer(shpCall("p1", "probe", map[string]any{"command": "true"})), refSubmit("c1", refIntentPath, shpIntentMD))
+		f := newRefFx(t, refOpts{red: true}, shpAnswer(shpCall("p1", "probe", map[string]any{"command": "true"})), refSubmit("c1", refIntentPath, shpScopedIntentMD))
 		f.remove(".kogen/local/readiness/is-even.json")
 		obs := observeDeadlines(f.Client)
 		f.newSession()
@@ -170,7 +170,7 @@ func TestShapeBudgetRolesShape(t *testing.T) {
 	t.Run("a stalled refine expires unavailable naming thirty minutes and records once", func(t *testing.T) {
 		parallel(t)
 		clock := newBudgetClock()
-		f := newRefFx(t, refOpts{red: true}, stalledPastThirty(clock), refSubmit("c1", refIntentPath, shpIntentMD))
+		f := newRefFx(t, refOpts{red: true}, stalledPastThirty(clock), refSubmit("c1", refIntentPath, shpScopedIntentMD))
 		f.remove(".kogen/local/readiness/is-even.json")
 		f.Client.Now = clock.Now
 		f.newSession()

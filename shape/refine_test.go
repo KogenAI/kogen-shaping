@@ -26,7 +26,7 @@ import (
 const (
 	refIntentPath  = ".kogen/intents/is-even/intent.md"
 	refFeaturePath = ".kogen/intents/is-even/acceptance.feature"
-	refStepPath    = "features/steps/is_even_steps.js"
+	refStepPath    = "features/steps/is-even__steps.js"
 )
 
 type refOpts struct {
@@ -65,7 +65,7 @@ func newRefFx(t *testing.T, o refOpts, steps ...shpStep) *refFx {
 		status, code = "FAILED", 1
 	}
 	f.setReport(status, code)
-	for p, c := range map[string]string{refIntentPath: shpIntentMD, refFeaturePath: shpFeature, refStepPath: shpSteps} {
+	for p, c := range map[string]string{refIntentPath: shpScopedIntentMD, refFeaturePath: shpFeature, refStepPath: shpSteps} {
 		f.write(p, c)
 	}
 	cfg, err := project.LoadConfig(f.Root)
@@ -328,7 +328,7 @@ func refWith(m map[string]string, kv ...string) map[string]string {
 
 // the corrections used throughout
 var (
-	refTitled   = strings.Replace(shpIntentMD, "# Add an is-even check", "# Clarify the is-even check", 1)
+	refTitled   = strings.Replace(shpScopedIntentMD, "# Add an is-even check", "# Clarify the is-even check", 1)
 	refFeatured = strings.Replace(shpFeature, "Feature: Is even", "Feature: Is even corrected", 1)
 )
 
@@ -413,7 +413,7 @@ func TestRefineWritesTheCorrectionAndPrintsTheLines(t *testing.T) {
 	shpContains(t, "request", body, "Clarify only the existing draft; preserve its executable contract.")
 	shpContains(t, "request", body, "Full contract inclusions: original Intent prose, Gherkin and declared model preserve exact authority")
 	shpContains(t, "request", body, "Source provenance: unavailable (legacy)")
-	shpContains(t, "request", body, "--- "+refIntentPath+"\n"+shpIntentMD)
+	shpContains(t, "request", body, "--- "+refIntentPath+"\n"+shpScopedIntentMD)
 	shpContains(t, "request", body, "# Exclusively owned editable files\n"+refIntentPath+"\n"+refFeaturePath+"\n"+refStepPath+"\n")
 	shpContains(t, "request", body, `Configured protected files: []`)
 	shpContains(t, "request", body, `Checks: [{"unit", "true"}]`)
@@ -436,9 +436,9 @@ func TestRefineWritesTheCorrectionAndPrintsTheLines(t *testing.T) {
 		t.Fatalf("request.md mode: %v, %v", fi, err)
 	}
 	rel := strings.TrimPrefix(evidence, f.Root+"/")
-	refText(t, "original copy", f.read(rel+"/original/"+refIntentPath), shpIntentMD)
+	refText(t, "original copy", f.read(rel+"/original/"+refIntentPath), shpScopedIntentMD)
 	refText(t, "original copy", f.read(rel+"/original/"+refStepPath), shpSteps)
-	refText(t, "rollback copy", f.read(rel+"/rollback/"+refIntentPath), shpIntentMD)
+	refText(t, "rollback copy", f.read(rel+"/rollback/"+refIntentPath), shpScopedIntentMD)
 	refText(t, "candidate copy", f.read(rel+"/candidate-1/"+refIntentPath), refTitled)
 	var submission map[string]any
 	if err := json.Unmarshal([]byte(f.read(rel+"/submission-1.json")), &submission); err != nil || submission["files"] == nil {
@@ -601,7 +601,7 @@ func TestRefineRedOriginalGivesTheModelItsObservationsAndAcknowledgmentReusesThe
 	shpContains(t, "original observations", body, "Readiness observations\nChecked baseline: "+f.hash0)
 	shpContains(t, "original observations", body, "Scenario: Even numbers (acceptance.feature line 2)")
 	shpContains(t, "original skipped", body, "Unexercised acceptance steps: 2")
-	shpContains(t, "original skipped", body, "acceptance.feature line 4: Then it is even")
+	shpContains(t, "original skipped", body, "acceptance.feature line 4: Then is-even: it is even")
 	rel := strings.TrimPrefix(f.evidence(), f.Root+"/")
 	obs := f.read(rel + "/original-observations.txt")
 	shpEq(t, "observations file", strings.HasPrefix(obs, "Readiness observations\nChecked baseline: "+f.hash0), true)
@@ -634,7 +634,7 @@ func TestRefineRedCandidateReturnsObservationsAndAChangedOneIsCheckedAgain(t *te
 	shpContains(t, "feedback", feedback, "Inspect whether fixtures, inputs and commands reached the intended behavior")
 	shpContains(t, "feedback", feedback, "Acceptance exit: 1\n")
 	shpContains(t, "skipped feedback", feedback, "Unexercised acceptance steps: 2")
-	shpContains(t, "skipped feedback", feedback, "acceptance.feature line 4: Then it is even")
+	shpContains(t, "skipped feedback", feedback, "acceptance.feature line 4: Then is-even: it is even")
 	shpContains(t, "skipped feedback", feedback, "Skipped steps are unexercised; readiness does not prove their behavior or fixture validity.")
 	rel := strings.TrimPrefix(f.evidence(), f.Root+"/")
 	shpContains(t, "feedback", feedback, "Evidence: "+filepath.Join(f.Root, rel, "observations-1.txt"))
@@ -677,7 +677,7 @@ func TestRefineAChangedCandidateAfterRedGetsFreshChecks(t *testing.T) {
 
 func TestRefineUnchangedRedFromTheInitialContextAcknowledgesItsExistingCheck(t *testing.T) {
 	parallel(t)
-	f := newRefFx(t, refOpts{red: true}, refSubmit("c1", refIntentPath, shpIntentMD))
+	f := newRefFx(t, refOpts{red: true}, refSubmit("c1", refIntentPath, shpScopedIntentMD))
 	f.remove(".kogen/local/readiness/is-even.json")
 	runs := f.runs()
 	exit, err := f.refine(f.hash0)
@@ -687,7 +687,7 @@ func TestRefineUnchangedRedFromTheInitialContextAcknowledgesItsExistingCheck(t *
 	// only the original's dry run executed; the unchanged acknowledgment reused it
 	shpEq(t, "runner runs", f.runs()-runs, 1)
 	prompt := shpBody(f.Prov.requests()[0])
-	shpContains(t, "prompt", prompt, "Scenario: Even numbers (acceptance.feature line 2)\nacceptance.feature line 3: Given the number 4\nassertion failed in scenario Even numbers")
+	shpContains(t, "prompt", prompt, "Scenario: Even numbers (acceptance.feature line 2)\nacceptance.feature line 3: Given is-even: the number 4\nassertion failed in scenario Even numbers")
 	m := regexp.MustCompile(`(?m)^Evidence: (.+)$`).FindStringSubmatch(prompt)
 	if m == nil {
 		t.Fatalf("no evidence reference in the prompt:\n%s", prompt)
@@ -701,7 +701,7 @@ func TestRefineUnchangedRedFromTheInitialContextAcknowledgesItsExistingCheck(t *
 	if err != nil || string(retained) != string(reference) {
 		t.Fatalf("the retained observations differ from the reference: %v", err)
 	}
-	refText(t, "intent", f.read(refIntentPath), shpIntentMD)
+	refText(t, "intent", f.read(refIntentPath), shpScopedIntentMD)
 	if f.exists(".kogen/local/approvals/is-even.json") {
 		t.Fatal("no approval")
 	}
@@ -710,7 +710,7 @@ func TestRefineUnchangedRedFromTheInitialContextAcknowledgesItsExistingCheck(t *
 func TestRefineCumulativeRedProposalsStayUnpublishedUntilTheirObservationsAreAcknowledged(t *testing.T) {
 	parallel(t)
 	marker := filepath.Join(t.TempDir(), "red-refinement-observed")
-	updated := strings.Replace(shpIntentMD, "# Add an is-even check", "# Observe the is-even check", 1)
+	updated := strings.Replace(shpScopedIntentMD, "# Add an is-even check", "# Observe the is-even check", 1)
 	corrected := strings.Replace(updated, "# Observe the is-even check", "# Acknowledge the is-even check", 1)
 	step := shpSteps + "// observed red\n"
 	f := newRefFx(t, refOpts{approved: true},
@@ -822,11 +822,11 @@ func TestRefineNarrowRetryPreservesAllEarlierProposalsUntilMergedReadiness(t *te
 		"# Add an is-even check", "# Correct the is-even check",
 		"- Non-integers raise TypeError. (source: request)", "- Non-integers raise TypeError.",
 		"Model: not applicable — a pure function without state", "Model: not applicable",
-	).Replace(shpIntentMD)
+	).Replace(shpScopedIntentMD)
 	corrected := strings.NewReplacer(
 		"# Add an is-even check", "# Correct the is-even check",
 		"- Non-integers raise TypeError. (source: request)", "- Non-integers raise TypeError. (source: request)\n- Keep all corrected artifacts. (source: request)",
-	).Replace(shpIntentMD)
+	).Replace(shpScopedIntentMD)
 	step := shpSteps + "// corrected\n"
 	f := newRefFx(t, refOpts{approved: true},
 		refSubmit("c1", refIntentPath, pending, refFeaturePath, refFeatured, refStepPath, step),
@@ -876,7 +876,7 @@ func TestRefineNarrowRetryPreservesAllEarlierProposalsUntilMergedReadiness(t *te
 func TestRefineAMixedUnsafePayloadContributesNoProposals(t *testing.T) {
 	parallel(t)
 	f := newRefFx(t, refOpts{},
-		refSubmit("c1", refIntentPath, strings.Replace(shpIntentMD, "# Add an is-even check", "# Must never publish", 1), "app.txt", "unsafe"),
+		refSubmit("c1", refIntentPath, strings.Replace(shpScopedIntentMD, "# Add an is-even check", "# Must never publish", 1), "app.txt", "unsafe"),
 		refSubmit("c2", refFeaturePath, refFeatured),
 	)
 	before := f.pkg()
@@ -902,7 +902,7 @@ func TestRefineAMixedUnsafePayloadContributesNoProposals(t *testing.T) {
 
 func TestRefineLaterProposalsReplaceAPathAndOriginalBytesRevertIt(t *testing.T) {
 	parallel(t)
-	pending := strings.Replace(shpIntentMD, "- Non-integers raise TypeError. (source: request)", "- Non-integers raise TypeError. Retain the feature correction.", 1)
+	pending := strings.Replace(shpScopedIntentMD, "- Non-integers raise TypeError. (source: request)", "- Non-integers raise TypeError. Retain the feature correction.", 1)
 	latest := strings.Replace(pending, "# Add an is-even check", "# Latest correction", 1)
 	corrected := strings.Replace(latest, "Retain the feature correction.", "Retain the feature correction. (source: request)", 1)
 	f := newRefFx(t, refOpts{},
@@ -1032,7 +1032,7 @@ func TestRefineInvalidUnsupportedProviderAndNotReadyResultsPreserveTheReadyDraft
 			refSubmit("c1", refFeaturePath, undefined), refSubmit("c2", refFeaturePath, undefined), refSubmit("c3", refFeaturePath, undefined),
 		}, "shape", "refinement_invalid", 1, "no valid ready correction after 3 submissions; the original draft is preserved", "failed"},
 		{"topology", []shpStep{
-			refSubmit("c1", refIntentPath, strings.Replace(shpIntentMD, "- features/steps/is_even_steps.js\n", "", 1)),
+			refSubmit("c1", refIntentPath, strings.Replace(shpScopedIntentMD, "- features/steps/is-even__steps.js\n", "", 1)),
 		}, "shape", "refinement_constraint", 1, refineTopology + " The original draft is preserved. The original draft is preserved.", "failed"},
 	}
 	for _, c := range cases {
@@ -1099,7 +1099,7 @@ func TestRefineProtectedPathsAreNotEditable(t *testing.T) {
 	parallel(t)
 	f := newRefFx(t, refOpts{})
 	cfgText := f.read(".kogen/project.yaml")
-	f.write(".kogen/project.yaml", cfgText+"protect: [features/steps/is_even_steps.js]\n")
+	f.write(".kogen/project.yaml", cfgText+"protect: [features/steps/is-even__steps.js]\n")
 	f.git("add", ".kogen/project.yaml")
 	f.git("commit", "-qm", "protect the step")
 	// re-record readiness for the changed configuration
@@ -1119,7 +1119,7 @@ func TestRefineProtectedPathsAreNotEditable(t *testing.T) {
 	e := shpWantError(t, err, "shape", "refinement_invalid", "", 1)
 	shpEq(t, "exit", exit, 1)
 	shpContains(t, "lines", strings.Join(e.Lines, "\n"), "not an exclusively owned editable draft file")
-	shpContains(t, "request", shpBody(f.Prov.requests()[0]), `Configured protected files: ["features/steps/is_even_steps.js"]`)
+	shpContains(t, "request", shpBody(f.Prov.requests()[0]), `Configured protected files: ["features/steps/is-even__steps.js"]`)
 	shpContains(t, "request", shpBody(f.Prov.requests()[0]), "# Exclusively owned editable files\n"+refIntentPath+"\n"+refFeaturePath+"\n# Protection")
 }
 
@@ -1145,7 +1145,7 @@ func TestRefineFixersFormatTheCandidateAndCannotTouchOtherFiles(t *testing.T) {
 	}
 	t.Run("formats the submitted files", func(t *testing.T) {
 		parallel(t)
-		f := setup(t, `"printf '// formatted\\n' >> features/steps/is_even_steps.js"`, refSubmit("c1", refStepPath, shpSteps))
+		f := setup(t, `"printf '// formatted\\n' >> features/steps/is-even__steps.js"`, refSubmit("c1", refStepPath, shpSteps))
 		exit, err := f.refine(f.hash())
 		if err != nil || exit != 0 {
 			t.Fatalf("exit %d, err %v\n%s", exit, err, f.Stderr)
@@ -1197,7 +1197,7 @@ func TestRefineRefusalsBeforeTheModel(t *testing.T) {
 	t.Run("an Intent that is not ready", func(t *testing.T) {
 		parallel(t)
 		f := newRefFx(t, refOpts{})
-		f.write(refIntentPath, strings.Replace(shpIntentMD, "- none\n", "", 1))
+		f.write(refIntentPath, strings.Replace(shpScopedIntentMD, "- none\n", "", 1))
 		exit, err := f.refine(f.hash0)
 		e := shpWantError(t, err, "intent", "not_ready", "refinement requires an existing ready Intent", 1)
 		shpEq(t, "exit", exit, 1)
@@ -1295,7 +1295,7 @@ func TestRefineRefusalsBeforeTheModel(t *testing.T) {
 		for p, c := range map[string]string{
 			".gitignore":           ".kogen/local/\n",
 			".kogen/project.yaml":  f.read(".kogen/project.yaml"),
-			refIntentPath:          shpIntentMD,
+			refIntentPath:          shpScopedIntentMD,
 			refFeaturePath:         shpFeature,
 			refStepPath:            shpSteps,
 			"accept.sh":            f.read("accept.sh"),
@@ -1691,7 +1691,7 @@ func TestRefineLocalIgnoredWarmthStaysAvailableToProbesButOutOfFinalProof(t *tes
 
 func TestRefineProbeRunsInTheScratchCopyWithTheProposalApplied(t *testing.T) {
 	parallel(t)
-	unsourced := strings.Replace(shpIntentMD, "- Non-integers raise TypeError. (source: request)", "- Non-integers raise TypeError.", 1)
+	unsourced := strings.Replace(shpScopedIntentMD, "- Non-integers raise TypeError. (source: request)", "- Non-integers raise TypeError.", 1)
 	f := newRefFx(t, refOpts{},
 		refSubmit("c1", refFeaturePath, refFeatured, refIntentPath, unsourced),
 		refProbe("c2", "grep -c 'Is even corrected' .kogen/intents/is-even/acceptance.feature; pwd -P"),
@@ -1840,7 +1840,7 @@ func TestRefineStopsWhenTheContextIsCancelled(t *testing.T) {
 	if err == nil || exit == 0 {
 		t.Fatalf("exit %d, err %v", exit, err)
 	}
-	refText(t, "intent", f.read(refIntentPath), shpIntentMD)
+	refText(t, "intent", f.read(refIntentPath), shpScopedIntentMD)
 }
 
 // ---- source receipts: historical contract, pinned approval, rollback ----

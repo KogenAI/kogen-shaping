@@ -12,18 +12,18 @@ import (
 // must publish at once.
 
 const (
-	uswStepFile   = "features/steps/is_even_steps.js"
-	uswReusedFile = "features/steps/shared_steps.js"
+	uswStepFile   = "features/steps/is-even__steps.js"
+	uswReusedFile = "features/steps/is-even__shared.js"
 	uswHeader     = "const assert = require('node:assert/strict');\nconst { Given, Then } = require('@cucumber/cucumber');\n"
-	uswGiven      = "Given('the number {int}', function (n) { this.n = n; });\n"
-	uswEven       = "Then('it is even', function () { assert.equal(this.n % 2, 0); });\n"
-	uswOdd        = "Then('it is not even', function () { assert.equal(this.n % 2, 1); });\n"
-	uswDead       = "Then('it is prime', function () {});\n"
+	uswGiven      = "Given('is-even: the number {int}', function (n) { this.n = n; });\n"
+	uswEven       = "Then('is-even: it is even', function () { assert.equal(this.n % 2, 0); });\n"
+	uswOdd        = "Then('is-even: it is not even', function () { assert.equal(this.n % 2, 1); });\n"
+	uswDead       = "Then('is-even: it is prime', function () {});\n"
 )
 
 func uswPackage(steps string) map[string]any {
 	return map[string]any{"files": []any{
-		map[string]any{"path": ".kogen/intents/is-even/intent.md", "content": shpIntentMD},
+		map[string]any{"path": ".kogen/intents/is-even/intent.md", "content": shpScopedIntentMD},
 		map[string]any{"path": ".kogen/intents/is-even/acceptance.feature", "content": shpFeature},
 		map[string]any{"path": uswStepFile, "content": steps},
 	}}
@@ -75,32 +75,33 @@ func TestUnusedStepWarnShape(t *testing.T) {
 		t.Fatal("the package and its readiness evidence are published")
 	}
 	// The result names the definition pattern and its file.
-	shpContains(t, "the result", f.Stdout.String(), f.uswWarningLine("it is prime", uswStepFile))
+	shpContains(t, "the result", f.Stdout.String(), f.uswWarningLine("is-even: it is prime", uswStepFile))
 	shpContains(t, "the result", f.Stdout.String(), "Next: kogen intent approve is-even")
 	// The run log keeps one self-check, ok, with the same warning, and the readiness warning.
 	checks := uswSelfchecks(f)
 	shpEq(t, "step_selfcheck events", len(checks), 1)
 	shpEq(t, "self-check ok", checks[0]["ok"], any(true))
 	ws := uswWarnings(t, checks[0])
-	if len(ws) != 1 || ws[0]["pattern"] != "it is prime" || ws[0]["file"] != uswStepFile || ws[0]["detail"] != "unused definition" {
+	if len(ws) != 1 || ws[0]["pattern"] != "is-even: it is prime" || ws[0]["file"] != uswStepFile || ws[0]["detail"] != "unused definition" {
 		t.Fatalf("self-check warnings %v", ws)
 	}
 	ready := shpNamed(f.events(), "step_warning")
-	if len(ready) != 1 || ready[0]["source"] != "readiness" || ready[0]["pattern"] != "it is prime" || ready[0]["file"] != uswStepFile {
+	if len(ready) != 1 || ready[0]["source"] != "readiness" || ready[0]["pattern"] != "is-even: it is prime" || ready[0]["file"] != uswStepFile {
 		t.Fatalf("readiness warning events %v", ready)
 	}
 	// The retained readiness evidence keeps it too.
-	shpContains(t, "readiness evidence", f.read(".kogen/local/readiness/is-even.json"), `"pattern":"it is prime"`)
+	shpContains(t, "readiness evidence", f.read(".kogen/local/readiness/is-even.json"), `"pattern":"is-even: it is prime"`)
 }
 
 func TestUnusedStepWarnReused(t *testing.T) {
 	parallel(t)
 	shared := uswHeader + uswGiven + uswDead
 	f := uswFx(t, shpSubmit("c1", map[string]any{"files": []any{
-		map[string]any{"path": ".kogen/intents/is-even/intent.md", "content": strings.Replace(shpIntentMD,
-			"- features/steps/is_even_steps.js\n", "- "+uswReusedFile+"\n- "+uswStepFile+"\n", 1)},
+		map[string]any{"path": ".kogen/intents/is-even/intent.md", "content": strings.Replace(shpScopedIntentMD,
+			"- features/steps/is-even__steps.js\n", "- "+uswReusedFile+"\n- "+uswStepFile+"\n", 1)},
 		map[string]any{"path": ".kogen/intents/is-even/acceptance.feature", "content": shpFeature},
 		map[string]any{"path": uswStepFile, "content": uswHeader + uswEven + uswOdd},
+		map[string]any{"path": uswReusedFile, "content": shared},
 	}}))
 	// A reused file: one definition serves the feature, the other is dead.
 	f.write(uswReusedFile, shared)
@@ -112,13 +113,13 @@ func TestUnusedStepWarnReused(t *testing.T) {
 	}
 	shpEq(t, "requests", len(f.Prov.requests()), 1)
 	shpEq(t, "reused file is unchanged", f.read(uswReusedFile), shared)
-	shpContains(t, "the result", f.Stdout.String(), f.uswWarningLine("it is prime", uswReusedFile))
+	shpContains(t, "the result", f.Stdout.String(), f.uswWarningLine("is-even: it is prime", uswReusedFile))
 	shpContains(t, "the result", f.Stdout.String(), uswReusedFile+" (unchanged)")
 	checks := uswSelfchecks(f)
 	shpEq(t, "step_selfcheck events", len(checks), 1)
 	shpEq(t, "self-check ok", checks[0]["ok"], any(true))
 	ws := uswWarnings(t, checks[0])
-	if len(ws) != 1 || ws[0]["pattern"] != "it is prime" || ws[0]["file"] != uswReusedFile {
+	if len(ws) != 1 || ws[0]["pattern"] != "is-even: it is prime" || ws[0]["file"] != uswReusedFile {
 		t.Fatalf("self-check warnings %v", ws)
 	}
 	if got := strings.Count(f.Stdout.String(), "warning: step definition"); got != 1 {
@@ -129,12 +130,12 @@ func TestUnusedStepWarnReused(t *testing.T) {
 func TestUnusedStepWarnShapeRefusals(t *testing.T) {
 	parallel(t)
 	wrapper := uswHeader + "const { spawnSync } = require('node:child_process');\n" + uswGiven +
-		"Then('it is even', function () { const r = spawnSync('sh', ['-c', 'go run ./cmd/evencheck 4']); assert.equal(r.status, 2); });\n" + uswOdd
+		"Then('is-even: it is even', function () { const r = spawnSync('sh', ['-c', 'go run ./cmd/evencheck 4']); assert.equal(r.status, 2); });\n" + uswOdd
 	cases := []struct{ name, steps, line string }{
-		{"undefined step", uswHeader + uswGiven + uswEven, "acceptance.feature line 7: undefined step: Then it is not even"},
-		{"ambiguous step", uswHeader + uswGiven + uswEven + uswEven + uswOdd, "- steps it is even: ambiguous step (2 definitions)"},
+		{"undefined step", uswHeader + uswGiven + uswEven, "acceptance.feature line 7: undefined step: Then is-even: it is not even"},
+		{"ambiguous step", uswHeader + uswGiven + uswEven + uswEven + uswOdd, "- steps is-even: it is even: ambiguous step (2 definitions)"},
 		{"file that does not load", "throw new Error('boom at load');\n" + uswHeader + uswGiven + uswEven + uswOdd, "- load " + uswStepFile + ": Error: boom at load"},
-		{"exit-code wrapper", wrapper, "- exit_code " + uswStepFile + ": step definition it is even asserts an exit code but obtains it through go run, " +
+		{"exit-code wrapper", wrapper, "- exit_code " + uswStepFile + ": step definition is-even: it is even asserts an exit code but obtains it through go run, " +
 			"which changes exit codes; build the binary (go build) and run it instead"},
 	}
 	for _, c := range cases {

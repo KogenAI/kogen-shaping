@@ -1,0 +1,147 @@
+package shape
+
+import (
+ "context"
+ "fmt"
+ "os"
+ "path/filepath"
+ "strings"
+ "testing"
+
+ "github.com/KogenAI/kogen-coordinator/git"
+ "github.com/KogenAI/kogen-coordinator/project"
+ "kogen-loop/sys"
+)
+
+// Independent overlay: exercise the exported implementations of the existing
+// commands, not a test or helper the Build is expected to invent.
+func kscPackage(slug, file, prefix string) map[string]any {
+ feature := "Feature: Number\n  Scenario: Number\n    Given "+prefix+"the number 4\n    Then "+prefix+"it is even\n"
+ steps := "const {Given,Then}=require('@cucumber/cucumber');\nGiven('"+prefix+"the number {int}',function(n){this.n=n});\nThen('"+prefix+"it is even',function(){require('node:assert/strict').equal(this.n%2,0);require('node:assert/strict').equal(require('node:fs').readFileSync('app.txt','utf8').trim(),'green')});\n"
+ md := strings.ReplaceAll(shpIntentMD, "is-even", slug)
+ md = strings.ReplaceAll(md, "features/steps/is_even_steps.js", file)
+ return map[string]any{"files": []any{
+  map[string]any{"path": project.IntentMDPath(slug), "content": md},
+  map[string]any{"path": project.FeaturePath(slug), "content": feature},
+  map[string]any{"path": file, "content": steps},
+ }}
+}
+func kscWritePackage(f *shpFx, pkg map[string]any) {
+ for _, raw := range pkg["files"].([]any) { m:=raw.(map[string]any); f.write(m["path"].(string),m["content"].(string)) }
+}
+func kscStep(slug string) string { return "features/steps/"+slug+"__steps.js" }
+func kscScript(f *shpFx,slug string,generic bool) {
+ n:=0
+ current:=kscPackage(slug,kscStep(slug),slug+": ")
+ f.Prov.route=func(req map[string]any)*shpStep {
+  if contractKind(req)!="" {return nil}
+  // Acknowledge real readiness red with the exact current feature, as the
+  // existing shaping protocol requires. Do not confuse that with correction.
+  for _,out:=range shpOutputs(req) {if strings.Contains(out,"Readiness observations\nChecked baseline:") {
+   raw:=current["files"].([]any)[1]
+   step:=shpSubmit("ack",map[string]any{"files":[]any{raw}});return &step
+  }}
+  if n==0 && generic {current=kscPackage(slug,"features/steps/number_steps.js","")}else{current=kscPackage(slug,kscStep(slug),slug+": ")}
+  n++;step:=shpSubmit(fmt.Sprintf("candidate-%d",n),current);return &step
+ }
+}
+func kscShape(f *shpFx, slug string) error {
+ f.newSession()
+ exit,err:=Shape(context.Background(),f.S,ShapeInput{Project:f.Root,Slug:slug,Request:"Add an even-number check when app.txt is green. Use steps owned exclusively by this Intent.",Client:f.Client})
+ if err!=nil || exit!=0 { return fmt.Errorf("Shape %s exit=%d: %v; %s %s",slug,exit,err,f.Stdout,f.Stderr) };return nil
+}
+func kscHash(t *testing.T, root, slug string) string {
+ t.Helper(); cfg,err:=project.LoadConfig(root); if err!=nil {t.Fatal(err)}
+ files,err:=project.Baseline(root,slug,cfg); if err!=nil {t.Fatal(err)};return project.Hash(root,files)
+}
+func kscApprove(t *testing.T,f *shpFx,slug string) {
+ t.Helper(); f.newSession()
+ exit,err:=Approve(context.Background(),f.S,ApproveInput{Project:f.Root,Slug:slug,Hash:kscHash(t,f.Root,slug),By:"Fixture"})
+ if err!=nil || exit!=0 {t.Fatalf("Approve %s exit=%d err=%v stdout=%s stderr=%s",slug,exit,err,f.Stdout,f.Stderr)}
+}
+func kscFixture(t *testing.T) *shpFx {
+ node:=os.Getenv("KOGEN_NODE"); cucumber:=filepath.Join(os.Getenv("KOGEN_CUCUMBER"),"@cucumber/cucumber/bin/cucumber.js")
+ quote:=func(s string)string{return "'"+strings.ReplaceAll(s,"'","'\\''")+"'"}
+ run:="NODE_PATH="+quote(os.Getenv("KOGEN_CUCUMBER"))+" "+quote(node)+" "+quote(cucumber)+" --strict --require 'features/steps/*.js' --format \"message:$KOGEN_ACCEPTANCE_REPORT\" \"$KOGEN_ACCEPTANCE_FEATURES\""
+ f:=newShpFxRun(t,run)
+ if err:=os.Remove(filepath.Join(f.Root,"features/steps/calc_steps.js"));err!=nil{t.Fatal(err)}
+ f.git("add","-A");f.git("commit","-qm","real cucumber fixture");return f
+}
+func kscWorktree(t *testing.T, f *shpFx, branch string) *shpFx {
+ root:=filepath.Join(t.TempDir(),branch);f.git("worktree","add","-qb",branch,root)
+ b:=*f; b.Root=root; b.Repo=git.New(root,b.Env); b.Prov=newShpProvider(t)
+ b.Env=append(append([]string{},f.Env...),"KOGEN_PROVIDER_URL="+b.Prov.srv.URL);b.newSession();return &b
+}
+func kscCheck(t *testing.T, got, want bool, label string) {
+ t.Helper();if got!=want {t.Errorf("%s: got %v, want %v",label,got,want)}
+}
+func kscCheckConflict(t *testing.T,exit int,err error,text string,need []string) {
+ t.Helper();kscCheck(t,exit!=0,true,"conflict refused")
+ if err!=nil {text += " "+fmt.Sprint(err); if e,ok:=sys.AsError(err);ok{text += " "+strings.Join(e.Lines," ")}}
+ for _,s:=range need {kscCheck(t,strings.Contains(text,s),true,"diagnostic names "+s)}
+}
+func kscControl(t *testing.T,bad bool) {
+ // The same final observer functions see valid observations and independent
+ // invalid observations. No product assertion needs to pass to reach these.
+ need:=[]string{"alpha","beta",kscStep("alpha"),kscStep("beta")}
+ text:=strings.Join(need," ")
+ t.Run("ownership-and-custody",func(t *testing.T){kscCheck(t,!bad,true,"approved ownership / bytes preserved / legacy usable")})
+ t.Run("refusal",func(t *testing.T){exit:=1;if bad{exit=0};kscCheckConflict(t,exit,nil,text,need)})
+ for i:=range need {t.Run(fmt.Sprint("diagnostic-",i),func(t *testing.T){s:=text;if bad{s=strings.ReplaceAll(s,need[i],"missing")};kscCheckConflict(t,1,nil,s,need)})}
+}
+func TestKStepFileCollisionAcceptance(t *testing.T) {
+ mode:=os.Getenv("KSC_MODE")
+ if mode=="good" || mode=="bad" {kscControl(t,mode=="bad");if !t.Failed(){fmt.Println("KSC-OK")};return}
+ if mode=="parallel" {
+  for _,first:=range []string{"alpha","beta"} {for _,land:=range []string{"merge","rebase"} {
+   t.Run(first+"-"+land,func(t *testing.T){
+    f:=kscFixture(t);a:=kscWorktree(t,f,"alpha");b:=kscWorktree(t,f,"beta")
+    kscScript(a,"alpha",true);kscScript(b,"beta",true)
+    done:=make(chan error,2);go func(){done<-kscShape(a,"alpha")}();go func(){done<-kscShape(b,"beta")}()
+    for i:=0;i<2;i++ {if err:=<-done;err!=nil{t.Fatal(err)}}
+    for _,pair:=range []struct{f *shpFx;s string}{{a,"alpha"},{b,"beta"}} {
+     in,err:=project.LoadIntent(pair.f.Root,pair.s);if err!=nil{t.Fatal(err)}
+     kscCheck(t,len(in.StepFiles())==1 && in.StepFiles()[0]==kscStep(pair.s),true,"approved ownership")
+     if _,err:=os.Stat(filepath.Join(pair.f.Root,"features/steps/number_steps.js"));!os.IsNotExist(err){t.Error("refused generic file leaked")}
+     if t.Failed(){return}
+     pair.f.git("add","-A");pair.f.git("commit","-qm",pair.s);kscApprove(t,pair.f,pair.s)
+    }
+    y:=b;if first=="beta"{y=a}
+    hashes:=map[string]string{"alpha":kscHash(t,a.Root,"alpha"),"beta":kscHash(t,b.Root,"beta")}
+    if land=="merge" {y.git("merge","--no-edit",first)}else{y.git("rebase",first)}
+    for _,s:=range []string{"alpha","beta"} {kscCheck(t,kscHash(t,y.Root,s)==hashes[s],true,"approved bytes survive "+land)}
+    second:="beta";if first=="beta"{second="alpha"};kscApprove(t,y,second)
+   })
+  }}
+ } else if mode=="foreign" || mode=="text" {
+  f:=kscFixture(t)
+  for _,slug:=range []string{"alpha","beta"} {
+   kscScript(f,slug,false)
+   if err:=kscShape(f,slug);err!=nil{t.Fatal(err)};f.git("add","-A");f.git("commit","-qm",slug);kscApprove(t,f,slug)
+  }
+  need:=[]string{"alpha","beta",kscStep("alpha")}
+  if mode=="foreign" {md:=f.read(project.IntentMDPath("beta"));f.write(project.IntentMDPath("beta"),strings.ReplaceAll(md,kscStep("beta"),kscStep("alpha")))}else{
+   kscWritePackage(f,kscPackage("beta",kscStep("beta"),"alpha: "));need=append(need,kscStep("beta"))
+  }
+  f.git("add","-A");f.git("commit","-qm","simulate resolved merge mixing steps")
+  before:=f.read(".kogen/local/approvals/beta.json");head:=f.head();f.newSession()
+  exit,err:=Approve(context.Background(),f.S,ApproveInput{Project:f.Root,Slug:"beta",Hash:kscHash(t,f.Root,"beta"),By:"Fixture"})
+  kscCheckConflict(t,exit,err,f.Stdout.String()+f.Stderr.String(),need)
+  kscCheck(t,f.read(".kogen/local/approvals/beta.json")==before,true,"refusal preserves approval");kscCheck(t,f.head()==head,true,"refusal makes no commit")
+ } else if mode=="legacy" || mode=="legacy-change" || mode=="new-sharing" {
+  f:=kscFixture(t);shared:="features/steps/shared_steps.js"
+  for _,slug:=range []string{"alpha","beta"} {kscWritePackage(f,kscPackage(slug,shared,""))}
+  f.git("add","-A");f.git("commit","-qm","legacy shared intents")
+  for _,slug:=range []string{"alpha","beta"} {
+   if mode=="new-sharing" && slug=="beta" {continue}
+   // Exact old exported approval format; no feature-specific ownership metadata.
+   if err:=project.WriteApproval(f.Root,project.Approval{Slug:slug,SHA256:kscHash(t,f.Root,slug),Base:f.head(),Approver:"Fixture",ApprovedAt:"2026-10-30T17:33:00Z"});err!=nil{t.Fatal(err)}
+  }
+  if mode=="legacy-change" {f.write(shared,f.read(shared)+"\n// merge changed the shared dependency\n");f.git("add","-A");f.git("commit","-qm","changed shared bytes")}
+  if mode=="legacy" {kscApprove(t,f,"alpha");kscApprove(t,f,"beta")}else{
+   f.newSession();exit,err:=Approve(context.Background(),f.S,ApproveInput{Project:f.Root,Slug:"beta",Hash:kscHash(t,f.Root,"beta"),By:"Fixture"})
+   kscCheckConflict(t,exit,err,f.Stdout.String()+f.Stderr.String(),[]string{"alpha","beta",shared})
+  }
+ }else{t.Fatalf("unknown KSC_MODE %q",mode)}
+ if !t.Failed(){fmt.Println("KSC-OK")}
+}

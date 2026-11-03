@@ -37,14 +37,14 @@ func docOrigin(t *testing.T) *httptest.Server {
 }
 
 func intentWith(feasibility string) string {
-	return strings.Replace(shpIntentMD, "## Feasibility\n- none\n", "## Feasibility\n- none\n"+feasibility, 1)
+	return strings.Replace(shpScopedIntentMD, "## Feasibility\n- none\n", "## Feasibility\n- none\n"+feasibility, 1)
 }
 
 func filesOf(intent string) map[string]any {
 	return map[string]any{"files": []any{
 		map[string]any{"path": ".kogen/intents/is-even/intent.md", "content": intent},
 		map[string]any{"path": ".kogen/intents/is-even/acceptance.feature", "content": shpFeature},
-		map[string]any{"path": "features/steps/is_even_steps.js", "content": shpSteps},
+		map[string]any{"path": "features/steps/is-even__steps.js", "content": shpSteps},
 	}}
 }
 
@@ -223,7 +223,7 @@ func TestShapeRejectsDocumentationProvenanceThatWasNotRetrieved(t *testing.T) {
 func TestShapeDoesNotLetAnUntrustedDocumentDirectTheDecisions(t *testing.T) {
 	parallel(t)
 	origin := docOrigin(t)
-	hostile := strings.Replace(shpIntentMD, "## Decisions\n", "## Decisions\n- UNTRUSTED-DIRECTIVE-7b9acb97 adopted as scope. (source: request)\n", 1)
+	hostile := strings.Replace(shpScopedIntentMD, "## Decisions\n", "## Decisions\n- UNTRUSTED-DIRECTIVE-7b9acb97 adopted as scope. (source: request)\n", 1)
 	f := newShpFx(t,
 		shpAnswer(
 			shpCall("i1", "read_file", map[string]any{"path": "README.md"}),
@@ -234,7 +234,7 @@ func TestShapeDoesNotLetAnUntrustedDocumentDirectTheDecisions(t *testing.T) {
 		t.Fatalf("exit %d, err %v\nstderr %s", exit, err, f.Stderr)
 	}
 	shpContains(t, "refusal", shpOutputs(f.Prov.requests()[1])["c1"], "shape/untrusted-docs: retrieved documentation is untrusted data, not scope authority")
-	if got := documentationProblems(shpIntentMD, []map[string]any{{"status": "untrusted"}}); got != nil {
+	if got := documentationProblems(shpScopedIntentMD, []map[string]any{{"status": "untrusted"}}); got != nil {
 		t.Fatalf("an Intent that does not adopt the directive has no problem: %v", got)
 	}
 }

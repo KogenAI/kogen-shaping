@@ -19,14 +19,14 @@ import (
 const (
 	pfIntentPath  = ".kogen/intents/is-even/intent.md"
 	pfFeaturePath = ".kogen/intents/is-even/acceptance.feature"
-	pfStepsPath   = "features/steps/is_even_steps.js"
+	pfStepsPath   = "features/steps/is-even__steps.js"
 	pfCustody     = ".kogen/local/shaping/is-even/proposed/"
 
 	pfNativeTools = "read_file, view_image, list_files, search_text, probe, documentation, propose_files, submit"
 )
 
 // pfIntentDraft is a first, shorter version of the Intent that later proposals replace.
-var pfIntentDraft = strings.Replace(shpIntentMD, "calc.is_even(n) returns True for even integers.", "Draft: is_even is to be written.", 1)
+var pfIntentDraft = strings.Replace(shpScopedIntentMD, "calc.is_even(n) returns True for even integers.", "Draft: is_even is to be written.", 1)
 
 func pfFile(path, content string) map[string]any {
 	return map[string]any{"path": path, "content": content}
@@ -100,8 +100,8 @@ func TestProposeFilesStagesPackage(t *testing.T) {
 	f := newShpFx(t,
 		pfInspectAnd(pfPropose("p1", pfFile(pfIntentPath, pfIntentDraft))),
 		pfPropose("p2", pfFile(pfFeaturePath, shpFeature)),
-		pfPropose("p3", pfFile(pfStepsPath, shpSteps), pfFile(pfIntentPath, shpIntentMD)),
-		shpAnswer(shpCall("s1", "submit", map[string]any{"files": []any{pfFile(pfIntentPath, shpIntentMD)}})),
+		pfPropose("p3", pfFile(pfStepsPath, shpSteps), pfFile(pfIntentPath, shpScopedIntentMD)),
+		shpAnswer(shpCall("s1", "submit", map[string]any{"files": []any{pfFile(pfIntentPath, shpScopedIntentMD)}})),
 		shpAck("ack"))
 
 	var mu sync.Mutex
@@ -126,7 +126,7 @@ func TestProposeFilesStagesPackage(t *testing.T) {
 		2: custodyIs(2, map[string]string{pfIntentPath: pfIntentDraft}),
 		3: custodyIs(3, map[string]string{pfIntentPath: pfIntentDraft, pfFeaturePath: shpFeature}),
 		4: func(req map[string]any) {
-			custodyIs(4, map[string]string{pfIntentPath: shpIntentMD, pfFeaturePath: shpFeature, pfStepsPath: shpSteps})(req)
+			custodyIs(4, map[string]string{pfIntentPath: shpScopedIntentMD, pfFeaturePath: shpFeature, pfStepsPath: shpSteps})(req)
 			if n := f.runs(); int64(n) != runsAtStart.Load() {
 				fail("request 4: the acceptance command ran %d time(s) since the first request, before submit", int64(n)-runsAtStart.Load())
 			}
@@ -171,7 +171,7 @@ func TestProposeFilesStagesPackage(t *testing.T) {
 	shpMatch(t, "progress 2", stderr, `(?m)^kogen: shape proposal retained: \Q`+pfFeaturePath+`\E \(2 proposed file\(s\)\) \(\d+ s\)$`)
 	shpMatch(t, "progress 3", stderr, `(?m)^kogen: shape proposal retained: \Q`+pfIntentPath+", "+pfStepsPath+`\E \(3 proposed file\(s\)\) \(\d+ s\)$`)
 
-	shpEq(t, "intent", f.read(pfIntentPath), shpIntentMD)
+	shpEq(t, "intent", f.read(pfIntentPath), shpScopedIntentMD)
 	shpEq(t, "feature", f.read(pfFeaturePath), shpFeature)
 	shpEq(t, "steps", f.read(pfStepsPath), shpSteps)
 }
@@ -181,7 +181,7 @@ func TestProposeFilesRefusals(t *testing.T) {
 	const unsafe = "calc.js: shaping may write only .kogen/intents/is-even/{intent.md,acceptance.feature,model.qnt} and step files under features/steps/"
 	f := newShpFx(t,
 		pfInspectAnd(shpAnswer(shpCall("e1", "propose_files", map[string]any{"files": []any{}}))),
-		pfPropose("v1", pfFile(pfIntentPath, shpIntentMD)),
+		pfPropose("v1", pfFile(pfIntentPath, shpScopedIntentMD)),
 		pfPropose("u1", pfFile("calc.js", "x")),
 		pfPropose("m1", pfFile(pfFeaturePath, shpFeature), pfFile("calc.js", "x")),
 		pfPropose("d1", pfFile(pfFeaturePath, shpFeature), pfFile(pfFeaturePath, "other")),
@@ -193,7 +193,7 @@ func TestProposeFilesRefusals(t *testing.T) {
 	var problems []string
 	f.watch(map[int]func(map[string]any){
 		3: func(map[string]any) {
-			if got := f.custody(pfIntentPath); got != shpIntentMD {
+			if got := f.custody(pfIntentPath); got != shpScopedIntentMD {
 				mu.Lock()
 				problems = append(problems, fmt.Sprintf("custody of the valid proposal = %q", got))
 				mu.Unlock()
@@ -234,7 +234,7 @@ func TestProposeFilesRefusals(t *testing.T) {
 	if len(counts) != 1 || counts[0]["invalid_submissions"] != any(float64(0)) {
 		t.Fatalf("turn counts %v", counts)
 	}
-	shpEq(t, "intent", f.read(pfIntentPath), shpIntentMD)
+	shpEq(t, "intent", f.read(pfIntentPath), shpScopedIntentMD)
 	shpEq(t, "feature", f.read(pfFeaturePath), shpFeature)
 	shpEq(t, "steps", f.read(pfStepsPath), shpSteps)
 }
@@ -256,7 +256,7 @@ func TestProposeFilesCutOffReply(t *testing.T) {
 	t.Run("earlier proposals are kept and named", func(t *testing.T) {
 		parallel(t)
 		f := newShpFx(t,
-			pfInspectAnd(pfPropose("p1", pfFile(pfIntentPath, shpIntentMD))),
+			pfInspectAnd(pfPropose("p1", pfFile(pfIntentPath, shpScopedIntentMD))),
 			pfPropose("p2", pfFile(pfFeaturePath, shpFeature)),
 			pfIncomplete())
 		exit, err := f.shape("Add calc.is_even(n).")
@@ -269,7 +269,7 @@ func TestProposeFilesCutOffReply(t *testing.T) {
 		if !strings.HasSuffix(out, kept) || strings.Index(out, "provider/") < 0 || strings.Index(out, "provider/") > strings.Index(out, kept) {
 			t.Fatalf("stdout %q does not end with the kept line after the provider error", out)
 		}
-		shpEq(t, "custody intent", f.custody(pfIntentPath), shpIntentMD)
+		shpEq(t, "custody intent", f.custody(pfIntentPath), shpScopedIntentMD)
 		shpEq(t, "custody feature", f.custody(pfFeaturePath), shpFeature)
 		if f.exists(".kogen/intents/is-even") || f.exists(pfStepsPath) {
 			t.Fatal("a proposal was written into the checkout")
@@ -300,10 +300,10 @@ func TestProposeFilesDroppedStream(t *testing.T) {
 		panic(http.ErrAbortHandler)
 	}}
 	f := newShpFx(t,
-		pfInspectAnd(pfPropose("p1", pfFile(pfIntentPath, shpIntentMD), pfFile(pfFeaturePath, shpFeature))),
+		pfInspectAnd(pfPropose("p1", pfFile(pfIntentPath, shpScopedIntentMD), pfFile(pfFeaturePath, shpFeature))),
 		dropped,
 		shpAnswer(shpCall("p2", "propose_files", map[string]any{"files": []any{pfFile(pfStepsPath, shpSteps)}}),
-			shpCall("s1", "submit", map[string]any{"files": []any{pfFile(pfIntentPath, shpIntentMD)}})),
+			shpCall("s1", "submit", map[string]any{"files": []any{pfFile(pfIntentPath, shpScopedIntentMD)}})),
 		shpAck("ack"))
 	exit, err := f.shape("Add calc.is_even(n).")
 	if err != nil || exit != 0 {
@@ -319,7 +319,7 @@ func TestProposeFilesDroppedStream(t *testing.T) {
 	shpContains(t, "retried request", body, "propose_files")
 	shpEq(t, "step output", shpOutputs(reqs[3])["p2"], pfRetained(pfStepsPath, 3))
 	shpEq(t, "proposal events", len(shpNamed(f.events(), "proposal_retained")), 2)
-	shpEq(t, "intent", f.read(pfIntentPath), shpIntentMD)
+	shpEq(t, "intent", f.read(pfIntentPath), shpScopedIntentMD)
 	shpEq(t, "feature", f.read(pfFeaturePath), shpFeature)
 	shpEq(t, "steps", f.read(pfStepsPath), shpSteps)
 }

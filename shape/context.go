@@ -449,6 +449,7 @@ func contextBlocks(p promptInput) ([]any, error) {
 	b.WriteString("\n# The Intent to write\n\n")
 	fmt.Fprintf(&b, "Slug: %s\nWrite `%s`, `%s`, optionally `%s`, and step files under `%s/`.\n\n", p.slug,
 		project.IntentMDPath(p.slug), project.FeaturePath(p.slug), project.ModelPath(p.slug), stepsText)
+	fmt.Fprintf(&b, "New step files must be named `%s__<suffix>.js` (nonempty suffix) directly under the steps directory. Prefix every step sentence and definition with `%s: `; do not use other Intents' step files or bindings.\n\n", p.slug, p.slug)
 	b.WriteString("# Project instructions (README.md)\n\n" + ReadmeText(p.root) + "\n\n")
 	b.WriteString("# Testing rules (docs/testing-rules.md)\n\n" + agent.Prompt(agent.TestingRules) + "\n\n")
 	b.WriteString("# Configured commands (.kogen/project.yaml)\n\n")

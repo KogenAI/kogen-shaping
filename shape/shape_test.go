@@ -35,7 +35,7 @@ func TestShapeOneShotWritesThePackageAndPrintsTheLines(t *testing.T) {
 	}
 	shpEq(t, "intent line", lines[0], "Intent: "+filepath.Join(f.Root, ".kogen/intents/is-even/intent.md"))
 	shpEq(t, "feature line", lines[1], "Acceptance test: "+filepath.Join(f.Root, ".kogen/intents/is-even/acceptance.feature"))
-	shpEq(t, "steps line", lines[2], "Step files: features/steps/is_even_steps.js (new)")
+	shpEq(t, "steps line", lines[2], "Step files: features/steps/is-even__steps.js (new)")
 	shpEq(t, "model line", lines[3], "Model: not applicable — a pure function without state")
 	shpEq(t, "scenarios line", lines[4], "Scenarios: 2 (2 fail now, 0 pass now)")
 	shpMatch(t, "usage line", lines[5], `^shape gpt-6\.1-sol/high input=\d+ cached=\d+ output=\d+ reasoning=\d+ wall_ms=\d+$`)
@@ -46,8 +46,8 @@ func TestShapeOneShotWritesThePackageAndPrintsTheLines(t *testing.T) {
 	shpContains(t, "progress", f.Stderr.String(), "kogen: checking readiness (")
 
 	shpEq(t, "feature file", f.read(".kogen/intents/is-even/acceptance.feature"), shpFeature)
-	shpEq(t, "step file", f.read("features/steps/is_even_steps.js"), shpSteps)
-	shpEq(t, "intent file", f.read(".kogen/intents/is-even/intent.md"), shpIntentMD)
+	shpEq(t, "step file", f.read("features/steps/is-even__steps.js"), shpSteps)
+	shpEq(t, "intent file", f.read(".kogen/intents/is-even/intent.md"), shpScopedIntentMD)
 	if f.exists(".kogen/local/approvals/is-even.json") {
 		t.Fatal("shaping approves nothing")
 	}
@@ -125,7 +125,7 @@ func TestShapeWritesEvidenceAndUsageRecords(t *testing.T) {
 	shpEq(t, "acceptance executions", end[0]["acceptance_executions"], any(float64(1)))
 
 	// The manifest keeps proposals and originals under the shaping folder.
-	b, err := os.ReadFile(filepath.Join(f.Root, ".kogen/local/shaping/is-even/proposed/features/steps/is_even_steps.js"))
+	b, err := os.ReadFile(filepath.Join(f.Root, ".kogen/local/shaping/is-even/proposed/features/steps/is-even__steps.js"))
 	if err != nil || string(b) != shpSteps {
 		t.Fatalf("proposal copy = %q, %v", b, err)
 	}
@@ -185,7 +185,7 @@ func TestShapeRefusesWhatItCannotShape(t *testing.T) {
 	t.Run("already shaped", func(t *testing.T) {
 		parallel(t)
 		f := newShpFx(t)
-		f.write(".kogen/intents/is-even/intent.md", shpIntentMD)
+		f.write(".kogen/intents/is-even/intent.md", shpScopedIntentMD)
 		exit, err := f.shape("x")
 		shpWantError(t, err, "intent", "exists", "is-even is already shaped; edit its files, or delete .kogen/intents/is-even/ and shape again", 5)
 		shpEq(t, "exit", exit, 5)
@@ -249,7 +249,7 @@ func TestShapeCallsOutAnUntrackedRequestFileAndWarnsAboutEmptyChecks(t *testing.
 func TestShapeFormatsItsFilesWithTheFixersAndLeavesOthersAlone(t *testing.T) {
 	parallel(t)
 	f := newShpFx(t, shpSubmit("c1", shpFiles()), shpAck("c2"))
-	f.write(".kogen/project.yaml", "version: 1\ncommands:\n  fix: ['f=features/steps/is_even_steps.js; if [ -f $f ]; then grep -q formatted $f || echo // formatted >> $f; fi; grep -q formatted README.md || echo formatted >> README.md; echo junk > calc.js']\n  acceptance: {run: sh accept.sh, steps_dir: features/steps}\n")
+	f.write(".kogen/project.yaml", "version: 1\ncommands:\n  fix: ['f=features/steps/is-even__steps.js; if [ -f $f ]; then grep -q formatted $f || echo // formatted >> $f; fi; grep -q formatted README.md || echo formatted >> README.md; echo junk > calc.js']\n  acceptance: {run: sh accept.sh, steps_dir: features/steps}\n")
 	f.git("add", "-A")
 	f.git("commit", "-qm", "fixer")
 	readme, calc := f.read("README.md"), f.read("calc.js")
@@ -257,29 +257,21 @@ func TestShapeFormatsItsFilesWithTheFixersAndLeavesOthersAlone(t *testing.T) {
 		t.Fatalf("exit %d, err %v\n%s", exit, err, f.Stderr)
 	}
 	shpContains(t, "stderr", f.Stderr.String(), "kogen: running fix-1: ")
-	shpContains(t, "step file", f.read("features/steps/is_even_steps.js"), "// formatted")
+	shpContains(t, "step file", f.read("features/steps/is-even__steps.js"), "// formatted")
 	shpEq(t, "README", f.read("README.md"), readme)
 	shpEq(t, "calc.js", f.read("calc.js"), calc)
 }
 
-func TestShapeStepFileStates(t *testing.T) {
+func TestShapeRejectsExistingGenericStepFile(t *testing.T) {
 	parallel(t)
-	// Editing an existing step file shows as edited; the Intent's own steps are new.
 	files := shpFiles()
 	list := files["files"].([]any)
-	list = append(list, map[string]any{"path": "features/steps/calc_steps.js", "content": "const { Given } = require('@cucumber/cucumber');\nGiven('the number {int}', function () {});\n"})
-	list[2] = map[string]any{"path": "features/steps/is_even_steps.js", "content": "const { Then } = require('@cucumber/cucumber');\nThen('it is even', function () {});\nThen('it is not even', function () {});\n"}
+	list = append(list, map[string]any{"path": "features/steps/calc_steps.js", "content": "// shared"})
 	files["files"] = list
-	intent := strings.Replace(shpIntentMD, "- features/steps/is_even_steps.js\n", "- features/steps/is_even_steps.js\n- features/steps/calc_steps.js\n", 1)
-	list[0] = map[string]any{"path": ".kogen/intents/is-even/intent.md", "content": intent}
-	f := newShpFx(t, shpSubmit("c1", files), shpAck("c2"))
-	if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 0 {
-		t.Fatalf("exit %d, err %v\n%s", exit, err, f.Stdout)
-	}
-	shpContains(t, "stdout", f.Stdout.String(), "Step files: features/steps/is_even_steps.js (new), features/steps/calc_steps.js (edited)\n")
-	if !strings.Contains(f.git("status", "--porcelain"), "features/steps/calc_steps.js") {
-		t.Fatal("the existing step file has uncommitted changes")
-	}
+	f := newShpFx(t, shpSubmit("c1", files), shpSubmit("c2", files), shpSubmit("c3", files))
+	_, err := f.shape("Add calc.is_even(n).")
+	e := shpWantError(t, err, "shape", "invalid_output", "", 1)
+	shpContains(t, "feedback", strings.Join(e.Lines, "\n"), "is-even__<suffix>.js")
 }
 
 func TestShapeProviderFailureWritesNoFilesAndExplainsTheRerun(t *testing.T) {
@@ -353,7 +345,7 @@ func shpQuestion(text string, options ...string) map[string]any {
 }
 
 func shpFilesWithDecisions(decisions ...string) map[string]any {
-	intent := strings.Replace(shpIntentMD, "- Non-integers raise TypeError. (source: request)\n", strings.Join(decisions, "\n")+"\n", 1)
+	intent := strings.Replace(shpScopedIntentMD, "- Non-integers raise TypeError. (source: request)\n", strings.Join(decisions, "\n")+"\n", 1)
 	files := shpFiles()
 	files["files"].([]any)[0] = map[string]any{"path": ".kogen/intents/is-even/intent.md", "content": intent}
 	return files
@@ -500,7 +492,7 @@ func TestShapeInvalidSubmitIsRetriedWithFeedbackAndKeepsEarlierProposals(t *test
 	parallel(t)
 	unsourced := shpFilesWithDecisions("- Non-integers raise TypeError.")
 	fixed := map[string]any{"files": []any{
-		map[string]any{"path": ".kogen/intents/is-even/intent.md", "content": shpIntentMD},
+		map[string]any{"path": ".kogen/intents/is-even/intent.md", "content": shpScopedIntentMD},
 	}}
 	f := newShpFx(t, shpSubmit("c1", unsourced), shpSubmit("c2", fixed), shpAck("c3"))
 	exit, err := f.shape("Add calc.is_even(n).")
@@ -511,9 +503,9 @@ func TestShapeInvalidSubmitIsRetriedWithFeedbackAndKeepsEarlierProposals(t *test
 	shpEq(t, "requests", len(reqs), 3)
 	shpEq(t, "feedback", shpOutputs(reqs[1])["c1"], "invalid submission:\ndecisions: a decision has no source\nEarlier well-formed proposals are retained; submit only corrections.")
 	// The corrected intent.md alone completed the package: the earlier feature and steps stayed.
-	shpContains(t, "manifest", shpBody(reqs[1]), "features/steps/is_even_steps.js")
+	shpContains(t, "manifest", shpBody(reqs[1]), "features/steps/is-even__steps.js")
 	shpEq(t, "feature", f.read(".kogen/intents/is-even/acceptance.feature"), shpFeature)
-	shpEq(t, "intent", f.read(".kogen/intents/is-even/intent.md"), shpIntentMD)
+	shpEq(t, "intent", f.read(".kogen/intents/is-even/intent.md"), shpScopedIntentMD)
 	shpContains(t, "readiness feedback", shpOutputs(reqs[2])["c2"], "Readiness observations")
 	shpContains(t, "acknowledgment guidance", shpOutputs(reqs[2])["c2"], "After inspecting legitimate missing-feature red")
 }
@@ -529,7 +521,7 @@ func TestShapeThreeInvalidSubmissionsStopShapingAndWriteNothing(t *testing.T) {
 	shpEq(t, "requests", len(f.Prov.requests()), 3)
 	shpEq(t, "feedback", shpOutputs(f.Prov.requests()[1])["c1"],
 		"invalid submission:\nsubmit takes exactly one of a non-empty questions list, a non-empty files list, or a blocked report\nNo proposals from this submission were retained; earlier proposals are unchanged.")
-	if f.exists(".kogen/intents/is-even") || f.exists("features/steps/is_even_steps.js") {
+	if f.exists(".kogen/intents/is-even") || f.exists("features/steps/is-even__steps.js") {
 		t.Fatal("nothing is written before a valid submission")
 	}
 }
@@ -547,7 +539,7 @@ func TestShapeSubmissionEnvelopeProblems(t *testing.T) {
 		{"a path that is not normal", map[string]any{"files": []any{file("features/steps/../steps/a.js", "x")}}, "features/steps/../steps/a.js: paths must be relative and normal"},
 		{"an absolute path", map[string]any{"files": []any{file("/etc/passwd", "x")}}, "/etc/passwd: paths must be relative and normal"},
 		{"a missing content", map[string]any{"files": []any{map[string]any{"path": "features/steps/a.js"}}}, "every file needs a path and a content string"},
-		{"duplicate paths", map[string]any{"files": []any{file("features/steps/a.js", "x"), file("features/steps/a.js", "y")}}, "file paths must be unique; no proposals from this submission were retained"},
+		{"duplicate paths", map[string]any{"files": []any{file("features/steps/is-even__a.js", "x"), file("features/steps/is-even__a.js", "y")}}, "file paths must be unique; no proposals from this submission were retained"},
 		{"empty questions", map[string]any{"questions": []any{}}, "submit takes exactly one of a non-empty questions list, a non-empty files list, or a blocked report"},
 		{"a question without text", map[string]any{"questions": []any{map[string]any{"question": " "}}}, "every question needs question text and optional options with string labels and boolean recommended values"},
 		{"an option without a label", map[string]any{"questions": []any{map[string]any{"question": "Q?", "options": []any{map[string]any{"recommended": true}}}}}, "every question needs question text and optional options with string labels and boolean recommended values"},
@@ -661,7 +653,7 @@ func TestShapeRedReadinessReturnsObservationsAndAcknowledgmentReusesThem(t *test
 	shpContains(t, "feedback", feedback, "Inspect whether fixtures, inputs and commands reached the intended behavior")
 	shpContains(t, "feedback", feedback, "Acceptance exit: 1\n")
 	shpContains(t, "skipped feedback", feedback, "Unexercised acceptance steps: 2")
-	shpContains(t, "skipped feedback", feedback, "acceptance.feature line 4: Then it is even")
+	shpContains(t, "skipped feedback", feedback, "acceptance.feature line 4: Then is-even: it is even")
 	shpContains(t, "skipped feedback", feedback, "Skipped steps are unexercised; readiness does not prove their behavior or fixture validity.")
 	obsPath := filepath.Join(f.Root, ".kogen/local/shaping/is-even/observations-1.txt")
 	shpContains(t, "feedback", feedback, "Evidence: "+obsPath)
@@ -676,7 +668,7 @@ func TestShapeRedReadinessReturnsObservationsAndAcknowledgmentReusesThem(t *test
 
 func TestShapeAChangedPackageAfterRedGetsFreshChecks(t *testing.T) {
 	parallel(t)
-	changed := map[string]any{"files": []any{map[string]any{"path": "features/steps/is_even_steps.js", "content": shpSteps + "// changed\n"}}}
+	changed := map[string]any{"files": []any{map[string]any{"path": "features/steps/is-even__steps.js", "content": shpSteps + "// changed\n"}}}
 	f := newShpFx(t, shpSubmit("c1", shpFiles()), shpSubmit("c2", changed), shpAck("c3"))
 	if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 0 {
 		t.Fatalf("exit %d, err %v\n%s", exit, err, f.Stdout)
@@ -684,7 +676,7 @@ func TestShapeAChangedPackageAfterRedGetsFreshChecks(t *testing.T) {
 	shpEq(t, "requests", len(f.Prov.requests()), 3)
 	shpContains(t, "second feedback", shpOutputs(f.Prov.requests()[2])["c2"], "Readiness observations")
 	shpEq(t, "runner check plus two dry runs", f.runs(), 3)
-	shpContains(t, "step file", f.read("features/steps/is_even_steps.js"), "// changed")
+	shpContains(t, "step file", f.read("features/steps/is-even__steps.js"), "// changed")
 }
 
 func TestShapeUndefinedStepGoesBackToTheShaperAndStaysNotReady(t *testing.T) {
@@ -694,7 +686,7 @@ func TestShapeUndefinedStepGoesBackToTheShaperAndStaysNotReady(t *testing.T) {
 	exit, err := f.shape("Add calc.is_even(n).")
 	e := shpWantError(t, err, "intent", "not_ready", "the Intent is not ready to build", 1)
 	shpEq(t, "exit", exit, 1)
-	shpEq(t, "lines", strings.Join(e.Lines, "\n"), "acceptance.feature line 3: undefined step: Given the number 4\nacceptance.feature line 4: undefined step: Then it is even\nacceptance.feature line 6: undefined step: Given the number 3\nacceptance.feature line 7: undefined step: Then it is not even")
+	shpEq(t, "lines", strings.Join(e.Lines, "\n"), "acceptance.feature line 3: undefined step: Given is-even: the number 4\nacceptance.feature line 4: undefined step: Then is-even: it is even\nacceptance.feature line 6: undefined step: Given is-even: the number 3\nacceptance.feature line 7: undefined step: Then is-even: it is not even")
 	reqs := f.Prov.requests()
 	shpEq(t, "requests", len(reqs), 3)
 	shpEq(t, "feedback", shpOutputs(reqs[1])["c1"], "not ready:\n"+strings.Join(e.Lines, "\n"))
@@ -728,20 +720,20 @@ func TestShapeAfterANotReadyAttemptTheShaperMayAskQuestions(t *testing.T) {
 		t.Fatalf("answering with files present: exit %d, err %v\n%s", exit, err, f.Stderr)
 	}
 	shpContains(t, "intent", f.read(".kogen/intents/is-even/intent.md"), "(source: answer 1)")
-	shpContains(t, "manifest names the files of the earlier attempt as originals", shpBody(shpShaperRequests(f.Prov.requests())[2]), "features/steps/is_even_steps.js")
+	shpContains(t, "manifest names the files of the earlier attempt as originals", shpBody(shpShaperRequests(f.Prov.requests())[2]), "features/steps/is-even__steps.js")
 }
 
 func TestShapeRejectsAnAbandonedDeclaredStep(t *testing.T) {
 	parallel(t)
-	noSteps := strings.Replace(shpIntentMD, "- features/steps/is_even_steps.js\n", "", 1)
+	noSteps := strings.Replace(shpScopedIntentMD, "- features/steps/is-even__steps.js\n", "", 1)
 	dropped := map[string]any{"files": []any{map[string]any{"path": ".kogen/intents/is-even/intent.md", "content": noSteps}}}
-	restored := map[string]any{"files": []any{map[string]any{"path": ".kogen/intents/is-even/intent.md", "content": shpIntentMD}}}
+	restored := map[string]any{"files": []any{map[string]any{"path": ".kogen/intents/is-even/intent.md", "content": shpScopedIntentMD}}}
 	f := newShpFx(t, shpSubmit("c1", shpFiles()), shpSubmit("c2", dropped), shpSubmit("c3", restored))
 	if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 0 {
 		t.Fatalf("exit %d, err %v\n%s", exit, err, f.Stdout)
 	}
 	feedback := shpOutputs(f.Prov.requests()[2])["c2"]
-	shpContains(t, "feedback", feedback, "proposed artifacts must remain declared: features/steps/is_even_steps.js. Omission cannot delete proposals")
+	shpContains(t, "feedback", feedback, "proposed artifacts must remain declared: features/steps/is-even__steps.js. Omission cannot delete proposals")
 }
 
 // ---- tools and probes ----
@@ -950,7 +942,7 @@ func TestShapeRecordsEachRefusedSubmissionWithItsGate(t *testing.T) {
 	parallel(t)
 	both := map[string]any{"questions": []any{shpQuestion("Q?")}, "files": shpFiles()["files"]}
 	unsourced := shpFilesWithDecisions("- Non-integers raise TypeError.")
-	noSteps := strings.Replace(shpIntentMD, "- features/steps/is_even_steps.js\n", "", 1)
+	noSteps := strings.Replace(shpScopedIntentMD, "- features/steps/is-even__steps.js\n", "", 1)
 	dropped := map[string]any{"files": []any{map[string]any{"path": ".kogen/intents/is-even/intent.md", "content": noSteps}}}
 	for _, tc := range []struct {
 		name   string
@@ -994,7 +986,7 @@ func TestShortenTitle(t *testing.T) {
 // shpTitled is shpFiles with another title and, when extra is set, the given Decisions line instead.
 func shpTitled(title, decision string) map[string]any {
 	files := shpFiles()
-	intent := strings.Replace(shpIntentMD, "# Add an is-even check\n", "# "+title+"\n", 1)
+	intent := strings.Replace(shpScopedIntentMD, "# Add an is-even check\n", "# "+title+"\n", 1)
 	if decision != "" {
 		intent = strings.Replace(intent, "- Non-integers raise TypeError. (source: request)\n", decision+"\n", 1)
 	}

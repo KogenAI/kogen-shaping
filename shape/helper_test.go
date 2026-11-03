@@ -289,18 +289,20 @@ func shpToolNames(req map[string]any) []string {
 
 const shpSlug = "is-even"
 
-const shpFeature = "Feature: Is even\n  Scenario: Even numbers\n    Given the number 4\n    Then it is even\n  Scenario: Odd numbers\n    Given the number 3\n    Then it is not even\n"
+const shpFeature = "Feature: Is even\n  Scenario: Even numbers\n    Given is-even: the number 4\n    Then is-even: it is even\n  Scenario: Odd numbers\n    Given is-even: the number 3\n    Then is-even: it is not even\n"
 
-const shpSteps = "// steps\nconst { Given, Then } = require('@cucumber/cucumber');\nGiven('the number {int}', function () {});\nThen('it is even', function () {});\nThen('it is not even', function () {});\n"
+const shpSteps = "// steps\nconst { Given, Then } = require('@cucumber/cucumber');\nGiven('is-even: the number {int}', function () {});\nThen('is-even: it is even', function () {});\nThen('is-even: it is not even', function () {});\n"
 
 const shpIntentMD = "# Add an is-even check\n\nSlug: is-even\nModel: not applicable — a pure function without state\nAcceptance:\n- .kogen/intents/is-even/acceptance.feature\n- features/steps/is_even_steps.js\n\ncalc.is_even(n) returns True for even integers.\n\n## Decisions\n- Non-integers raise TypeError. (source: request)\n\n## Source comparison\n- The request asks for is_even; the feature covers it.\n\n## Tests\n- is_even returns True for even integers: add test_is_even in tests/test_calc.py (unit)\n\n## Feasibility\n- none\n"
+
+var shpScopedIntentMD = strings.ReplaceAll(shpIntentMD, "features/steps/is_even_steps.js", "features/steps/is-even__steps.js")
 
 // shpFiles is a valid submission of the whole package.
 func shpFiles() map[string]any {
 	return map[string]any{"files": []any{
-		map[string]any{"path": ".kogen/intents/is-even/intent.md", "content": shpIntentMD},
+		map[string]any{"path": ".kogen/intents/is-even/intent.md", "content": shpScopedIntentMD},
 		map[string]any{"path": ".kogen/intents/is-even/acceptance.feature", "content": shpFeature},
-		map[string]any{"path": "features/steps/is_even_steps.js", "content": shpSteps},
+		map[string]any{"path": "features/steps/is-even__steps.js", "content": shpSteps},
 	}}
 }
 
@@ -418,7 +420,7 @@ func newShpFxRun(t *testing.T, run string, steps ...shpStep) *shpFx {
 echo run >> '%[1]s/trace'
 case "$KOGEN_ACCEPTANCE_FEATURES" in */check.feature) : > "$KOGEN_ACCEPTANCE_REPORT"; exit 0;; esac
 if [ -f '%[1]s/exit' ]; then code=$(cat '%[1]s/exit'); else code=1; fi
-if [ -f '%[1]s/corrected-report' ] && grep -q 'Given the number 6' "$KOGEN_ACCEPTANCE_FEATURES"; then
+if [ -f '%[1]s/corrected-report' ] && grep -q 'Given is-even: the number 6' "$KOGEN_ACCEPTANCE_FEATURES"; then
   cp '%[1]s/corrected-report' "$KOGEN_ACCEPTANCE_REPORT"
 else
   cp '%[1]s/report' "$KOGEN_ACCEPTANCE_REPORT"

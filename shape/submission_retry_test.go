@@ -24,7 +24,7 @@ func retryShape(t *testing.T, limit, invalid int, success bool) {
 		if err != nil || exit != 0 {
 			t.Fatalf("exit %d: %v", exit, err)
 		}
-		shpEq(t, "published", f.read(refIntentPath), shpIntentMD)
+		shpEq(t, "published", f.read(refIntentPath), shpScopedIntentMD)
 		shpEq(t, "requests", len(f.Prov.requests()), invalid+2)
 	} else {
 		effective := submissionRetryLimit(limit)
@@ -80,7 +80,7 @@ func TestSubmissionRetryOne(t *testing.T) {
 			t.Fatalf("exit %d: %v", exit, err)
 		}
 		shpEq(t, "rounds", x.calls, 2)
-		shpEq(t, "published", f.read(refIntentPath), shpIntentMD)
+		shpEq(t, "published", f.read(refIntentPath), shpScopedIntentMD)
 		ev := shpNamed(f.events(), "request_audit")
 		if len(ev) != 2 {
 			t.Fatalf("audit events: %v", ev)

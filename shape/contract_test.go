@@ -206,7 +206,7 @@ func TestShapeNarrowCorrectionsRetainTheModelAndStepFilesAlreadySubmitted(t *tes
 	// ExUnit: test/integration/readiness_observations_test.exs: SHP-4 narrow shaping corrections retain the model and step files already submitted
 	tools := realQuintTools(t)
 	modelPath := project.ModelPath(shpSlug)
-	intent := strings.Replace(shpIntentMD, "Model: not applicable — a pure function without state",
+	intent := strings.Replace(shpScopedIntentMD, "Model: not applicable — a pure function without state",
 		"Model: "+modelPath+" invariants=Safety seed=7 samples=2 steps=2", 1)
 	files := shpFiles()["files"].([]any)
 	files[0] = map[string]any{"path": ".kogen/intents/is-even/intent.md", "content": intent}
@@ -220,7 +220,7 @@ func TestShapeNarrowCorrectionsRetainTheModelAndStepFilesAlreadySubmitted(t *tes
 	}
 	shpContains(t, "stdout", f.Stdout.String(), "2 fail now")
 	shpEq(t, "model", f.read(modelPath), shpModel)
-	shpEq(t, "step file", f.read("features/steps/is_even_steps.js"), shpSteps)
+	shpEq(t, "step file", f.read("features/steps/is-even__steps.js"), shpSteps)
 	shpEq(t, "acceptance executions (runner check plus one readiness run)", f.runs(), 2)
 	if f.exists(".kogen/local/approvals/is-even.json") {
 		t.Fatal("shaping approves nothing")
@@ -234,8 +234,8 @@ func TestShapeLintCorrectionsKeepEarlierArtifactsAndMalformedMixedPayloadsContri
 		t.Run(kind, func(t *testing.T) {
 			parallel(t)
 			intentPath := ".kogen/intents/is-even/intent.md"
-			stepPath := "features/steps/is_even_steps.js"
-			unsourced := strings.Replace(shpIntentMD, "- Non-integers raise TypeError. (source: request)\n", "- Non-integers raise TypeError.\n", 1)
+			stepPath := "features/steps/is-even__steps.js"
+			unsourced := strings.Replace(shpScopedIntentMD, "- Non-integers raise TypeError. (source: request)\n", "- Non-integers raise TypeError.\n", 1)
 			step := map[string]any{"path": stepPath, "content": shpSteps}
 			poisoned := map[string]any{"path": stepPath, "content": shpSteps + "\nthrow new Error('unsafe payload leaked');\n"}
 			var mixed []any
@@ -246,7 +246,7 @@ func TestShapeLintCorrectionsKeepEarlierArtifactsAndMalformedMixedPayloadsContri
 			}
 			first := shpFiles()
 			first["files"].([]any)[0] = map[string]any{"path": intentPath, "content": unsourced}
-			fixed := map[string]any{"files": []any{map[string]any{"path": intentPath, "content": shpIntentMD}}}
+			fixed := map[string]any{"files": []any{map[string]any{"path": intentPath, "content": shpScopedIntentMD}}}
 			f := newShpFx(t, shpSubmit("c1", first), shpSubmit("c2", map[string]any{"files": mixed}), shpSubmit("c3", fixed))
 			f.setReport("PASSED", 0)
 			exit, err := f.shape("Add calc.is_even(n).")
@@ -255,7 +255,7 @@ func TestShapeLintCorrectionsKeepEarlierArtifactsAndMalformedMixedPayloadsContri
 			}
 			shpContains(t, "stdout", f.Stdout.String(), "2 pass now")
 			shpEq(t, "step", f.read(stepPath), shpSteps)
-			shpEq(t, "intent", f.read(intentPath), shpIntentMD)
+			shpEq(t, "intent", f.read(intentPath), shpScopedIntentMD)
 			if _, err := os.Stat(filepath.Join(filepath.Dir(f.Root), "outside")); err == nil {
 				t.Fatal("an unsafe path leaked outside the project")
 			}
@@ -271,9 +271,9 @@ func TestShapeLintCorrectionsKeepEarlierArtifactsAndMalformedMixedPayloadsContri
 func TestShapeAnEarlierStepCannotBeSilentlyAbandonedOutsideTheApprovalBaseline(t *testing.T) {
 	parallel(t)
 	// ExUnit: test/integration/readiness_observations_test.exs: SHP-4 an earlier step cannot be silently abandoned outside the approval baseline
-	oldStep := "features/steps/is_even_steps.js"
-	replacement := "features/steps/replacement.js"
-	changedIntent := strings.Replace(shpIntentMD, oldStep, replacement, 1)
+	oldStep := "features/steps/is-even__steps.js"
+	replacement := "features/steps/is-even__replacement.js"
+	changedIntent := strings.Replace(shpScopedIntentMD, oldStep, replacement, 1)
 	changed := map[string]any{"path": ".kogen/intents/is-even/intent.md", "content": changedIntent}
 	bothFiles := map[string]any{"files": []any{changed, map[string]any{"path": replacement, "content": shpSteps}}}
 	onlyIntent := map[string]any{"files": []any{changed}}
@@ -297,7 +297,7 @@ func TestShapeFormattingCannotAbandonARetainedExecutableStepOutsideTheBaseline(t
 	// ExUnit: test/integration/readiness_observations_test.exs: SHP-4 formatting cannot abandon a retained executable step outside the baseline
 	f := newShpFx(t, shpSubmit("c1", shpFiles()), shpSubmit("c2", shpFiles()), shpSubmit("c3", shpFiles()))
 	const intent = ".kogen/intents/is-even/intent.md"
-	fixer := "grep -v '^- features/steps/is_even_steps.js$' " + intent + " > fix.tmp && mv fix.tmp " + intent
+	fixer := "grep -v '^- features/steps/is-even__steps.js$' " + intent + " > fix.tmp && mv fix.tmp " + intent
 	f.write(".kogen/project.yaml", "version: 1\ncommands:\n  fix: ["+quoteYAML(fixer)+"]\n  acceptance: {run: sh accept.sh, steps_dir: features/steps}\n")
 	f.git("add", "-A")
 	f.git("commit", "-qm", "fixer abandons the step")
@@ -305,7 +305,7 @@ func TestShapeFormattingCannotAbandonARetainedExecutableStepOutsideTheBaseline(t
 	e := shpWantError(t, err, "intent", "not_ready", "", 1)
 	shpEq(t, "exit", exit, 1)
 	shpContains(t, "problems", strings.Join(e.Lines, "\n"), "proposed artifacts must remain declared")
-	shpEq(t, "step stays", f.read("features/steps/is_even_steps.js"), shpSteps)
+	shpEq(t, "step stays", f.read("features/steps/is-even__steps.js"), shpSteps)
 	if f.exists(".kogen/local/readiness/is-even.json") || f.exists(".kogen/local/approvals/is-even.json") {
 		t.Fatal("no readiness record and no approval")
 	}
@@ -318,7 +318,7 @@ func quoteYAML(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") 
 func TestShapeReturnsMissingAndOversizedSourceComparisonsForCorrectionBeforeReadiness(t *testing.T) {
 	parallel(t)
 	// ExUnit: test/integration/readiness_observations_test.exs: native Shape returns missing and oversized source comparisons for correction before readiness
-	intent := strings.Replace(shpIntentMD, "- The request asks for is_even; the feature covers it.", "- addressed: source request is_even; contract Tests and acceptance.feature.", 1)
+	intent := strings.Replace(shpScopedIntentMD, "- The request asks for is_even; the feature covers it.", "- addressed: source request is_even; contract Tests and acceptance.feature.", 1)
 	files := shpFiles()["files"].([]any)
 	intentFile := map[string]any{"path": ".kogen/intents/is-even/intent.md", "content": intent}
 	missing := strings.Replace(intent, "## Source comparison\n- addressed: source request is_even; contract Tests and acceptance.feature.\n\n", "", 1)

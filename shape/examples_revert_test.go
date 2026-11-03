@@ -14,20 +14,20 @@ import (
 func TestExamplesRevertShapeApproval(t *testing.T) {
 	const feature = `Feature: Formatting output
   Scenario Outline: Formatted output
-    Given the derived value <derived>
-    Then the output is <expected>
+    Given is-even: the derived value <derived>
+    Then is-even: the output is <expected>
     Examples:
       | expected                    | derived                         |
       | "status":0,"out":"61610a0a" | {"status":0,"out":"61610a0a"} |
 `
 	const steps = `const {Given, Then} = require('@cucumber/cucumber');
 const assert = require('node:assert/strict');
-Given(/^the derived value (.*)$/, function (value) { this.value = value; });
-Then(/^the output is (.*)$/, function (expected) { assert.equal(require('../../calc').format(this.value), expected); });
+Given(/^is-even: the derived value (.*)$/, function (value) { this.value = value; });
+Then(/^is-even: the output is (.*)$/, function (expected) { assert.equal(require('../../calc').format(this.value), expected); });
 `
 	files := shpFiles()
 	list := files["files"].([]any)
-	list[0].(map[string]any)["content"] = strings.Replace(shpIntentMD, "calc.is_even(n) returns True for even integers.", "Formatting produces the requested output for the given value.", 1)
+	list[0].(map[string]any)["content"] = strings.Replace(shpScopedIntentMD, "calc.is_even(n) returns True for even integers.", "Formatting produces the requested output for the given value.", 1)
 	list[1].(map[string]any)["content"] = feature
 	list[2].(map[string]any)["content"] = steps
 	ack := shpSubmit("ack", map[string]any{"files": []any{map[string]any{"path": ".kogen/intents/is-even/acceptance.feature", "content": feature}}})

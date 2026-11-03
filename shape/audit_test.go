@@ -149,7 +149,7 @@ func TestDefectTemplates(t *testing.T) {
 // with the earlier acceptance.feature and steps.
 func TestNativeAuditRefusalKeepsTheSubmittedFiles(t *testing.T) {
 	parallel(t)
-	cover := strings.Replace(shpIntentMD, "- Non-integers raise TypeError. (source: request)\n",
+	cover := strings.Replace(shpScopedIntentMD, "- Non-integers raise TypeError. (source: request)\n",
 		"- Non-integers raise TypeError. (source: request)\n- Decision: for is_even(0) the result is True (because the example states it) (source: request)\n", 1)
 	f := newShpFx(t, shpSubmit("c1", shpFiles()),
 		shpSubmit("c2", map[string]any{"files": []any{map[string]any{"path": ".kogen/intents/is-even/intent.md", "content": cover}}}))
@@ -172,7 +172,7 @@ func TestNativeAuditRefusalKeepsTheSubmittedFiles(t *testing.T) {
 		t.Fatalf("exit %d, err %v\n%s", exit, err, f.Stdout)
 	}
 	shpEq(t, "feature", f.read(".kogen/intents/is-even/acceptance.feature"), shpFeature)
-	shpEq(t, "steps", f.read("features/steps/is_even_steps.js"), shpSteps)
+	shpEq(t, "steps", f.read("features/steps/is-even__steps.js"), shpSteps)
 	shpEq(t, "intent", f.read(".kogen/intents/is-even/intent.md"), cover)
 	refused := shpNamed(f.events(), "submission_refused")
 	if len(refused) != 1 || refused[0]["gate"] != "audit" || refused[0]["attempt"] != float64(1) {

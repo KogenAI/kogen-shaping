@@ -159,9 +159,9 @@ func TestContextIndexOwnershipSkipsAndDirectories(t *testing.T) {
 	f.write("sub/CLAUDE.md", "claude")
 	f.write("sub/a.txt", "a")
 	f.write(".kogen/local/secret.txt", "secret")
-	f.write(".kogen/intents/is-even/intent.md", shpIntentMD)
+	f.write(".kogen/intents/is-even/intent.md", shpScopedIntentMD)
 	f.write(".kogen/intents/is-even/acceptance.feature", shpFeature)
-	f.write("features/steps/is_even_steps.js", shpSteps)
+	f.write("features/steps/is-even__steps.js", shpSteps)
 	f.write("other.js", "var a = 1\n// def not a declaration\n  def b(x)\nval c = 2\nmodule M\n")
 	text, idx, err := BuildContextIndex(f.Repo, sh.cfg, shpSlug, nil, ContextOptions{})
 	if err != nil {
@@ -173,7 +173,7 @@ func TestContextIndexOwnershipSkipsAndDirectories(t *testing.T) {
 	}
 	shpEq(t, "protected", owner["guard.txt"], "protected")
 	shpEq(t, "project config", owner[".kogen/project.yaml"], "source")
-	shpEq(t, "listed step", owner["features/steps/is_even_steps.js"], "shared")
+	shpEq(t, "listed step", owner["features/steps/is-even__steps.js"], "shared")
 	shpEq(t, "step folder", owner["features/steps/calc_steps.js"], "shared")
 	shpEq(t, "listed feature", owner[".kogen/intents/is-even/acceptance.feature"], "shared")
 	shpEq(t, "plain source", owner["calc.js"], "source")
@@ -301,7 +301,7 @@ func TestContextBlocksCarryTheContractsAndEarlierRounds(t *testing.T) {
 	stable := blocks[0].(map[string]any)["text"].(string)
 	shpEq(t, "dynamic block", blocks[1].(map[string]any)["text"], any("Context index: {}\n"))
 	for _, want := range []string{
-		"# Request\n\nAdd calc.is_even(n).\n\n# Your earlier questions and the caller's answers (cite them as `(source: answer <n>)` using the numbers of the latest round)\n\nRound 1:\n1. First?\n   a) yes\n   b) no\n   answer: 1: a\n2. Free?\n   answer: 2: my words\n\n# The Intent to write\n\nSlug: is-even\nWrite `.kogen/intents/is-even/intent.md`, `.kogen/intents/is-even/acceptance.feature`, optionally `.kogen/intents/is-even/model.qnt`, and step files under `features/steps/`.\n\n# Project instructions (README.md)\n\n# Calc\n\nA tiny calculator.\n\n\n# Testing rules (docs/testing-rules.md)\n\n",
+		"# Request\n\nAdd calc.is_even(n).\n\n# Your earlier questions and the caller's answers (cite them as `(source: answer <n>)` using the numbers of the latest round)\n\nRound 1:\n1. First?\n   a) yes\n   b) no\n   answer: 1: a\n2. Free?\n   answer: 2: my words\n\n# The Intent to write\n\nSlug: is-even\nWrite `.kogen/intents/is-even/intent.md`, `.kogen/intents/is-even/acceptance.feature`, optionally `.kogen/intents/is-even/model.qnt`, and step files under `features/steps/`.\n\nNew step files must be named `is-even__<suffix>.js` (nonempty suffix) directly under the steps directory. Prefix every step sentence and definition with `is-even: `; do not use other Intents' step files or bindings.\n\n# Project instructions (README.md)\n\n# Calc\n\nA tiny calculator.\n\n\n# Testing rules (docs/testing-rules.md)\n\n",
 		"# Configured commands (.kogen/project.yaml)\n\nsetup: []\nfix: []\nchecks: unit: true\nacceptance: sh accept.sh\n  (it runs with KOGEN_ACCEPTANCE_FEATURES set to the Intent's feature path and KOGEN_ACCEPTANCE_REPORT to the report path)\n\n# Protection contract\n\nconfigured protect patterns: [\"guard.txt\"]\npaths currently matched by those patterns: [\"guard.txt\"]\nautomatic baseline: every file in `.kogen/intents/is-even/`, every path listed under the Intent's `Acceptance:` (including step files), " + automaticContract + "Approval freezes this baseline.",
 		"Full contract inclusions: exact request, Q&A, README, testing rules and protection/automatic baseline are authoritative and are not clipped.\n",
 	} {

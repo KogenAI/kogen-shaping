@@ -12,9 +12,9 @@ import (
 
 func budgetFiles(good, bad string) map[string]any {
 	files := shpFiles()
-	declaration := fmt.Sprintf(`- evidence: {"id":"observer","kind":"observer","inputs":[],"observers":["features/steps/is_even_steps.js"],"checks":[{"name":"good","command":%q,"exit":0,"output":""},{"name":"bad","command":%q,"exit":143,"output":""}]}`, good, bad)
+	declaration := fmt.Sprintf(`- evidence: {"id":"observer","kind":"observer","inputs":[],"observers":["features/steps/is-even__steps.js"],"checks":[{"name":"good","command":%q,"exit":0,"output":""},{"name":"bad","command":%q,"exit":143,"output":""}]}`, good, bad)
 	entries := files["files"].([]any)
-	entries[0].(map[string]any)["content"] = strings.Replace(shpIntentMD, "- none\n", declaration+"\n", 1)
+	entries[0].(map[string]any)["content"] = strings.Replace(shpScopedIntentMD, "- none\n", declaration+"\n", 1)
 	return files
 }
 

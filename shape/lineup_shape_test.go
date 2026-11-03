@@ -163,7 +163,7 @@ func noNativeRequests(t *testing.T, f *shpFx) {
 
 func shapeAbsent(t *testing.T, f *shpFx) {
 	t.Helper()
-	for _, p := range []string{".kogen/intents/is-even", "features/steps/is_even_steps.js", ".kogen/local/provenance/is-even/current.json", ".kogen/local/readiness/is-even.json"} {
+	for _, p := range []string{".kogen/intents/is-even", "features/steps/is-even__steps.js", ".kogen/local/provenance/is-even/current.json", ".kogen/local/readiness/is-even.json"} {
 		if f.exists(p) {
 			t.Fatalf("%s was published", p)
 		}
@@ -193,8 +193,8 @@ func TestClaudeLineupShapeSubmission(t *testing.T) {
 		shpEq(t, "scenarios line", lines[4], "Scenarios: 2 (2 fail now, 0 pass now)")
 		shpMatch(t, "usage line", lines[5], `^shape claude-opus-5-5/xhigh claude-code 3 round\(s\) wall_ms=\d+$`)
 		shpEq(t, "feature", f.read(".kogen/intents/is-even/acceptance.feature"), shpFeature)
-		shpEq(t, "steps", f.read("features/steps/is_even_steps.js"), shpSteps)
-		shpEq(t, "intent", f.read(".kogen/intents/is-even/intent.md"), shpIntentMD)
+		shpEq(t, "steps", f.read("features/steps/is-even__steps.js"), shpSteps)
+		shpEq(t, "intent", f.read(".kogen/intents/is-even/intent.md"), shpScopedIntentMD)
 		shpEq(t, "HEAD", f.head(), head)
 		if f.exists(".kogen/local/approvals/is-even.json") || !f.exists(".kogen/local/readiness/is-even.json") || !f.exists(".kogen/local/provenance/is-even/current.json") {
 			t.Fatal("approval, readiness or provenance state is wrong")
@@ -247,7 +247,7 @@ func TestClaudeLineupShapeSubmission(t *testing.T) {
 		parallel(t)
 		f := newShpFx(t)
 		f.useExternalShape(6)
-		faked := strings.Replace(shpIntentMD, "## Tests", "## Source comparison\n- documentation-lookup: retrieved https://example.invalid/doc\n\n## Tests", 1)
+		faked := strings.Replace(shpScopedIntentMD, "## Tests", "## Source comparison\n- documentation-lookup: retrieved https://example.invalid/doc\n\n## Tests", 1)
 		files := shpFiles()
 		files["files"].([]any)[0].(map[string]any)["content"] = faked
 		x := &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){result(files)}}
@@ -540,7 +540,7 @@ func TestClaudeLineupRefinePreservation(t *testing.T) {
 		task := x.starts[0]
 		shpEq(t, "role", task.Role, executor.RoleShape)
 		shpContains(t, "task", task.Brief.Stable, "Clarify only the existing draft; preserve its executable contract.")
-		shpContains(t, "task", task.Brief.Stable, "--- "+refIntentPath+"\n"+shpIntentMD)
+		shpContains(t, "task", task.Brief.Stable, "--- "+refIntentPath+"\n"+shpScopedIntentMD)
 		shpContains(t, "task", task.Brief.Stable, "# Exclusively owned editable files")
 		var schema map[string]any
 		if json.Unmarshal(task.Schema, &schema) != nil || schema["properties"].(map[string]any)["constraint"] == nil {

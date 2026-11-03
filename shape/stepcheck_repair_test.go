@@ -10,21 +10,21 @@ import (
 )
 
 func TestShapeGreetStepCorrection(t *testing.T) {
-	const feature = "Feature: Empty name\n  Scenario: Greet an empty name\n    When I call Greet with name \"\"\n    Then the greeting is \"Hello, world\"\n"
+	const feature = "Feature: Empty name\n  Scenario: Greet an empty name\n    When is-even: I call Greet with name \"\"\n    Then is-even: the greeting is \"Hello, world\"\n"
 	const bad = `const { When, Then } = require('@cucumber/cucumber');
 const { spawnSync } = require('child_process');
 const assert = require('assert');
-When('I call Greet with name {string}', function (name) {
+When('is-even: I call Greet with name {string}', function (name) {
   const result = spawnSync('sh', ['-c', 'go run . "$1"', 'greet', name]);
   assert.strictEqual(result.status, 0);
   this.greeting = result.stdout.toString().trim();
 });
-Then('the greeting is {string}', function (greeting) { assert.strictEqual(this.greeting, greeting); });
+Then('is-even: the greeting is {string}', function (greeting) { assert.strictEqual(this.greeting, greeting); });
 `
 	const fixed = `const { When, Then } = require('@cucumber/cucumber');
 const { spawnSync } = require('child_process');
 const assert = require('assert');
-When('I call Greet with name {string}', function (name) {
+When('is-even: I call Greet with name {string}', function (name) {
   const dir = require('fs').mkdtempSync(require('path').join(require('os').tmpdir(), 'greet-'));
   const binary = require('path').join(dir, 'greet');
   const build = spawnSync('go', ['build', '-o', binary, '.']);
@@ -34,7 +34,7 @@ When('I call Greet with name {string}', function (name) {
   assert.strictEqual(result.status, 0);
   this.greeting = result.stdout.toString().trim();
 });
-Then('the greeting is {string}', function (greeting) { assert.strictEqual(this.greeting, greeting); });
+Then('is-even: the greeting is {string}', function (greeting) { assert.strictEqual(this.greeting, greeting); });
 `
 	for _, exhaust := range []bool{false, true} {
 		name := "repair"
@@ -63,15 +63,15 @@ Then('the greeting is {string}', function (greeting) { assert.strictEqual(this.g
 				m := raw.(map[string]any)
 				switch m["path"] {
 				case ".kogen/intents/is-even/intent.md":
-					m["content"] = strings.NewReplacer("Add an is-even check", "Greet empty names", "features/steps/is_even_steps.js", "features/steps/empty-name.js", "calc.is_even(n) returns True for even integers.", `Greet returns "Hello, world" for an empty name.`, "Non-integers raise TypeError.", "An empty name uses world.", "The request asks for is_even; the feature covers it.", "The request asks for an empty-name greeting; the feature covers it.", "is_even returns True for even integers: add test_is_even in tests/test_calc.py", "Greet returns Hello, world for an empty name: add a test in greet_test.go").Replace(shpIntentMD)
+					m["content"] = strings.NewReplacer("Add an is-even check", "Greet empty names", "features/steps/is-even__steps.js", "features/steps/is-even__empty-name.js", "calc.is_even(n) returns True for even integers.", `Greet returns "Hello, world" for an empty name.`, "Non-integers raise TypeError.", "An empty name uses world.", "The request asks for is_even; the feature covers it.", "The request asks for an empty-name greeting; the feature covers it.", "is_even returns True for even integers: add test_is_even in tests/test_calc.py", "Greet returns Hello, world for an empty name: add a test in greet_test.go").Replace(shpScopedIntentMD)
 				case ".kogen/intents/is-even/acceptance.feature":
 					m["content"] = feature
-				case "features/steps/is_even_steps.js":
-					m["path"] = "features/steps/empty-name.js"
+				case "features/steps/is-even__steps.js":
+					m["path"] = "features/steps/is-even__empty-name.js"
 					m["content"] = bad
 				}
 			}
-			corrected := map[string]any{"files": []any{map[string]any{"path": "features/steps/empty-name.js", "content": fixed}}}
+			corrected := map[string]any{"files": []any{map[string]any{"path": "features/steps/is-even__empty-name.js", "content": fixed}}}
 			if exhaust {
 				f.Prov.seq = []shpStep{shpSubmit("bad", files), shpSubmit("again", files), shpSubmit("last", files)}
 			} else {
@@ -87,14 +87,14 @@ Then('the greeting is {string}', function (greeting) { assert.strictEqual(this.g
 				t.Fatalf("requests = %d, want %d; err=%v", len(reqs), want, err)
 			}
 			feedback := shpOutputs(reqs[1])["bad"]
-			for _, part := range []string{"exit_code", "features/steps/empty-name.js", "go run", "go build"} {
+			for _, part := range []string{"exit_code", "features/steps/is-even__empty-name.js", "go run", "go build"} {
 				if !strings.Contains(feedback, part) {
 					t.Errorf("feedback %q missing %q", feedback, part)
 				}
 			}
 			if exhaust {
 				e := shpWantError(t, err, "intent", "not_ready", "the Intent is not ready to build", 1)
-				if !strings.Contains(strings.Join(e.Lines, "\n"), "exit_code features/steps/empty-name.js") {
+				if !strings.Contains(strings.Join(e.Lines, "\n"), "exit_code features/steps/is-even__empty-name.js") {
 					t.Errorf("remaining: %v", e.Lines)
 				}
 				if exit != 1 {
@@ -107,7 +107,7 @@ Then('the greeting is {string}', function (greeting) { assert.strictEqual(this.g
 				if err != nil || exit != 0 {
 					t.Fatalf("exit %d: %v", exit, err)
 				}
-				if got := f.read("features/steps/empty-name.js"); got != fixed {
+				if got := f.read("features/steps/is-even__empty-name.js"); got != fixed {
 					t.Fatalf("published step = %q", got)
 				}
 				checks := shpNamed(f.events(), "step_selfcheck")

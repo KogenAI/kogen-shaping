@@ -778,6 +778,7 @@ func (r *refine) context() ([]any, error) {
 	b.WriteString("# Protection and commands\n")
 	b.WriteString("Configured protected files: " + refineInspect(protected, quoted) + "\n")
 	b.WriteString("No config, protected, shared or other Intent files may change. Existing Acceptance paths and model presence/path must remain unchanged.\n")
+	fmt.Fprintf(&b, "New step files use `%s__<suffix>.js` with a nonempty suffix, and step sentences and definitions use the literal prefix `%s: `. Never adopt another Intent's files or bindings. Existing unchanged packages need not be renamed.\n", r.slug, r.slug)
 	b.WriteString("Setup: " + refineInspect(r.cfg.Setup, quoted) + "\n")
 	b.WriteString("Checks: " + refineInspect(checks, same) + "\n")
 	b.WriteString("Fixers: " + refineInspect(r.cfg.Fix, quoted) + "\n")
@@ -1192,6 +1193,12 @@ func (r *refine) check(ctx context.Context, attempt int, paths []string) (string
 	}
 	candidate, err := project.LoadIntent(r.scratch, r.slug)
 	if err != nil {
+		return "", refineOutcome{}, err
+	}
+	if err := sharedStepCollision(r.scratch, r.slug, r.cfg); err != nil {
+		return "", refineOutcome{}, err
+	}
+	if err := bindingCollision(ctx, r.scratch, r.slug, r.s, r.scratchD.Tools); err != nil {
 		return "", refineOutcome{}, err
 	}
 	if !slices.Equal(candidate.Acceptance, r.intent.Acceptance) {

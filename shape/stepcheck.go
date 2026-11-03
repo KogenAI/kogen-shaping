@@ -3,6 +3,7 @@ package shape
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/KogenAI/kogen-coordinator/project"
@@ -62,6 +63,21 @@ func (sh *shaping) stepSelfcheck(ctx context.Context) (string, error) {
 			return "", err
 		}
 		items = verify.StepItems(own, raw)
+		for _, sc := range scenarios {
+			for _, st := range sc.Steps {
+				if !strings.HasPrefix(st.Text, sh.slug+": ") {
+					items = append(items, verify.StepItem{Check: "ownership", Target: st.Text, Detail: "step sentence must start with " + sh.slug + ": "})
+				}
+			}
+		}
+		for _, d := range raw.Defs {
+			if d.Used && !slices.Contains(own, d.File) {
+				items = append(items, verify.StepItem{Check: "ownership", Target: d.Pattern, File: d.File, Detail: "binding comes from a step file outside this Intent: " + d.File})
+			}
+			if slices.Contains(own, d.File) && !strings.HasPrefix(strings.TrimPrefix(d.Pattern, "^"), sh.slug+": ") {
+				items = append(items, verify.StepItem{Check: "ownership", Target: d.Pattern, File: d.File, Detail: "definition must start with " + sh.slug + ": "})
+			}
+		}
 	}
 	obs, err := sh.observerItems(ctx, intent)
 	if err != nil {

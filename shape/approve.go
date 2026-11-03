@@ -95,6 +95,12 @@ func approveLocked(ctx context.Context, s *sys.Session, in ApproveInput, repo *g
 	if err != nil {
 		return 0, err
 	}
+	if err := sharedStepCollision(root, slug, cfg); err != nil {
+		return 0, err
+	}
+	if err := bindingCollision(ctx, root, slug, s, in.Tools); err != nil {
+		return 0, err
+	}
 	if err := approveQuestionsPending(root, slug); err != nil {
 		return 0, err
 	}

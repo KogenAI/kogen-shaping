@@ -1370,6 +1370,33 @@ func (sh *shaping) acceptFiles(ctx context.Context, submitted []proposedFile) (s
 				"\nEarlier well-formed proposals are retained; submit only corrections.",
 			outcome{kind: outInvalid, problems: e.Lines}, nil
 	}
+	var ownership []string
+	stepsDir := ""
+	if sh.cfg.Acceptance != nil {
+		stepsDir = sh.cfg.Acceptance.StepsDir
+	}
+	for _, p := range intent.StepFiles() {
+		if !scopedStepPath(stepsDir, sh.slug, p) {
+			ownership = append(ownership, p+": use "+stepsDir+"/"+sh.slug+"__<suffix>.js with a nonempty suffix")
+		} else if _, ok := sh.proposed[p]; !ok {
+			ownership = append(ownership, p+": submit this Intent's own step artifact; do not adopt existing step files")
+		}
+		others, _ := filepath.Glob(filepath.Join(sh.root, ".kogen/intents/*/intent.md"))
+		for _, op := range others {
+			otherSlug := filepath.Base(filepath.Dir(op))
+			if otherSlug == sh.slug {
+				continue
+			}
+			other, err := project.LoadIntent(sh.root, otherSlug)
+			if err == nil && slices.Contains(other.StepFiles(), p) {
+				ownership = append(ownership, fmt.Sprintf("%s belongs to Intent %s; %s must use its own step file", p, otherSlug, sh.slug))
+			}
+		}
+	}
+	if len(ownership) > 0 {
+		sh.refused("step_ownership", ownership)
+		return "invalid submission:\n" + strings.Join(ownership, "\n"), outcome{kind: outInvalid, problems: ownership}, nil
+	}
 	if problems := sh.retainedProblems(intent, files); len(problems) > 0 {
 		sh.refused("retained", problems)
 		return strings.Join(problems, "\n"), outcome{kind: outInvalid, problems: problems}, nil
@@ -1867,6 +1894,9 @@ func (sh *shaping) validateFiles(list []any) (submission, []string, error) {
 			problems = append(problems, p+": paths must be relative and normal")
 		case slices.Contains(own, p):
 		case steps != "" && strings.HasPrefix(p, steps+"/"):
+			if !scopedStepPath(steps, slug, p) {
+				problems = append(problems, p+": new step files must be named "+steps+"/"+slug+"__<suffix>.js (nonempty suffix); prefix step sentences and definitions with "+slug+": ")
+			}
 		default:
 			where := steps
 			if steps == "" {

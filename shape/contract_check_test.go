@@ -20,14 +20,14 @@ import (
 const (
 	ccFeaturePath = ".kogen/intents/is-even/acceptance.feature"
 	ccIntentPath  = ".kogen/intents/is-even/intent.md"
-	ccStepsPath   = "features/steps/is_even_steps.js"
+	ccStepsPath   = "features/steps/is-even__steps.js"
 )
 
 func ccEvidence() contractEvidence {
 	return contractEvidence{
 		scenarios:    []string{"Even numbers", "Outline name"},
 		expectations: map[string]string{ccFeaturePath: shpFeature, ccStepsPath: shpSteps},
-		intentPath:   ccIntentPath, intent: shpIntentMD,
+		intentPath:   ccIntentPath, intent: shpScopedIntentMD,
 		failures: map[string][]string{
 			"Even numbers": {"AssertionError: missing  accounts\nschema"},
 			"Other":        {"a different failure"},
@@ -42,7 +42,7 @@ func ccEvidence() contractEvidence {
 func ccFinding() contractFinding {
 	return contractFinding{
 		scenario:    "Even numbers",
-		expectation: contractQuote{ccFeaturePath, "Given the number 4"},
+		expectation: contractQuote{ccFeaturePath, "Given is-even: the number 4"},
 		contract:    contractQuote{ccIntentPath, "returns True for even integers"},
 		why:         "because",
 	}
@@ -59,16 +59,18 @@ func TestContractEvidenceRule(t *testing.T) {
 		{"scenario name is normalized", func(f *contractFinding) { f.scenario = "  Even\n numbers " }, true},
 		{"outline name", func(f *contractFinding) { f.scenario = "Outline name" }, true},
 		{"unknown scenario", func(f *contractFinding) { f.scenario = "Odd" }, false},
-		{"step file expectation", func(f *contractFinding) { f.expectation = contractQuote{ccStepsPath, "Given('the number {int}'"} }, true},
+		{"step file expectation", func(f *contractFinding) {
+			f.expectation = contractQuote{ccStepsPath, "Given('is-even: the number {int}'"}
+		}, true},
 		{"expectation path outside the acceptance files", func(f *contractFinding) { f.expectation.path = "README.md" }, false},
-		{"expectation quote spaces are normalized", func(f *contractFinding) { f.expectation.quote = "Given\tthe   number\n4" }, true},
-		{"expectation quote missing", func(f *contractFinding) { f.expectation.quote = "Given the number 5" }, false},
+		{"expectation quote spaces are normalized", func(f *contractFinding) { f.expectation.quote = "Given\tis-even:   the   number\n4" }, true},
+		{"expectation quote missing", func(f *contractFinding) { f.expectation.quote = "Given is-even: the number 5" }, false},
 		{"empty expectation quote", func(f *contractFinding) { f.expectation.quote = " \n" }, false},
 		{"empty contract quote", func(f *contractFinding) { f.contract.quote = "" }, false},
 		{"contract quote missing from intent.md", func(f *contractFinding) { f.contract.quote = "returns False" }, false},
 		{"tracked file contract", func(f *contractFinding) { f.contract = contractQuote{"cli/code.go", "func Code() { return 1 }"} }, true},
 		{"tracked file quote missing", func(f *contractFinding) { f.contract = contractQuote{"cli/code.go", "return 2"} }, false},
-		{"untracked or package file contract", func(f *contractFinding) { f.contract = contractQuote{ccFeaturePath, "Given the number 4"} }, false},
+		{"untracked or package file contract", func(f *contractFinding) { f.contract = contractQuote{ccFeaturePath, "Given is-even: the number 4"} }, false},
 		{"empty why", func(f *contractFinding) { f.why = " " }, false},
 	}
 	for _, c := range cases {
@@ -137,8 +139,8 @@ func TestContractVerdictCounting(t *testing.T) {
 	}
 	lines := confirmed.contradictions
 	want := []string{
-		"- a | expectation: " + ccFeaturePath + ": Given the number 4 | contract: " + ccIntentPath + ": returns True for even integers | why: because | confirmed: one is confirmed",
-		"- c | expectation: " + ccFeaturePath + ": Given the number 4 | contract: " + ccIntentPath + ": returns True for even integers | why: because | confirmed: three",
+		"- a | expectation: " + ccFeaturePath + ": Given is-even: the number 4 | contract: " + ccIntentPath + ": returns True for even integers | why: because | confirmed: one is confirmed",
+		"- c | expectation: " + ccFeaturePath + ": Given is-even: the number 4 | contract: " + ccIntentPath + ": returns True for even integers | why: because | confirmed: three",
 	}
 	if !reflect.DeepEqual(lines, want) {
 		t.Fatalf("lines\n%q\nwant\n%q", lines, want)
@@ -156,8 +158,8 @@ func TestContractFormats(t *testing.T) {
 	parallel(t)
 	f := ccFinding()
 	f.scenario = " Even\nnumbers "
-	f.expectation.quote = "Given  the number\n4"
-	if got, want := contractFindingLine(2, f), "2. scenario: Even numbers | expectation: "+ccFeaturePath+": Given the number 4 | contract: "+ccIntentPath+": returns True for even integers | why: because"; got != want {
+	f.expectation.quote = "Given  is-even: the number\n4"
+	if got, want := contractFindingLine(2, f), "2. scenario: Even numbers | expectation: "+ccFeaturePath+": Given is-even: the number 4 | contract: "+ccIntentPath+": returns True for even integers | why: because"; got != want {
 		t.Errorf("finding line %q", got)
 	}
 	wantHead := "Contract check: 2 acceptance expectation(s) contradict the Intent or code it keeps unchanged, so no correct implementation can pass them; nothing was published. " +
@@ -320,7 +322,7 @@ const ccEnvRefusal = "Environment check: 1 acceptance step(s) fail on the unchan
 	"- Even numbers | fresh-copy output: " + ccEnvOutput + " | why: the fresh copy lacks the state the step reads | confirmed: the copy was not prepared"
 
 func ccIntentOnly(id string) shpStep {
-	return shpSubmit(id, map[string]any{"files": []any{map[string]any{"path": ccIntentPath, "content": shpIntentMD}}})
+	return shpSubmit(id, map[string]any{"files": []any{map[string]any{"path": ccIntentPath, "content": shpScopedIntentMD}}})
 }
 
 // ccCorrected is the whole package with the contradicting number corrected.
@@ -328,16 +330,16 @@ func ccCorrected(id string) shpStep {
 	return shpSubmit(id, map[string]any{"files": []any{map[string]any{"path": ccFeaturePath, "content": ccCorrectedFeature}}})
 }
 
-var ccCorrectedFeature = strings.Replace(shpFeature, "Given the number 4", "Given the number 6", 1)
+var ccCorrectedFeature = strings.Replace(shpFeature, "Given is-even: the number 4", "Given is-even: the number 6", 1)
 
 func ccContradiction() any {
-	return ccFindingArgs("Even numbers", "Given  the number\t4", "calc.is_even(n)  returns True\nfor even integers.")
+	return ccFindingArgs("Even numbers", "Given  is-even: the number\t4", "calc.is_even(n)  returns True\nfor even integers.")
 }
 
 const ccRefusal = "Contract check: 1 acceptance expectation(s) contradict the Intent or code it keeps unchanged, so no correct implementation can pass them; nothing was published. " +
 	"Correct each expectation, or the Intent where the Intent is what is wrong, so that a correct implementation passes; do not delete or weaken a scenario to pass this check. " +
 	"Resubmitting this candidate unchanged is refused again.\n" +
-	"- Even numbers | expectation: " + ccFeaturePath + ": Given the number 4 | contract: " + ccIntentPath + ": calc.is_even(n) returns True for even integers. | why: four is even, so the scenario cannot fail for a correct implementation | confirmed: four is even"
+	"- Even numbers | expectation: " + ccFeaturePath + ": Given is-even: the number 4 | contract: " + ccIntentPath + ": calc.is_even(n) returns True for even integers. | why: four is even, so the scenario cannot fail for a correct implementation | confirmed: four is even"
 
 func ccInput(req map[string]any) string {
 	var out strings.Builder
@@ -433,14 +435,14 @@ func TestContractCheckRefusesAConfirmedContradictionAndPublishesItsCorrection(t 
 	}
 	review := ccInput(reqs[0])
 	for _, want := range []string{
-		"Slug: is-even\n\n# Candidate intent.md\n\n" + strings.TrimRight(shpIntentMD, "\n") + "\n\n# Candidate acceptance.feature\n\n" + strings.TrimRight(shpFeature, "\n") +
-			"\n\n# Candidate step file features/steps/is_even_steps.js\n\n" + strings.TrimRight(shpSteps, "\n") + "\n\n# Readiness observations\n\nReadiness observations\nChecked baseline: ",
+		"Slug: is-even\n\n# Candidate intent.md\n\n" + strings.TrimRight(shpScopedIntentMD, "\n") + "\n\n# Candidate acceptance.feature\n\n" + strings.TrimRight(shpFeature, "\n") +
+			"\n\n# Candidate step file features/steps/is-even__steps.js\n\n" + strings.TrimRight(shpSteps, "\n") + "\n\n# Readiness observations\n\nReadiness observations\nChecked baseline: ",
 		"Scenario: Even numbers (acceptance.feature line 2)",
 	} {
 		shpContains(t, "review input", review, want)
 	}
 	shpEq(t, "confirmation input", ccInput(reqs[1]), review+"\n\n# Findings to verify\n\n1. scenario: Even numbers | expectation: "+ccFeaturePath+
-		": Given the number 4 | contract: "+ccIntentPath+": calc.is_even(n) returns True for even integers. | why: four is even, so the scenario cannot fail for a correct implementation")
+		": Given is-even: the number 4 | contract: "+ccIntentPath+": calc.is_even(n) returns True for even integers. | why: four is even, so the scenario cannot fail for a correct implementation")
 	if !strings.HasPrefix(ccInput(reqs[2]), "Slug: is-even\n\n# Candidate intent.md") || strings.Contains(ccInput(reqs[2]), "Findings to verify") {
 		t.Fatalf("second review input %q", ccInput(reqs[2])[:200])
 	}
@@ -454,9 +456,9 @@ func TestContractCheckUnevidencedAndRefutedFindingsNeverRefuse(t *testing.T) {
 		parallel(t)
 		f := newShpFx(t, shpSubmit("c1", shpFiles()), ccIntentOnly("c2"))
 		f.Prov.contract = []shpStep{ccReview("r1",
-			ccFindingArgs("Even numbers", "Given the number 5", "calc.is_even(n) returns True for even integers."),
-			ccFindingArgs("No such scenario", "Given the number 4", "calc.is_even(n) returns True for even integers."),
-			ccFindingArgs("Even numbers", "Given the number 4", "not in intent.md"))}
+			ccFindingArgs("Even numbers", "Given is-even: the number 5", "calc.is_even(n) returns True for even integers."),
+			ccFindingArgs("No such scenario", "Given is-even: the number 4", "calc.is_even(n) returns True for even integers."),
+			ccFindingArgs("Even numbers", "Given is-even: the number 4", "not in intent.md"))}
 		exit, err := f.shape("Add calc.is_even(n).")
 		if err != nil || exit != 0 {
 			t.Fatalf("exit %d, err %v\n%s", exit, err, f.Stderr)
@@ -482,7 +484,7 @@ func TestContractCheckUnevidencedAndRefutedFindingsNeverRefuse(t *testing.T) {
 		f := newShpFx(t, shpSubmit("c1", shpFiles()), ccIntentOnly("c2"))
 		good := ccContradiction()
 		f.Prov.contract = []shpStep{
-			ccReview("r1", good, good, ccFindingArgs("Even numbers", "Given the number 4", "not in intent.md")),
+			ccReview("r1", good, good, ccFindingArgs("Even numbers", "Given is-even: the number 4", "not in intent.md")),
 			ccConfirm("v1", ccVerdict(1, "refuted", "a correct implementation can pass it"), ccVerdict(3, "confirmed", "no such finding"), ccVerdict(2, "refuted", "late")),
 		}
 		exit, err := f.shape("Add calc.is_even(n).")
@@ -799,11 +801,11 @@ func TestContractCheckKeptContradictionEndsNotReadyAndApprovalRefusesIt(t *testi
 	}
 
 	// A record of another hash (the files were edited) or one that does not parse has no effect.
-	f.write(ccIntentPath, shpIntentMD+"\nNothing else changes.\n")
+	f.write(ccIntentPath, shpScopedIntentMD+"\nNothing else changes.\n")
 	if exit, out, err := approve(""); err != nil || exit != 5 {
 		t.Fatalf("hand-corrected card: exit %d, err %v\n%s", exit, err, out)
 	}
-	f.write(ccIntentPath, shpIntentMD)
+	f.write(ccIntentPath, shpScopedIntentMD)
 	if err := os.WriteFile(recordPath, []byte("not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -874,7 +876,7 @@ func TestContractCheckExternalShape(t *testing.T) {
 	confirm := result(map[string]any{"verdicts": []any{ccVerdict(1, "confirmed", "four is even")}})
 	clean := result(map[string]any{"findings": []any{}, "environment": []any{}})
 	correction := map[string]any{"files": []any{map[string]any{"path": ccFeaturePath, "content": ccCorrectedFeature}}}
-	ack := map[string]any{"files": []any{map[string]any{"path": ccIntentPath, "content": shpIntentMD}}}
+	ack := map[string]any{"files": []any{map[string]any{"path": ccIntentPath, "content": shpScopedIntentMD}}}
 
 	t.Run("one read-only session per review and confirmation; the refusal is the next round's feedback", func(t *testing.T) {
 		parallel(t)

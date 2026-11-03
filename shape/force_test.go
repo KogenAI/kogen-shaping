@@ -109,7 +109,7 @@ func TestShapeForceRecovery(t *testing.T) {
 			if err != nil || exit != 0 {
 				t.Fatalf("exit %d: %v", exit, err)
 			}
-			shpEq(t, "published", f.read(refIntentPath), shpIntentMD)
+			shpEq(t, "published", f.read(refIntentPath), shpScopedIntentMD)
 			reqs := f.Prov.requests()
 			shpEq(t, "requests", len(reqs), 3)
 			forceVerify(t, w, "shape", f.events(), reqs, true, []int{1}, [][2]int{{1, 0}}, [2]int{1, 0})
@@ -155,7 +155,7 @@ func TestShapeForceFallback(t *testing.T) {
 		if err != nil || exit != 0 {
 			t.Fatalf("exit %d: %v", exit, err)
 		}
-		shpEq(t, "published", f.read(refIntentPath), shpIntentMD)
+		shpEq(t, "published", f.read(refIntentPath), shpScopedIntentMD)
 		reqs := f.Prov.requests()
 		shpEq(t, "requests", len(reqs), 3)
 		forceVerify(t, w, "shape", f.events(), reqs, false, []int{1}, [][2]int{{1, 0}}, [2]int{1, 0})
@@ -279,7 +279,7 @@ func TestShapeForceNoToolBound(t *testing.T) {
 		if err != nil || exit != 0 {
 			t.Fatalf("exit %d: %v", exit, err)
 		}
-		shpEq(t, "published", f.read(refIntentPath), shpIntentMD)
+		shpEq(t, "published", f.read(refIntentPath), shpScopedIntentMD)
 		reqs := f.Prov.requests()
 		shpEq(t, "requests", len(reqs), 6)
 		forceVerify(t, w, "shape", f.events(), reqs, true, []int{2, 4, 5}, [][2]int{{1, 0}, {2, 1}, {3, 1}}, [2]int{3, 1})
@@ -497,7 +497,7 @@ func TestShapeForceWireCompatibility(t *testing.T) {
 			shpEq(t, "requests", len(reqs), 4)
 			forceVerify(t, w, "shape", f.events(), reqs, true, []int{2}, [][2]int{{1, 0}}, [2]int{1, 0})
 			forceRetained(t, reqs, 2)
-			shpEq(t, "published", f.read(refIntentPath), shpIntentMD)
+			shpEq(t, "published", f.read(refIntentPath), shpScopedIntentMD)
 		})
 		t.Run(w.name+"/refine", func(t *testing.T) {
 			parallel(t)

@@ -83,7 +83,7 @@ func knobShapeEntry(t *testing.T, call shpStep, request string) knobResult {
 }
 
 func knobRefineEntry(t *testing.T, call shpStep, request string) knobResult {
-	f := newRefFx(t, refOpts{red: true}, call, refSubmit("c1", refIntentPath, shpIntentMD))
+	f := newRefFx(t, refOpts{red: true}, call, refSubmit("c1", refIntentPath, shpScopedIntentMD))
 	f.remove(".kogen/local/readiness/is-even.json")
 	f.newSession()
 	exit, err := Refine(context.Background(), f.S, RefineInput{Project: f.Root, Slug: shpSlug, Hash: f.hash0, Request: request, Client: f.Client})
@@ -219,7 +219,7 @@ func TestLoopKnobsRefine(t *testing.T) {
 	t.Run("input", func(t *testing.T) { parallel(t); knobInput(t, e) })
 	t.Run("the first request carries no authority breakpoint", func(t *testing.T) { knobAuthority(t, "refine") })
 	t.Run("client keeps the loop's response budget", func(t *testing.T) {
-		f := newRefFx(t, refOpts{red: true}, shpAnswer(shpCall("p1", "probe", map[string]any{"command": "true"})), refSubmit("c1", refIntentPath, shpIntentMD))
+		f := newRefFx(t, refOpts{red: true}, shpAnswer(shpCall("p1", "probe", map[string]any{"command": "true"})), refSubmit("c1", refIntentPath, shpScopedIntentMD))
 		f.remove(".kogen/local/readiness/is-even.json")
 		f.newSession()
 		if _, err := Refine(context.Background(), f.S, RefineInput{Project: f.Root, Slug: shpSlug, Hash: f.hash0, Request: "Clarify the draft.", Client: f.Client}); err != nil {
