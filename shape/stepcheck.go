@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-verification/verify"
@@ -124,6 +125,7 @@ func (sh *shaping) observerItems(ctx context.Context, intent *project.Intent) ([
 	if err != nil {
 		return nil, nil // invalid declarations are readiness's to report
 	}
+	redactor := verify.NewRedactor(sh.s.Env, sh.s.Getenv("HOME"))
 	var items []verify.StepItem
 	for _, d := range decls {
 		if d.Kind != "observer" {
@@ -131,20 +133,42 @@ func (sh *shaping) observerItems(ctx context.Context, intent *project.Intent) ([
 		}
 		for _, c := range d.Checks {
 			r, err := sh.ev.Probe(func() (verify.ProbeResult, error) {
-				return verify.Probe{Root: sh.root, Command: c.Command, Tools: sh.rd.Tools}.Run(ctx, sh.s)
+				r, err := (verify.Probe{Root: sh.root, Command: "{\n" + c.Command + "\n} >/dev/null", Tools: sh.rd.Tools}).Run(ctx, sh.s)
+				r.Output = redactor.Redact(r.Output)
+				return r, err
 			})
 			if err != nil {
 				return nil, err
 			}
 			it := verify.StepItem{Check: "observer", Target: d.ID + " " + c.Name, OK: r.Status == c.Exit && !r.TimedOut}
 			if !it.OK {
-				it.Detail = fmt.Sprintf("exit %d, recorded exit %d", r.Status, c.Exit)
+				it.Detail = selfcheckObserverDetail(r.Status, c.Exit, r.Output)
 				if r.TimedOut {
-					it.Detail = fmt.Sprintf("timed out: %s/%s (%v) exceeds the %d-second limit", d.ID, c.Name, d.Observers, int(verify.ProbeTimeout.Seconds()))
+					it.Detail += fmt.Sprintf(", timed out: %s/%s (%v) exceeds the %d-second limit", d.ID, c.Name, d.Observers, int(verify.ProbeTimeout.Seconds()))
 				}
 			}
 			items = append(items, it)
 		}
 	}
 	return items, nil
+}
+
+// selfcheckStderrTail bounds an already-redacted diagnostic by bytes.
+func selfcheckStderrTail(stderr string) string {
+	if len(stderr) > 4096 {
+		tail := stderr[len(stderr)-4096:]
+		for len(tail) > 0 && !utf8.RuneStart(tail[0]) {
+			tail = tail[1:]
+		}
+		return tail
+	}
+	return stderr
+}
+
+func selfcheckObserverDetail(actual, expected int, stderr string) string {
+	detail := fmt.Sprintf("exit %d, recorded exit %d", actual, expected)
+	if tail := selfcheckStderrTail(stderr); tail != "" {
+		detail += "\nstderr: " + tail
+	}
+	return detail
 }

@@ -3,7 +3,9 @@ package shape
 import (
 	"encoding/json"
 	"slices"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-verification/verify"
@@ -57,5 +59,47 @@ func TestSelfcheckUndefinedOutlineRows(t *testing.T) {
 	want := selfcheckHeadline + "\nacceptance.feature line 4: undefined step: When value 1\nacceptance.feature line 4: undefined step: When value 2"
 	if got := selfcheckScenarioFeedback(items, scenarios); got != want {
 		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestSelfcheckStderrTail(t *testing.T) {
+	for _, n := range []int{0, 5, 4095, 4096, 4097} {
+		input := strings.Repeat("x", n)
+		if n > 0 {
+			input = "H" + input[1:]
+		}
+		got := selfcheckStderrTail(input)
+		want := input[max(0, n-4096):]
+		if got != want {
+			t.Errorf("length %d: got %d bytes", n, len(got))
+		}
+	}
+}
+
+func TestSelfcheckStderrRedactedBeforeTail(t *testing.T) {
+	redactor := verify.NewRedactor([]string{"TOKEN=boundary-secret-123456"}, "")
+	input := "boundary-secret-123456" + strings.Repeat("x", 4090)
+	got := selfcheckStderrTail(redactor.Redact(input))
+	if strings.Contains(got, "secret-123456") || strings.Contains(got, "boundary-secret") {
+		t.Fatalf("secret fragment in tail: %q", got[:40])
+	}
+}
+
+func TestSelfcheckObserverDetail(t *testing.T) {
+	for _, tc := range []struct{ stderr, want string }{
+		{"", "exit 7, recorded exit 0"},
+		{"specific failure\n", "exit 7, recorded exit 0\nstderr: specific failure\n"},
+	} {
+		if got := selfcheckObserverDetail(7, 0, tc.stderr); got != tc.want {
+			t.Errorf("got %q, want %q", got, tc.want)
+		}
+	}
+}
+
+func TestSelfcheckStderrTailUTF8Boundary(t *testing.T) {
+	input := "界" + strings.Repeat("x", 4095)
+	got := selfcheckStderrTail(input)
+	if !utf8.ValidString(got) || len(got) > 4096 || got != strings.Repeat("x", 4095) {
+		t.Fatalf("tail must be valid UTF-8 and at most 4096 bytes: length %d, valid %v", len(got), utf8.ValidString(got))
 	}
 }

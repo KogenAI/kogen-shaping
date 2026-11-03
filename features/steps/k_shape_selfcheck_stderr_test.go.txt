@@ -1,0 +1,52 @@
+package shape
+
+import (
+ "encoding/json"
+ "fmt"
+ "os"
+ "strings"
+ "testing"
+)
+
+func kssObserve(t *testing.T, feedback, retained string, published bool) {
+ t.Helper()
+ for _, s := range []string{"observer good", "exit 7", "recorded exit 0", "KSS-CAUSE-END"} { if !strings.Contains(feedback,s) { t.Errorf("missing refusal diagnostic %q",s) } }
+ if strings.Contains(feedback,"KSS-OLD-HEAD") || len(feedback)>10000 { t.Error("stderr tail is not bounded") }
+ for _, text := range []string{feedback,retained} { for _, secret := range []string{"kss-env-123456789", "kss-labeled-987654321"} { if strings.Contains(text,secret) {t.Errorf("secret leaked: %s",secret)} } }
+ if published {t.Error("refused candidate published")}
+}
+func TestKShapeSelfcheckStderrAcceptance(t *testing.T) {
+ mode:=os.Getenv("KSS_MODE")
+ if mode=="good" || mode=="bad" {
+  valid:="Step self-check failed observer good exit 7, recorded exit 0 KSS-CAUSE-END"
+  if mode=="good" { kssObserve(t,valid,"redacted",false) } else {
+   for _,s:=range []string{"observer good","exit 7","recorded exit 0","KSS-CAUSE-END"} {t.Run(s,func(t *testing.T){kssObserve(t,strings.ReplaceAll(valid,s,""),"",false)})}
+   t.Run("bound",func(t *testing.T){kssObserve(t,valid+"KSS-OLD-HEAD"+strings.Repeat("x",11000),"",false)})
+   for _,s:=range []string{"kss-env-123456789","kss-labeled-987654321"} {t.Run(s,func(t *testing.T){kssObserve(t,valid,s,false)})}
+   t.Run("publication",func(t *testing.T){kssObserve(t,valid,"",true)})
+  };return
+ }
+ if mode!="exhaust" {t.Fatal("unknown mode",mode)}
+ f:=newShpFx(t)
+ f.Env=append(f.Env,"KSS_SECRET=kss-env-123456789")
+ // Real shell stderr, not a fabricated test-runner diagnostic. Keep commands
+ // free of secret literals so retained proposal bytes are not a false leak.
+ command:="printf 'KSS-OLD-HEAD\\n' >&2; i=0; while [ $i -lt 600 ]; do printf 'padding-abcdefghijklmnopqrstuvwxyz\\n' >&2; i=$((i+1)); done; printf '%s\\n' \"$KSS_SECRET\" >&2; printf 'password=kss-labeled-' >&2; printf '987654321\\nKSS-CAUSE-END\\n' >&2; exit 7"
+ files:=budgetFiles(command,"exit 143")
+ // budgetFiles already uses the current slug-owned filename. Scope sentences
+ // and definitions too, so ownership rejection cannot mask command execution.
+ for _,raw:=range files["files"].([]any) {m:=raw.(map[string]any);p:=m["path"].(string);s:=m["content"].(string)
+  if strings.HasSuffix(p,".feature") {for _,kw:=range []string{"Given ","When ","Then ","And "} {s=strings.ReplaceAll(s,kw,kw+"is-even: ")}}
+  if strings.HasSuffix(p,".js") {for _,kw:=range []string{"Given('","When('","Then('","Given(\"","When(\"","Then(\""} {s=strings.ReplaceAll(s,kw,kw+"is-even: ")}}
+  m["content"]=s
+ }
+ f.Prov.seq=[]shpStep{shpSubmit("one",files),shpSubmit("two",files),shpSubmit("three",files)}
+ exit,err:=f.shape("Add calc.is_even(n).")
+ if exit!=1 || err==nil {t.Fatalf("exhaustion exit=%d err=%v",exit,err)}
+ reqs:=f.Prov.requests();if len(reqs)!=3 {t.Fatalf("requests=%d want 3",len(reqs))}
+ retained,_:=json.Marshal(f.events())
+ for i,id:=range []string{"one","two"} {feedback:=shpOutputs(reqs[i+1])[id];kssObserve(t,feedback,string(retained),len(shpNamed(f.events(),"intent_published"))>0)}
+ // Exhaustion error is also a user-visible refusal.
+ text:=fmt.Sprint(err);if e:=shpWantError(t,err,"intent","not_ready","the Intent is not ready to build",1);e!=nil {text+=strings.Join(e.Lines,"\n")}
+ kssObserve(t,text,string(retained),false)
+}
