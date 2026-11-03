@@ -55,7 +55,7 @@ func workerNames(role string) []string {
 	case "read":
 		return []string{tools.ReadFileTool, tools.ListFilesTool, tools.SearchTextTool}
 	case "probe":
-		return []string{tools.ReadFileTool, tools.ListFilesTool, tools.SearchTextTool, agent.ProbeTool}
+		return []string{tools.ReadFileTool, tools.ListFilesTool, tools.SearchTextTool, ProbeTool}
 	}
 	return nil
 }
@@ -367,7 +367,7 @@ func (sh *shaping) launch(ctx context.Context, i int, st *jobState, done chan wo
 	sh.s.Progress(fmt.Sprintf("kogen: worker %s %s %s/%s", j.id, j.role, role.Model, role.Effort))
 	revision, _ := CurrentRevision(sh.repo)
 	defs := ShaperToolDefinitions(workerNames(j.role)...)
-	defs = append(defs, ShaperToolDefinitions(agent.WorkerResultTool)...)
+	defs = append(defs, ShaperToolDefinitions(WorkerResultTool)...)
 	if st.cacheID == "" {
 		st.cacheID = startConversation(sh.ev, "worker "+j.id)
 	}
@@ -423,10 +423,10 @@ func (sh *shaping) execute(ctx context.Context, st *jobState, brief map[string]a
 	st.pending = st.pending[1:]
 	args := c.Args()
 	names := workerNames(st.job.role)
-	probeAllowed := c.Name == agent.ProbeTool && slices.Contains(names, agent.ProbeTool)
+	probeAllowed := c.Name == ProbeTool && slices.Contains(names, ProbeTool)
 
 	switch {
-	case c.Name == agent.WorkerResultTool:
+	case c.Name == WorkerResultTool:
 		sh.workerResult(st, brief, args)
 		return nil
 	case !probeAllowed && st.tools >= batchToolBound:

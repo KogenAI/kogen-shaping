@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/KogenAI/kogen-executor/agent"
 )
 
 type policySnapshot struct {
@@ -17,34 +15,30 @@ type policySnapshot struct {
 	Tools  map[string][]map[string]any `json:"tools"`
 }
 
-func policyBytes(pinned bool) []byte {
+func policyBytes() []byte {
 	names := map[string][]string{}
 	main := (&shaping{}).mainTools()
-	names["default"] = append(append([]string{}, main...), agent.ProposeFilesTool, agent.SubmitTool)
-	names["workers-enabled"] = append(append([]string{}, names["default"]...), agent.ShapeBatchTool)
+	names["default"] = append(append([]string{}, main...), ProposeFilesTool, SubmitTool)
+	names["workers-enabled"] = append(append([]string{}, names["default"]...), ShapeBatchTool)
 	for _, role := range []string{"read", "probe", "draft"} {
-		names[role] = append(workerNames(role), agent.WorkerResultTool)
+		names[role] = append(workerNames(role), WorkerResultTool)
 	}
-	prompt := ShaperInstructions()
-	defs := ShaperToolDefinitions
-	if pinned {
-		prompt = agent.Prompt(agent.Shaper) + agent.Prompt(agent.ShaperContextGuidance) + "\n" + namedTestGuidance + unwrittenTestGuidance + runnerObserverGuidance
-		defs = agent.Defs
-	}
-	snap := policySnapshot{Prompt: prompt, Tools: map[string][]map[string]any{}}
+	snap := policySnapshot{Prompt: ShaperInstructions(), Tools: map[string][]map[string]any{}}
 	for name, n := range names {
-		snap.Tools[name] = defs(n...)
+		snap.Tools[name] = ShaperToolDefinitions(n...)
 	}
 	b, _ := json.MarshalIndent(snap, "", "  ")
 	return append(b, '\n')
 }
 
-// -update derives this oracle from executor v0.0.0-20261102193603-1aea0728c24b,
-// not from the local policy. It includes Shape's existing suffixes.
+// The golden was derived in K-SHAPE-PROMPT-MOVE from executor v0.0.0-20261102193603-1aea0728c24b
+// (its Shaper prompt and definitions, with Shape's existing suffixes); executor no longer holds
+// that policy, which shaping owns now, so -update rewrites it from the local policy. Use it only
+// after an intended policy change, and review the diff.
 func TestShaperPolicyGolden(t *testing.T) {
 	path := "testdata/shaper_policy_golden.json"
 	if *updateGoldens {
-		if err := os.WriteFile(path, policyBytes(true), 0644); err != nil {
+		if err := os.WriteFile(path, policyBytes(), 0644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -52,7 +46,7 @@ func TestShaperPolicyGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(policyBytes(false), want) {
+	if !bytes.Equal(policyBytes(), want) {
 		t.Fatal("local Shaper policy differs from executor-derived golden")
 	}
 }
@@ -67,7 +61,7 @@ func TestShaperPolicyRequest(t *testing.T) {
 		t.Fatal("request did not use local instructions")
 	}
 	got, _ := json.Marshal(req["tools"])
-	names := append((&shaping{}).mainTools(), agent.ProposeFilesTool, agent.SubmitTool)
+	names := append((&shaping{}).mainTools(), ProposeFilesTool, SubmitTool)
 	want, _ := json.Marshal(ShaperToolDefinitions(names...))
 	if !bytes.Equal(got, want) {
 		t.Fatalf("request tools differ from local policy\ngot %s\nwant %s", got, want)
@@ -80,7 +74,7 @@ func TestShaperPolicyRequest(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if bytes.Equal(policyBytes(false), baseline) {
+		if bytes.Equal(policyBytes(), baseline) {
 			t.Fatal("mutation did not cause golden drift")
 		}
 	}

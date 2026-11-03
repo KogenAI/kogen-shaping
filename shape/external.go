@@ -16,7 +16,6 @@ import (
 
 	"github.com/KogenAI/kogen-coordinator/git"
 	"github.com/KogenAI/kogen-coordinator/project"
-	"github.com/KogenAI/kogen-executor/agent"
 	"github.com/KogenAI/kogen-executor/executor"
 	"kogen-loop/sys"
 )
@@ -323,14 +322,14 @@ func submissionArgs(raw json.RawMessage) (map[string]any, error) {
 	return args, nil
 }
 
-// schemaOf is the parameter schema of an existing submission tool; no wrapper is added.
+// schemaOf is the parameter schema of Refine's submission tool; no wrapper is added.
 func schemaOf(tool string) json.RawMessage {
-	b, _ := json.Marshal(agent.Defs(tool)[0]["parameters"])
+	b, _ := json.Marshal(RefineToolDefinitions(tool)[0]["parameters"])
 	return b
 }
 
 func shaperSubmitSchema() json.RawMessage {
-	b, _ := json.Marshal(ShaperToolDefinitions(agent.SubmitTool)[0]["parameters"])
+	b, _ := json.Marshal(ShaperToolDefinitions(SubmitTool)[0]["parameters"])
 	return b
 }
 

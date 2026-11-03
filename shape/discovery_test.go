@@ -11,7 +11,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KogenAI/kogen-executor/agent"
 	"github.com/KogenAI/kogen-verification/verify"
 )
 
@@ -374,7 +373,7 @@ func TestTheShaperAndRefinePoliciesStateTheDiscoveryRulesAndTheRecordingSentence
 			}
 		}
 	}
-	if verify.Guidance != agent.Prompt(agent.FeasibilityGuidance) {
+	if verify.Guidance != shaperPrompt("feasibility-guidance") {
 		t.Error("verify.Guidance and the embedded feasibility guidance differ")
 	}
 }
