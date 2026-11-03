@@ -1,0 +1,85 @@
+package shape
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"reflect"
+	"strings"
+	"testing"
+
+	"kogen-loop/sys"
+)
+
+// TestKShapeSubmitReachableAcceptance runs one scripted native Shape conversation against the
+// loopback provider and prints one KSSR observation line. KSSR_WIRE names the route
+// (responses, chat or anthropic) and KSSR_SCRIPT the scripted answers.
+func TestKShapeSubmitReachableAcceptance(t *testing.T) {
+	wires := map[string]*forceWire{"responses": responsesWire, "chat": chatWire, "anthropic": anthropicWire}
+	w := wires[os.Getenv("KSSR_WIRE")]
+	if w == nil {
+		t.Fatalf("unknown KSSR_WIRE %q", os.Getenv("KSSR_WIRE"))
+	}
+	both := map[string]any{"questions": []any{shpQuestion("Q?")}, "files": shpFiles()["files"]}
+	refuse := func(id string) shpStep { return w.shapeSubmit(id, both) }
+	valid := func(id string) shpStep { return w.shapeSubmit(id, shpFiles()) }
+	p := w.prose
+	green := true
+	var steps []shpStep
+	switch script := os.Getenv("KSSR_SCRIPT"); script {
+	case "control":
+		steps = []shpStep{p("Control answer."), refuse("c1"), refuse("c2"), refuse("c3"), valid("c4")}
+	case "prose-refusal-cycle":
+		steps = []shpStep{p("I will read more first."), refuse("c1"), p("Still thinking."), refuse("c2"), p("Here is my plan."), valid("c3")}
+	case "prose-only":
+		steps = []shpStep{p("First answer."), p("Second answer."), p("I need to know the database first.\nThen I will submit."), p("Fourth answer."), p("Fifth answer.")}
+	case "refusal-then-prose":
+		steps = []shpStep{p("one"), refuse("c1"), p("two"), p("three"), p("Waiting for the readiness result.\nmore"), p("six")}
+	case "observations-then-prose":
+		green = false
+		steps = []shpStep{valid("c1"), p("The failures look expected."), p("two"), p("Done here."), p("five")}
+	case "normal":
+		steps = []shpStep{w.readReadme("r"), p("Thinking out loud."), valid("c1")}
+	case "answer-text":
+		// The second answer has only a reasoning item: a tool-free answer without text.
+		steps = []shpStep{p("  Plan: token=abc123secret and then submit.\n"), shpAnswer(map[string]any{"type": "reasoning", "id": "rs_1", "summary": []any{}}),
+			refuse("c1"), p("Long answer: " + strings.Repeat("abcdefghij", 250)), valid("c2")}
+	case "finite-bound":
+		steps = []shpStep{p("p1"), p("p2"), refuse("c1"), p("p3"), p("p4"), refuse("c2"), p("p5"), p("p6"), p("Last words.\nand more"), p("p8"), valid("c3")}
+	default:
+		t.Fatalf("unknown KSSR_SCRIPT %q", script)
+	}
+	f := w.newShape(t, steps...)
+	if green {
+		f.setReport("PASSED", 0)
+	}
+	exit, err := f.shape("Add calc.is_even(n).")
+	obs := map[string]any{"exit": exit, "stop": ""}
+	if err != nil {
+		if e, ok := sys.AsError(err); ok {
+			obs["exit"], obs["stop"] = e.Exit, e.Render()
+		} else {
+			obs["exit"], obs["stop"] = -1, err.Error()
+		}
+	}
+	reqs := f.Prov.requests()
+	forced := []int{}
+	for i, r := range reqs {
+		if !reflect.DeepEqual(r["tool_choice"], w.auto) {
+			forced = append(forced, i+1)
+		}
+	}
+	obs["requests"], obs["forced"] = len(reqs), forced
+	obs["written"] = f.exists(".kogen/intents/is-even/intent.md") && f.read(".kogen/intents/is-even/intent.md") == shpIntentMD
+	answers := []any{}
+	for _, e := range shpNamed(f.events(), "tool_free_answer") {
+		delete(e, "event")
+		answers = append(answers, e)
+	}
+	obs["answers"] = answers
+	b, err := json.Marshal(obs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Printf("KSSR %s\n", b)
+}

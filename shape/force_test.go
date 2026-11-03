@@ -250,7 +250,7 @@ func TestShapeForceNoToolBound(t *testing.T) {
 		exit, err := f.shape("Add calc.is_even(n).")
 		e := shpWantError(t, err, "shape", "invalid_output", "the shaper answered without calling any tool 3 times (no-tool limit); no submission was made", 1)
 		shpEq(t, "exit", exit, 1)
-		shpEq(t, "problem", strings.Join(e.Lines, "|"), "the shaper ended without calling submit")
+		shpEq(t, "problem", strings.Join(e.Lines, "|"), "the shaper ended without calling submit|last tool-free answer: three")
 		reqs := f.Prov.requests()
 		shpEq(t, "requests", len(reqs), 3)
 		forceVerify(t, w, "shape", f.events(), reqs, true, []int{1, 2}, [][2]int{{1, 0}, {2, 0}}, [2]int{3, 0})
@@ -268,17 +268,71 @@ func TestShapeForceNoToolBound(t *testing.T) {
 		forceVerify(t, w, "refine", f.evidenceEvents(), reqs, true, []int{1, 2}, [][2]int{{1, 0}, {2, 0}}, [2]int{3, 0})
 		refEqual(t, "preserved", f.pkg(), before)
 	})
-	// Discovery without a submission is not a no-tool answer, and a refusal between prose
-	// answers does not reset the no-tool count: prose, refusal, prose, prose stops.
-	t.Run("counters are independent", func(t *testing.T) {
+	// Discovery without a submission is not a no-tool answer, and a submission starts a new
+	// no-tool count: read, prose, refusal, prose, prose, then the forced submit is accepted.
+	t.Run("a submission starts a new count", func(t *testing.T) {
 		parallel(t)
 		both := map[string]any{"questions": []any{shpQuestion("Q?")}, "files": shpFiles()["files"]}
 		f := w.newShape(t, w.readReadme("r"), w.prose("one"), w.shapeSubmit("c1", both), w.prose("two"), w.prose("three"), w.shapeSubmit("c2", shpFiles()))
+		f.setReport("PASSED", 0)
+		exit, err := f.shape("Add calc.is_even(n).")
+		if err != nil || exit != 0 {
+			t.Fatalf("exit %d: %v", exit, err)
+		}
+		shpEq(t, "published", f.read(refIntentPath), shpIntentMD)
+		reqs := f.Prov.requests()
+		shpEq(t, "requests", len(reqs), 6)
+		forceVerify(t, w, "shape", f.events(), reqs, true, []int{2, 4, 5}, [][2]int{{1, 0}, {2, 1}, {3, 1}}, [2]int{3, 1})
+	})
+	// Prose answers between refused submissions still end: at most 7 tool-free answers and 9
+	// requests at the default limit.
+	t.Run("finite bound with refusals", func(t *testing.T) {
+		parallel(t)
+		both := map[string]any{"questions": []any{shpQuestion("Q?")}, "files": shpFiles()["files"]}
+		refusal := func(id string) shpStep { return w.shapeSubmit(id, both) }
+		f := w.newShape(t, w.prose("a"), w.prose("b"), refusal("c1"), w.prose("c"), w.prose("d"), refusal("c2"), w.prose("e"), w.prose("f"), w.prose("Last words.\nmore"))
+		exit, err := f.shape("Add calc.is_even(n).")
+		e := shpWantError(t, err, "shape", "invalid_output", "the shaper answered without calling any tool 3 times since its last submission (no-tool limit); that submission (attempt 2) was refused at gate validation", 1)
+		shpEq(t, "exit", exit, 1)
+		shpEq(t, "requests", len(f.Prov.requests()), 9)
+		shpEq(t, "lines", strings.Join(e.Lines, "|"), "the shaper ended without calling submit|last refusal (attempt 2, gate validation):|"+
+			"submit takes exactly one of a non-empty questions list, a non-empty files list, or a blocked report|last tool-free answer: Last words.")
+		shapeAbsent(t, f)
+	})
+	// The stop after readiness failures names the unacknowledged submission and its file.
+	t.Run("stop after readiness failures", func(t *testing.T) {
+		parallel(t)
+		f := w.newShape(t, w.shapeSubmit("c1", shpFiles()), w.prose("a"), w.prose("b"), w.prose("Done here."))
+		exit, err := f.shape("Add calc.is_even(n).")
+		e := shpWantError(t, err, "shape", "invalid_output", "the shaper answered without calling any tool 3 times since its last submission (no-tool limit); that submission (attempt 1) returned readiness failures that were not acknowledged", 1)
+		shpEq(t, "exit", exit, 1)
+		shpEq(t, "lines", strings.Join(e.Lines, "|"), "the shaper ended without calling submit|last submission (attempt 1): readiness failures returned for acknowledgment, see .kogen/local/shaping/is-even/observations-1.txt|last tool-free answer: Done here.")
+		shpEq(t, "requests", len(f.Prov.requests()), 4)
+	})
+	// Every tool-free answer is retained, redacted and bounded; an empty one has no text.
+	t.Run("tool-free answers are recorded", func(t *testing.T) {
+		parallel(t)
+		long := "Long: " + strings.Repeat("é", 2100)
+		reasoning := shpAnswer(map[string]any{"type": "reasoning", "id": "rs", "summary": []any{}})
+		f := w.newShape(t, w.prose("  Plan: token=abc123secret then submit.\n"), reasoning, w.prose(long))
 		_, err := f.shape("Add calc.is_even(n).")
 		shpWantError(t, err, "shape", "invalid_output", "the shaper answered without calling any tool 3 times (no-tool limit); no submission was made", 1)
-		reqs := f.Prov.requests()
-		shpEq(t, "requests", len(reqs), 5)
-		forceVerify(t, w, "shape", f.events(), reqs, true, []int{2, 4}, [][2]int{{1, 0}, {2, 1}}, [2]int{3, 1})
+		got := shpNamed(f.events(), "tool_free_answer")
+		shpEq(t, "answers", len(got), 3)
+		first := got[0]
+		shpEq(t, "first text", first["text"], any("Plan: token=[REDACTED] then submit."))
+		shpEq(t, "first chars", first["chars"], any(float64(len("Plan: token=[REDACTED] then submit."))))
+		shpEq(t, "first request", first["request"], any(float64(1)))
+		shpEq(t, "first owner", first["owner"], any("shape"))
+		shpEq(t, "first truncated", first["truncated"], any(false))
+		if _, ok := got[1]["text"]; ok {
+			t.Fatalf("an empty answer has text: %v", got[1])
+		}
+		shpEq(t, "empty chars", got[1]["chars"], any(float64(0)))
+		shpEq(t, "empty turns", got[1]["no_tool_turns"], any(float64(2)))
+		shpEq(t, "long chars", got[2]["chars"], any(float64(2106)))
+		shpEq(t, "long truncated", got[2]["truncated"], any(true))
+		shpEq(t, "long text", len([]rune(got[2]["text"].(string))), 2000)
 	})
 	// A provider error exit keeps the final counters too.
 	t.Run("provider error", func(t *testing.T) {
@@ -360,7 +414,7 @@ func forceResets(t *testing.T, w *forceWire) {
 		seedPadding(f)
 		f.Prov.route = forceResetRoute(w, w.shapeSubmit("c0", both), "padding.txt")
 		_, err := f.shape("Add calc.is_even(n).")
-		shpWantError(t, err, "shape", "invalid_output", "the shaper answered without calling any tool 3 times (no-tool limit); no submission was made", 1)
+		shpWantError(t, err, "shape", "invalid_output", "the shaper answered without calling any tool 3 times since its last submission (no-tool limit); that submission (attempt 1) was refused at gate validation", 1)
 		reqs := f.Prov.requests()
 		forced := len(reqs) - 2
 		forceVerify(t, w, "shape", f.events(), reqs, true, []int{forced, forced + 1}, [][2]int{{1, 1}, {2, 1}}, [2]int{3, 1})

@@ -577,7 +577,7 @@ func TestShapeWithoutSubmitIsAskedToEndWithSubmit(t *testing.T) {
 	f := newShpFx(t, text, text, text)
 	_, err := f.shape("Add calc.is_even(n).")
 	e := shpWantError(t, err, "shape", "invalid_output", "", 1)
-	shpEq(t, "lines", strings.Join(e.Lines, "\n"), "the shaper ended without calling submit")
+	shpEq(t, "lines", strings.Join(e.Lines, "\n"), "the shaper ended without calling submit\nlast tool-free answer: done")
 	reqs := f.Prov.requests()
 	shpEq(t, "requests", len(reqs), 3)
 	shpContains(t, "request 2", shpBody(reqs[1]), "End by calling submit with either questions or files.")

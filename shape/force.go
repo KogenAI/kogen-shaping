@@ -1,7 +1,11 @@
 package shape
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-verification/verify"
 	"kogen-loop/provider"
 )
 
@@ -87,4 +91,86 @@ func (t *turnCounter) extend(state map[string]any) map[string]any {
 		state["forced_submit_pending"] = t.target
 	}
 	return state
+}
+
+// toolFreeAnswerChars bounds the text retained for a tool-free answer, in Unicode code points.
+const toolFreeAnswerChars = 2000
+
+// lastSubmission is the shaper's last submit call that did not end the conversation: a refusal
+// (kind outInvalid) or readiness failures returned for acknowledgment (kind outObservations).
+// The zero value is no submission.
+type lastSubmission struct {
+	kind     outcomeKind
+	attempt  int
+	gate     string   // refusal: the gate
+	problems []string // refusal: its problem lines as recorded
+	path     string   // observations: the file relative to the project root
+}
+
+// noToolStop is the outcome of reaching the no-tool limit: it names the last submission the
+// shaper was asked to act on and the first line of its last tool-free answer.
+func noToolStop(last lastSubmission, answer string) outcome {
+	lines := []string{"the shaper ended without calling submit"}
+	var detail string
+	switch last.kind {
+	case outInvalid:
+		detail = fmt.Sprintf("the shaper answered without calling any tool %d times since its last submission (no-tool limit); that submission (attempt %d) was refused at gate %s", noToolLimit, last.attempt, last.gate)
+		lines = append(lines, fmt.Sprintf("last refusal (attempt %d, gate %s):", last.attempt, last.gate))
+		lines = append(lines, last.problems...)
+	case outObservations:
+		detail = fmt.Sprintf("the shaper answered without calling any tool %d times since its last submission (no-tool limit); that submission (attempt %d) returned readiness failures that were not acknowledged", noToolLimit, last.attempt)
+		lines = append(lines, fmt.Sprintf("last submission (attempt %d): readiness failures returned for acknowledgment, see %s", last.attempt, last.path))
+	default:
+		detail = fmt.Sprintf("the shaper answered without calling any tool %d times (no-tool limit); no submission was made", noToolLimit)
+	}
+	first, _, _ := strings.Cut(answer, "\n")
+	if first == "" {
+		first = "(empty)"
+	}
+	lines = append(lines, "last tool-free answer: "+first)
+	return outcome{kind: outNoTool, detail: detail, problems: lines}
+}
+
+// recordToolFreeAnswer records the text of a response without a tool call, redacted, trimmed and
+// bounded, and returns the recorded text.
+func (sh *shaping) recordToolFreeAnswer(items []map[string]any, noTool int, redactor *verify.Redactor) string {
+	var parts []string
+	for _, it := range items {
+		if it["type"] != "message" || it["role"] != "assistant" {
+			continue
+		}
+		var content []map[string]any
+		switch c := it["content"].(type) {
+		case []map[string]any:
+			content = c
+		case []any:
+			for _, e := range c {
+				if m, ok := e.(map[string]any); ok {
+					content = append(content, m)
+				}
+			}
+		}
+		for _, part := range content {
+			if part["type"] != "output_text" {
+				continue
+			}
+			if t, ok := part["text"].(string); ok {
+				parts = append(parts, t)
+			}
+		}
+	}
+	text := strings.TrimSpace(redactor.Redact(strings.Join(parts, "\n")))
+	runes := []rune(text)
+	event := map[string]any{
+		"event": "tool_free_answer", "owner": "shape", "request": sh.requests, "no_tool_turns": noTool,
+		"chars": len(runes), "truncated": len(runes) > toolFreeAnswerChars,
+	}
+	if len(runes) > toolFreeAnswerChars {
+		text = string(runes[:toolFreeAnswerChars])
+	}
+	if len(runes) > 0 {
+		event["text"] = text
+	}
+	sh.ev.Record(event)
+	return text
 }

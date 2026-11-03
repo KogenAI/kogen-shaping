@@ -560,8 +560,11 @@ type shaping struct {
 	contractRefused  map[string][]string // package hash to the item lines of its refusal
 	contractLines    []string            // the item lines of the last contract refusal
 	lastGate         string              // the gate of the last refused submission
-	lastFresh        bool                // the last certify ran readiness
-	lastObservations string              // the readiness observations of that check; "" when green
+	lastRefusal      []string            // its problem lines as recorded in submission_refused
+	// lastObservationsPath is the observations file of the last readiness check, relative to the root.
+	lastObservationsPath string
+	lastFresh            bool   // the last certify ran readiness
+	lastObservations     string // the readiness observations of that check; "" when green
 }
 
 func (sh *shaping) elapsed() int64 { return time.Since(sh.started).Milliseconds() / 1000 }
@@ -597,6 +600,7 @@ const (
 
 type outcome struct {
 	kind      outcomeKind
+	detail    string // outNoTool: the stop's detail line
 	problems  []string
 	questions []map[string]any
 	paths     []string
@@ -682,7 +686,7 @@ func (sh *shaping) shape(ctx context.Context, st *state) (int, error) {
 		e.Lines = res.problems
 		return 0, e
 	case outNoTool:
-		e := sys.Fail("shape", "invalid_output", fmt.Sprintf("the shaper answered without calling any tool %d times (no-tool limit); no submission was made", noToolLimit), 1)
+		e := sys.Fail("shape", "invalid_output", res.detail, 1)
 		e.Lines = res.problems
 		return 0, e
 	case outQuestions:
@@ -770,6 +774,16 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 	var usage provider.Usage
 	turns := newTurns("shape")
 	defer turns.counts(sh.ev)
+	home := sh.s.Getenv("HOME")
+	if home == "" {
+		home, _ = os.UserHomeDir()
+	}
+	redactor := verify.NewRedactor(sh.s.Env, home)
+	// sinceSubmit counts the tool-free answers since the shaper's last submit call; last is
+	// that submission when it did not end the conversation.
+	sinceSubmit := 0
+	var last lastSubmission
+	var lastAnswer string
 	for {
 		sh.requests++
 		sh.s.Progress(fmt.Sprintf("kogen: shaping (request %d, %d s)", sh.requests, sh.elapsed()))
@@ -830,6 +844,10 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 		calls := tools.Calls(resp.Items)
 		input = append(input, tools.Replay(resp.Items)...)
 		toolFree := turns.answered(len(calls))
+		if toolFree {
+			sinceSubmit++
+			lastAnswer = sh.recordToolFreeAnswer(resp.Items, turns.noTool, redactor)
+		}
 
 		var outputs []any
 		var result outcome
@@ -895,14 +913,18 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 			if turns.invalid >= submissionRetryLimit(sh.in.SubmissionRetryLimit) {
 				return result, usage, nil
 			}
+			sinceSubmit = 0
+			last = lastSubmission{kind: outInvalid, attempt: sh.submissions, gate: sh.lastGate, problems: sh.lastRefusal}
 			sh.ev.NextAttempt()
 		case result.kind == outObservations:
+			sinceSubmit = 0
+			last = lastSubmission{kind: outObservations, attempt: sh.submissions, path: sh.lastObservationsPath}
 			sh.ev.NextAttempt()
 		case result.kind == outBlocked, result.kind == outQuestions, result.kind == outReady:
 			return result, usage, nil
 		case toolFree:
-			if turns.exhausted() {
-				return outcome{kind: outNoTool, problems: []string{"the shaper ended without calling submit"}}, usage, nil
+			if sinceSubmit >= noToolLimit {
+				return noToolStop(last, lastAnswer), usage, nil
 			}
 			sh.ev.NextAttempt()
 			input = append(input, map[string]any{"role": "user", "content": turns.reminder})
@@ -1201,6 +1223,7 @@ func (sh *shaping) refused(gate string, problems []string) {
 		}
 		cut[i] = p
 	}
+	sh.lastRefusal = cut
 	sh.ev.Record(map[string]any{"event": "submission_refused", "attempt": sh.submissions, "gate": gate, "problems": cut})
 }
 
@@ -1477,6 +1500,7 @@ func (sh *shaping) certify(ctx context.Context, files []string) (string, outcome
 	}
 	sh.ready = ready
 	reference := filepath.Join(sh.root, ".kogen/local/shaping", sh.slug, fmt.Sprintf("observations-%d.txt", sh.requests))
+	sh.lastObservationsPath = fmt.Sprintf(".kogen/local/shaping/%s/observations-%d.txt", sh.slug, sh.requests)
 	observations := verify.Observations(sh.slug, ready, reference)
 	if err := os.WriteFile(reference, []byte(observations), 0o666); err != nil {
 		return "", outcome{}, err
