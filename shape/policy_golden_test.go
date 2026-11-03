@@ -28,7 +28,7 @@ var policyPrompts = map[string]func() string{
 }
 
 // ownedTools are the shaping-owned tool definitions, in executor's order.
-var ownedTools = []string{ProbeTool, ProposeFilesTool, SubmitTool, SubmitRefinementTool, ShapeBatchTool, WorkerResultTool}
+var ownedTools = []string{ProbeTool, ProposeFilesTool, SubmitTool, SubmitRefinementTool}
 
 // ownedDefinition is the local definition of an owned tool.
 func ownedDefinition(name string) map[string]any {

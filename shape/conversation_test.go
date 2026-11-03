@@ -65,64 +65,6 @@ func TestAShapeConversationKeepsItsIdentityAcrossAWorkingWindowReset(t *testing.
 	}
 }
 
-func TestEveryShapeWorkerHasItsOwnCacheIdentity(t *testing.T) {
-	parallel(t)
-	f := newShpFx(t)
-	f.withWorkers()
-	jobs := []any{shpJob("one", "read", []any{"app.txt"}), shpJob("two", "read", []any{"app.txt"})}
-	f.Prov.route = func(req map[string]any) *shpStep {
-		switch id := workerJobID(req); id {
-		case "one", "two":
-			var st shpStep
-			if len(shpOutputs(req)) == 0 {
-				st = shpAnswer(shpCall(id+"-r", "read_file", map[string]any{"path": "app.txt"}))
-			} else {
-				st = shpWorkerResult(id+"-done", "inspected")
-			}
-			return &st
-		}
-		return nil
-	}
-	f.Prov.seq = []shpStep{
-		shpAnswer(shpCall("b1", "shape_batch", map[string]any{"brief": f.brief(), "jobs": jobs})),
-		shpSubmit("q", map[string]any{"questions": []any{shpQuestion("Q?")}}), shpUI(1),
-	}
-	if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 5 {
-		t.Fatalf("exit %d, err %v\n%s", exit, err, f.Stderr)
-	}
-	perConversation := map[string][]string{}
-	for _, r := range shpShaperRequests(f.Prov.requests()) {
-		id := workerJobID(r)
-		k, _ := r["prompt_cache_key"].(string)
-		perConversation[id] = append(perConversation[id], k)
-	}
-	seen := map[string]string{}
-	for id, keys := range perConversation {
-		if id == "" && len(keys) != 2 || id != "" && len(keys) != 2 {
-			t.Fatalf("conversation %q made %d requests", id, len(keys))
-		}
-		for _, k := range keys {
-			if k == "" || k != keys[0] {
-				t.Fatalf("conversation %q keys %q", id, keys)
-			}
-		}
-		if other, dup := seen[keys[0]]; dup {
-			t.Fatalf("conversations %q and %q share an identity", id, other)
-		}
-		seen[keys[0]] = id
-	}
-	if len(seen) != 3 {
-		t.Fatalf("%d distinct conversations, want the shaper and two workers: %v", len(seen), seen)
-	}
-	owners := map[string]bool{}
-	for _, e := range shpNamed(f.events(), "cache_identity") {
-		owners[e["owner"].(string)] = true
-	}
-	if !owners["shape"] || !owners["worker one"] || !owners["worker two"] {
-		t.Fatalf("saved identities %v", owners)
-	}
-}
-
 func TestARefinementKeepsOneCacheIdentityOfItsOwn(t *testing.T) {
 	parallel(t)
 	f := newRefFx(t, refOpts{},

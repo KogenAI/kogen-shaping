@@ -32,6 +32,10 @@ const externalNote = "# This session\n\n" +
 	"The final structured result is the arguments of the submission described above (for Shape `submit`; for Refine `submit_refinement`). Kogen returns its actual feedback to this same session.\n" +
 	"Commands: Kogen runs readiness on every submission (the configured setup, the acceptance command, the Quint model and the Feasibility checks) and returns its actual results to this session. Do not repeat that work yourself: do not run the configured setup or checks, the acceptance command or a whole test suite, and do not prototype the implementation. Run only short commands that answer a named concrete uncertainty, such as one focused test, a probe or a tool query, each finishing on its own within 5 minutes. Never start a command in the background and never wait or poll with sleep: when you would need a longer run, submit your complete candidate and use Kogen's results."
 
+// defaultExternalRounds is the round cap of a claude-code Shape or Refine session whose
+// executor sets none for the shape role.
+const defaultExternalRounds = 6
+
 // selectExternal is the executor a Shape or Refine role selects, validated for the shape role.
 func selectExternal(ext External, role project.Role) (executor.Executor, int, error) {
 	unavailable := executor.Fail(executor.ReasonUnavailable, "executor "+role.Executor+" is not available for the shape role in this program; Kogen does not shape with the native shaper instead")
@@ -53,12 +57,9 @@ func selectExternal(ext External, role project.Role) (executor.Executor, int, er
 		return nil, 0, executor.Fail(executor.ReasonUnavailable, "executor "+role.Executor+" was configured, but the program provided "+desc.Name)
 	}
 	caps, _ := desc.For(executor.RoleShape)
-	max := role.MaxRounds
+	max := caps.MaxRounds
 	if max == 0 {
-		max = caps.MaxRounds
-	}
-	if max == 0 {
-		max = project.DefaultExternalRounds
+		max = defaultExternalRounds
 	}
 	return ex, max, nil
 }

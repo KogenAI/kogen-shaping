@@ -199,7 +199,7 @@ func TestLoopKnobsShape(t *testing.T) {
 		}
 		shpEq(t, "response budget", f.Client.ResponseBudget, 42*time.Second)
 	})
-	t.Run("workers use the same bounds", func(t *testing.T) {
+	t.Run("the agent tools use the same bounds", func(t *testing.T) {
 		f := newShpFx(t)
 		sh := &shaping{s: f.S, repo: f.Repo, root: f.Root, client: f.Client}
 		out, err := sh.agentTools(context.Background(), []string{"probe"}).Run("probe", map[string]any{"command": probeBig})

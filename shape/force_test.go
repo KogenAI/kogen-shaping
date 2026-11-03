@@ -182,7 +182,7 @@ func TestShapeForceFallback(t *testing.T) {
 	t.Run("external/shape", func(t *testing.T) {
 		parallel(t)
 		f := newShpFx(t)
-		f.useExternalShape(6)
+		f.useExternalShape()
 		both := map[string]any{"questions": []any{shpQuestion("Q?")}, "files": shpFiles()["files"]}
 		x := &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){result(both), result(shpFiles())}}
 		f.setReport("PASSED", 0)
@@ -195,7 +195,7 @@ func TestShapeForceFallback(t *testing.T) {
 	})
 	t.Run("external/refine", func(t *testing.T) {
 		parallel(t)
-		f := newRefFx(t, refOpts{external: 6})
+		f := newRefFx(t, refOpts{external: true})
 		before := f.pkg()
 		good := map[string]any{"files": []any{map[string]any{"path": refIntentPath, "content": refTitled}}}
 		x := &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){result(map[string]any{"files": []any{}}), result(good)}}

@@ -7,7 +7,7 @@ import (
 	"kogen-loop/tools"
 )
 
-// Kogen's shaping tool names: the Shaper's and its workers', and Refine's. The generic tools
+// Kogen's shaping tool names: the Shaper's and Refine's. The generic tools
 // (read_file, view_image, list_files, search_text, documentation) are named and defined by
 // kogen-loop/tools.
 const (
@@ -15,8 +15,6 @@ const (
 	ProposeFilesTool     = "propose_files"
 	SubmitTool           = "submit"
 	SubmitRefinementTool = "submit_refinement"
-	ShapeBatchTool       = "shape_batch"
-	WorkerResultTool     = "worker_result"
 )
 
 //go:embed prompts/*.md
@@ -109,31 +107,6 @@ func shaperToolDefinition(name string) map[string]any {
 			map[string]any{"files": pathAndContent(true)}, "files")
 	case SubmitTool:
 		return submitDef()
-	case ShapeBatchTool:
-		return map[string]any{
-			"type":        "function",
-			"name":        name,
-			"description": "One blocking batch of 1–3 independent read/probe/draft jobs. Supply complete brief: revision {head,tree}, nonempty outcomes, interfaces, transitions, fixtures, exclusions, protected_paths array, artifacts [{path,expectation}]. Each job: unique id, role, exact scope, paths array, owns array. Read/probe own nothing; disjoint draft owns exact Intent/step files. Sequential is valid until all boundaries are known.",
-			"parameters": map[string]any{
-				"type":       "object",
-				"properties": map[string]any{"brief": map[string]any{"type": "object"}, "jobs": map[string]any{"type": "array"}},
-				"required":   []any{"brief", "jobs"},
-			},
-		}
-	case WorkerResultTool:
-		return map[string]any{
-			"type":        "function",
-			"name":        name,
-			"description": "Terminate with nonempty evidence and files [{path,content}]; read/probe files empty, draft only owns.",
-			"parameters": map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"evidence": str(),
-					"files":    map[string]any{"type": "array"},
-				},
-				"required": []any{"evidence", "files"},
-			},
-		}
 	}
 	panic(fmt.Sprintf("shape: unknown tool %q", name))
 }

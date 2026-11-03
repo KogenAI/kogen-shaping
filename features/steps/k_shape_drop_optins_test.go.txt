@@ -1,0 +1,174 @@
+package shape
+
+// The acceptance overlay of k-shape-drop-optins. features/steps/k_shape_drop_optins_steps.js runs
+// these tests with `go test -overlay` against the coordinator kogen-shaping pins, which still parses
+// the opt-in keys, so that a project still setting them shows Shape ignoring every one and behaving
+// as with today's defaults. Every assertion names k-shape-drop-optins and is reported on its own.
+
+import (
+	"context"
+	"os"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-executor/executor"
+)
+
+const kdoConfig = "version: 1\ncommands:\n  checks: [{name: unit, run: 'true'}]\n  acceptance: {run: sh accept.sh, steps_dir: features/steps}\n"
+
+// kdoOptins sets every top-level opt-in the coordinator removes to its non-default value.
+const kdoOptins = "shape_workers:\n  enabled: true\n  read: {model: r, effort: low}\n  probe: {model: p, effort: low}\n  draft: {model: d, effort: low}\n" +
+	"shape_audit:\n  enabled: true\n" +
+	"shape_decision_check:\n  enabled: true\n" +
+	"review_material:\n  mode: on_demand\n"
+
+// kdoDefaultTools are the tools today's default native shaper offers, in order.
+const kdoDefaultTools = "read_file, view_image, list_files, search_text, probe, documentation, propose_files, submit"
+
+// kdoOptinEvents are the evidence events only the audit and the decision check record.
+var kdoOptinEvents = []string{"request_audit", "decision_check", "decision_assumptions_marked", "submission_refused"}
+
+// kdoOptinAnswers answers an audit or a decision check request (offered only its own submit tool)
+// with no defect and no item; every other request follows the fixture's sequence.
+func kdoOptinAnswers(req map[string]any) *shpStep {
+	names := shpToolNames(req)
+	if len(names) != 1 {
+		return nil
+	}
+	var st shpStep
+	switch names[0] {
+	case "submit_audit":
+		st = shpAnswer(shpCall("audit", "submit_audit", map[string]any{"examples": []any{}, "rules": []any{}, "cells": []any{}, "defects": []any{}}))
+	case "submit_decision_check":
+		st = shpAnswer(shpCall("decision", "submit_decision_check", map[string]any{"items": []any{}}))
+	default:
+		return nil
+	}
+	return &st
+}
+
+func kdoPublished(t *testing.T, f *shpFx) {
+	t.Helper()
+	for path, want := range map[string]string{".kogen/intents/is-even/intent.md": shpScopedIntentMD, ".kogen/intents/is-even/acceptance.feature": shpFeature, "features/steps/is-even__steps.js": shpSteps} {
+		if !f.exists(path) {
+			t.Errorf("k-shape-drop-optins: %s was not published", path)
+		} else if got := f.read(path); got != want {
+			t.Errorf("k-shape-drop-optins: published %s differs from the submitted file\n got: %q\nwant: %q", path, got, want)
+		}
+	}
+	events := f.events()
+	for _, name := range kdoOptinEvents {
+		if n := len(shpNamed(events, name)); n != 0 {
+			t.Errorf("k-shape-drop-optins: %d %s events, want 0: %v", n, name, shpNamed(events, name))
+		}
+	}
+}
+
+// TestKShapeDropOptinsNative: a native Shape of a project that sets every opt-in.
+func TestKShapeDropOptinsNative(t *testing.T) {
+	f := newShpFx(t, shpAnswer(shpCall("b1", "shape_batch", map[string]any{})), shpSubmit("one", shpFiles()))
+	f.write(".kogen/project.yaml", f.read(".kogen/project.yaml")+kdoOptins)
+	f.git("add", ".kogen/project.yaml")
+	f.git("commit", "-qm", "opt-ins")
+	f.setReport("PASSED", 0)
+	f.Prov.route = kdoOptinAnswers
+	cfg, err := project.LoadConfig(f.Root)
+	if err != nil {
+		t.Fatalf("k-shape-drop-optins: the pinned coordinator refused the fixture that sets every opt-in: %v", err)
+	}
+	if roles := ShapeRoles(cfg); len(roles) != 1 || roles[0].Model != cfg.Models["shape"].Model {
+		t.Errorf("k-shape-drop-optins: ShapeRoles of a project that enables shape_workers is %+v, want only the shape role %q", roles, cfg.Models["shape"].Model)
+	}
+	exit, err := f.shape("Add calc.is_even(n). Non-integers raise TypeError.")
+	if err != nil || exit != 0 {
+		t.Fatalf("k-shape-drop-optins: native Shape of a project that sets every opt-in: exit %d, err %v\nstdout: %s\nstderr: %s", exit, err, f.Stdout, f.Stderr)
+	}
+	reqs := f.Prov.requests()
+	var offered []string
+	for _, r := range reqs {
+		offered = append(offered, strings.Join(shpToolNames(r), ", "))
+	}
+	if len(reqs) != 2 {
+		t.Errorf("k-shape-drop-optins: %d shaper requests, want 2 (no audit or decision check request); tools offered per request: %q", len(reqs), offered)
+	}
+	for i, o := range offered {
+		if o != kdoDefaultTools {
+			t.Errorf("k-shape-drop-optins: request %d offers %q, want %q", i+1, o, kdoDefaultTools)
+		}
+	}
+	batch, answered := "", false
+	for _, r := range reqs {
+		if out, ok := shpOutputs(r)["b1"]; ok {
+			batch, answered = out, true
+		}
+	}
+	if !answered || batch != "error: unknown tool shape_batch" {
+		t.Errorf("k-shape-drop-optins: the shape_batch call was answered %q (answered %v), want %q", batch, answered, "error: unknown tool shape_batch")
+	}
+	kdoPublished(t, f)
+	if got := f.read(".kogen/local/shaping/is-even/unresolved.json"); got != "[]" {
+		t.Errorf("k-shape-drop-optins: unresolved.json is %q, want %q", got, "[]")
+	}
+}
+
+// kdoCapped is the fixture's Claude Code executor with a shape-role round cap of cap.
+type kdoCapped struct {
+	*shapeExec
+	cap int
+}
+
+func (c kdoCapped) Describe() executor.Descriptor {
+	d := c.shapeExec.Describe()
+	caps := map[string]executor.RoleCapabilities{}
+	for role, rc := range d.RoleCapabilities {
+		rc.MaxRounds = c.cap
+		caps[role] = rc
+	}
+	d.RoleCapabilities = caps
+	return d
+}
+
+// TestKShapeDropOptinsExternal: a Claude Code shaper under an executor shape cap of KDO_CAP rounds.
+// KDO_CASE max_rounds: the shape role sets max_rounds 1 and the session needs 2 rounds (readiness
+// feedback, then its exact acknowledgment). KDO_CASE opt-ins: the project sets every opt-in and the
+// session submits once. KDO_WANT is the round cap the session's task must carry.
+func TestKShapeDropOptinsExternal(t *testing.T) {
+	kase := os.Getenv("KDO_CASE")
+	limit, err1 := strconv.Atoi(os.Getenv("KDO_CAP"))
+	want, err2 := strconv.Atoi(os.Getenv("KDO_WANT"))
+	if err1 != nil || err2 != nil || (kase != "max_rounds" && kase != "opt-ins") {
+		t.Fatalf("k-shape-drop-optins: KDO_CASE %q, KDO_CAP %q, KDO_WANT %q", kase, os.Getenv("KDO_CAP"), os.Getenv("KDO_WANT"))
+	}
+	f := newShpFx(t)
+	x := &shapeExec{t: t}
+	rounds := 1
+	if kase == "max_rounds" {
+		f.writeLineup(kdoConfig, "shape: {executor: claude-code, model: claude-opus-5-5, effort: xhigh, max_rounds: 1}\n")
+		x.rounds = []func(int, string) (executor.RoundResult, error){result(shpFiles()), result(map[string]any{"files": []any{
+			map[string]any{"path": ".kogen/intents/is-even/acceptance.feature", "content": shpFeature}}})}
+		rounds = 2
+	} else {
+		f.writeLineup(kdoConfig+kdoOptins, "shape: {executor: claude-code, model: claude-opus-5-5, effort: xhigh}\n")
+		f.setReport("PASSED", 0)
+		x.rounds = []func(int, string) (executor.RoundResult, error){result(shpFiles())}
+	}
+	f.git("commit", "-qm", "claude-code shaper")
+	ex := kdoCapped{shapeExec: x, cap: limit}
+	f.newSession()
+	exit, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Slug: shpSlug, Request: "Add calc.is_even(n). Non-integers raise TypeError.", Client: f.Client,
+		External: func(project.Role) (executor.Executor, error) { return ex, nil }})
+	if err != nil || exit != 0 {
+		t.Fatalf("k-shape-drop-optins: %s case, executor shape cap %d: exit %d, err %v after %d session(s) and %d round(s)\nstdout: %s\nstderr: %s", kase, limit, exit, err, len(x.starts), len(x.inputs), f.Stdout, f.Stderr)
+	}
+	if len(x.starts) != 1 {
+		t.Errorf("k-shape-drop-optins: %d shaper sessions started, want 1 (no audit or decision check session)", len(x.starts))
+	} else if x.starts[0].MaxRounds != want {
+		t.Errorf("k-shape-drop-optins: the session's round cap is %d, want %d (executor shape cap %d)", x.starts[0].MaxRounds, want, limit)
+	}
+	if len(x.inputs) != rounds {
+		t.Errorf("k-shape-drop-optins: %d rounds, want %d", len(x.inputs), rounds)
+	}
+	kdoPublished(t, f)
+}

@@ -6,7 +6,7 @@ It is a component of [Kogen](https://github.com/KogenAI/kogen), which pins an ex
 
 ## Packages
 
-- `shape`: shaping, refinement, approval cards, audits, context windows and Intent contracts, and the Shaper's and Refine's model-facing policy: their prompts (`shape/prompts`) and tool definitions.
+- `shape`: shaping, refinement, approval cards, context windows and Intent contracts, and the Shaper's and Refine's model-facing policy: their prompts (`shape/prompts`) and tool definitions.
 
 ## Standalone Shape (developer entry point)
 

@@ -882,7 +882,7 @@ func TestContractCheckExternalShape(t *testing.T) {
 		parallel(t)
 		f := newShpFx(t)
 		f.setFeatureReport("corrected-report", ccCorrectedFeature, "FAILED", 1)
-		f.useExternalShape(6)
+		f.useExternalShape()
 		x := &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){result(shpFiles()), result(correction), result(ack)},
 			contract: []func(int, string) (executor.RoundResult, error){review, confirm, clean}}
 		exit, err := f.shapeWith(x, "Add calc.is_even(n).")
@@ -917,7 +917,7 @@ func TestContractCheckExternalShape(t *testing.T) {
 	t.Run("a session that ends without a result is incomplete and the candidate goes on", func(t *testing.T) {
 		parallel(t)
 		f := newShpFx(t)
-		f.useExternalShape(6)
+		f.useExternalShape()
 		x := &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){result(shpFiles()), result(ack)},
 			contract: []func(int, string) (executor.RoundResult, error){func(int, string) (executor.RoundResult, error) {
 				return executor.RoundResult{}, executor.Fail(executor.ReasonProtocol, "no structured result")

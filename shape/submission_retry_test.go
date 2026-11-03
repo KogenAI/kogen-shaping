@@ -64,51 +64,6 @@ func TestSubmissionRetryOne(t *testing.T) {
 		shpEq(t, "requests", len(f.Prov.requests()), 1)
 		shpEq(t, "title events", len(shpNamed(f.events(), "title_shortened")), 1)
 	})
-	t.Run("audit fallback", func(t *testing.T) {
-		parallel(t)
-		f := newShpFx(t)
-		f.useExternalShape(6)
-		f.write(".kogen/project.yaml", f.read(".kogen/project.yaml")+"shape_audit:\n  enabled: true\n")
-		f.git("add", ".kogen/project.yaml")
-		f.git("commit", "-qm", "audit")
-		f.setReport("PASSED", 0)
-		audit := map[string]any{"examples": []any{map[string]any{"quote": "QA"}}, "rules": []any{map[string]any{"quote": "QB"}}, "cells": []any{map[string]any{"example": 0, "rule": 0, "result": "conflicts"}}, "defects": []any{map[string]any{"kind": "conflict", "quote_a": "QA", "quote_b": "QB", "exposing_input": "is_even(0)", "result_a": "True", "result_b": "False"}}}
-		x := &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){result(audit), result(shpFiles())}}
-		f.newSession()
-		exit, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Slug: shpSlug, Request: "Add calc.is_even(n). QA QB", External: x.external(), SubmissionRetryLimit: 1})
-		if err != nil || exit != 0 {
-			t.Fatalf("exit %d: %v", exit, err)
-		}
-		shpEq(t, "rounds", x.calls, 2)
-		shpEq(t, "published", f.read(refIntentPath), shpScopedIntentMD)
-		ev := shpNamed(f.events(), "request_audit")
-		if len(ev) != 2 {
-			t.Fatalf("audit events: %v", ev)
-		}
-		if u, ok := ev[1]["uncovered"].([]any); !ok || len(u) != 1 {
-			t.Fatalf("uncovered: %v", ev[1])
-		}
-	})
-	t.Run("decision fallback", func(t *testing.T) {
-		parallel(t)
-		f := newShpFx(t)
-		f.useExternalShape(6)
-		f.write(".kogen/project.yaml", f.read(".kogen/project.yaml")+"shape_decision_check:\n  enabled: true\n")
-		f.git("add", ".kogen/project.yaml")
-		f.git("commit", "-qm", "decision")
-		f.setReport("PASSED", 0)
-		check := map[string]any{"items": []any{map[string]any{"statement": "- Non-integers raise TypeError. (source: request)", "request_quotes": []any{}, "verdict": "unsupported", "why": "not stated"}}}
-		x := &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){result(shpFiles()), result(check)}}
-		f.newSession()
-		exit, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Slug: shpSlug, Request: "Add calc.is_even(n).", External: x.external(), SubmissionRetryLimit: 1})
-		if err != nil || exit != 0 {
-			t.Fatalf("exit %d: %v", exit, err)
-		}
-		shpEq(t, "rounds", x.calls, 2)
-		shpContains(t, "published assumption", f.read(refIntentPath), "(assumption: not stated) (source: request)")
-		shpEq(t, "assumption events", len(shpNamed(f.events(), "decision_assumptions_marked")), 1)
-	})
-
 }
 func TestSubmissionRetryFive(t *testing.T) {
 	parallel(t)
@@ -180,7 +135,7 @@ func TestSubmissionRetryExternal(t *testing.T) {
 	t.Run("shape", func(t *testing.T) {
 		parallel(t)
 		f := newShpFx(t)
-		f.useExternalShape(6)
+		f.useExternalShape()
 		x := &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){result(both)}}
 		f.newSession()
 		_, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Slug: shpSlug, Request: "x", External: x.external(), SubmissionRetryLimit: 1})
@@ -190,7 +145,7 @@ func TestSubmissionRetryExternal(t *testing.T) {
 	})
 	t.Run("refine", func(t *testing.T) {
 		parallel(t)
-		f := newRefFx(t, refOpts{external: 6})
+		f := newRefFx(t, refOpts{external: true})
 		before := f.pkg()
 		x := &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){result(map[string]any{"files": []any{}})}}
 		f.newSession()

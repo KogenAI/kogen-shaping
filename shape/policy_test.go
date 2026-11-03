@@ -19,10 +19,6 @@ func policyBytes() []byte {
 	names := map[string][]string{}
 	main := (&shaping{}).mainTools()
 	names["default"] = append(append([]string{}, main...), ProposeFilesTool, SubmitTool)
-	names["workers-enabled"] = append(append([]string{}, names["default"]...), ShapeBatchTool)
-	for _, role := range []string{"read", "probe", "draft"} {
-		names[role] = append(workerNames(role), WorkerResultTool)
-	}
 	snap := policySnapshot{Prompt: ShaperInstructions(), Tools: map[string][]map[string]any{}}
 	for name, n := range names {
 		snap.Tools[name] = ShaperToolDefinitions(n...)

@@ -102,7 +102,7 @@ func TestExcerptStartsFiveLinesBeforeTheFirstMatch(t *testing.T) {
 func TestContextIsIndexFirstAndExcerptsRetainExactFrozenProvenance(t *testing.T) {
 	parallel(t)
 	// ExUnit: shape_dispatch_test context is index-first and explicit excerpts retain exact frozen provenance
-	f, sh, _, _ := newBatchValidation(t)
+	f, sh := newGuardedShaping(t)
 	path := "features/steps/source.js"
 	bytes := strings.Repeat("// unrelated prefix\n", 100) + "Then(\n  'the literal needle is {string}',\n  function () {}\n);\n"
 	f.write(path, bytes)
@@ -154,7 +154,7 @@ func TestContextIsIndexFirstAndExcerptsRetainExactFrozenProvenance(t *testing.T)
 
 func TestContextIndexOwnershipSkipsAndDirectories(t *testing.T) {
 	parallel(t)
-	f, sh, _, _ := newBatchValidation(t)
+	f, sh := newGuardedShaping(t)
 	f.write("AGENTS.md", "agents")
 	f.write("sub/CLAUDE.md", "claude")
 	f.write("sub/a.txt", "a")
@@ -219,7 +219,7 @@ func TestContextIndexOwnershipSkipsAndDirectories(t *testing.T) {
 
 func TestContextIndexPagesLongSignatureLists(t *testing.T) {
 	parallel(t)
-	f, sh, _, _ := newBatchValidation(t)
+	f, sh := newGuardedShaping(t)
 	var b strings.Builder
 	for i := 0; i < 250; i++ {
 		fmt.Fprintf(&b, "val v%d = %d\n", i, i)
@@ -251,7 +251,7 @@ func TestRevisionFollowsTheCheckoutWithoutTouchingTheRealIndex(t *testing.T) {
 	if !isolatedTmp(t) {
 		return
 	}
-	f, _, _, _ := newBatchValidation(t)
+	f, _ := newGuardedShaping(t)
 	index, _ := os.ReadFile(filepath.Join(f.Root, ".git/index"))
 	a, err := CurrentRevision(f.Repo)
 	if err != nil {
@@ -280,7 +280,7 @@ func TestRevisionFollowsTheCheckoutWithoutTouchingTheRealIndex(t *testing.T) {
 
 func TestContextBlocksCarryTheContractsAndEarlierRounds(t *testing.T) {
 	parallel(t)
-	f, sh, _, _ := newBatchValidation(t)
+	f, sh := newGuardedShaping(t)
 	st := &state{Request: "Add calc.is_even(n).", Rounds: []map[string]any{{
 		"questions": []any{
 			map[string]any{"question": "First?", "options": []any{map[string]any{"label": "yes", "recommended": true}, map[string]any{"label": "no"}}},
@@ -364,16 +364,13 @@ func TestShapeCommonHelpers(t *testing.T) {
 	shpEq(t, "shell quote", ShellQuote("it's"), `'it'\''s'`)
 	shpEq(t, "hash", ContentHash([]byte("")), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
 	shpEq(t, "no readme", ReadmeText(t.TempDir()), "(no README.md)")
-	cfg, err := project.ParseConfig("version: 1\nshape_workers:\n  enabled: true\n  read: {model: a, effort: low}\n  probe: {model: b, effort: low}\n  draft: {model: c, effort: low}\n", "x")
+	cfg, err := project.ParseConfig("version: 1\n", "x")
 	if err != nil {
 		t.Fatal(err)
 	}
 	roles := ShapeRoles(cfg)
-	shpEq(t, "roles with workers", len(roles), 4)
-	shpEq(t, "shape role first", roles[0].Model, "gpt-6.1-sol")
-	shpEq(t, "worker roles", roles[1].Model+roles[2].Model+roles[3].Model, "abc")
-	off, _ := project.ParseConfig("version: 1\n", "x")
-	shpEq(t, "roles without workers", len(ShapeRoles(off)), 1)
+	shpEq(t, "roles", len(roles), 1)
+	shpEq(t, "shape role", roles[0].Model, "gpt-6.1-sol")
 	shpEq(t, "exit of an unknown error", ExitCode(os.ErrNotExist), 70)
 	shpEq(t, "exit of an error", ExitCode(project.RequireIntentDir(t.TempDir(), "x")), 2)
 }
@@ -382,7 +379,7 @@ func TestShapeCommonHelpers(t *testing.T) {
 // large candidate trees".
 func TestNavigationHasFixedShapeAcrossEmptySmallAndLargeCandidateTrees(t *testing.T) {
 	parallel(t)
-	f, _, _, _ := newBatchValidation(t)
+	f, _ := newGuardedShaping(t)
 	head := f.head()
 	var sizes []int
 	var trees []string

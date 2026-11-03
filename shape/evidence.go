@@ -21,11 +21,10 @@ import (
 )
 
 // Evidence is the append-only record of one shaping or refinement run: the events in
-// `<dir>/events.ndjson` (provider calls, probes, context selection, batch jobs, feasibility
+// `<dir>/events.ndjson` (provider calls, probes, context selection, feasibility
 // checks) and, at Finish, the usage totals, phase durations and session end. Bytes are not
 // tokens. It implements verify.Evidence, so readiness counts and times its setup, acceptance
-// and model runs here, and it is safe for concurrent use (workers record from their own
-// goroutines).
+// and model runs here, and it is safe for concurrent use.
 type Evidence struct {
 	Dir  string
 	Slug string
@@ -205,8 +204,8 @@ func (e *Evidence) ShaperTool(a, b int64) {
 	e.shaperTotal += max(0, b-a)
 }
 
-// CheckSpan adds a span of Kogen's own checking work (a submission's handling, the request audit,
-// a main round's custody comparisons).
+// CheckSpan adds a span of Kogen's own checking work (a submission's handling, a main round's
+// custody comparisons).
 func (e *Evidence) CheckSpan(a, b int64) {
 	e.mu.Lock()
 	e.checkSpans = append(e.checkSpans, [2]int64{a, b})
@@ -275,7 +274,7 @@ func (e *Evidence) Probe(fn func() (verify.ProbeResult, error)) (verify.ProbeRes
 }
 
 // ProbeText records the probe tool's result text (what the model is shown) as a
-// probe_result event; metadata (a worker's job and role) is merged into the event. The
+// probe_result event; metadata is merged into the event. The
 // probe passed when the text starts with `exit status: 0`.
 func (e *Evidence) ProbeText(metadata map[string]any, fn func() (string, error)) (string, error) {
 	t := e.Millis()
@@ -316,8 +315,8 @@ func inspectError(err error) string {
 	return err.Error()
 }
 
-// Call is one logical provider request of the run: the main shaper conversation's request or
-// a worker's. It is the provider.Observer of that request: every transport attempt (retries
+// Call is one logical provider request of the run: a request of the main shaper conversation
+// or of a check. It is the provider.Observer of that request: every transport attempt (retries
 // included) is its own provider_call event, and a request that never reached the transport
 // (no login, an interrupt before sending) is one event that says how it ended.
 type Call struct {
@@ -329,8 +328,7 @@ type Call struct {
 
 var _ provider.Observer = (*Call)(nil)
 
-// BeginCall opens a provider request. role is "shape" or a worker's role; job is the
-// worker's job id ("" for the main conversation); scope names what the request is for.
+// BeginCall opens a provider request. role is "shape"; job is "" for the conversation's own requests; scope names what the request is for.
 func (e *Evidence) BeginCall(role, job string, revision any, scope string, cfg project.Role) *Call {
 	t := e.Millis()
 	var jobValue any

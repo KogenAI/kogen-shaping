@@ -33,7 +33,7 @@ type refOpts struct {
 	approved bool       // the draft carries a current approval
 	source   bool       // the draft carries a source receipt
 	red      bool       // the original's dry run fails its scenarios
-	external int        // >0: the shape role is claude-code with this max_rounds (lineup tests)
+	external bool       // the shape role is claude-code (lineup tests)
 	wire     *forceWire // non-nil: the shape role is this provider route (force tests)
 	literal  bool       // the acceptance command is ./accept.sh (the force golden records it)
 }
@@ -54,8 +54,8 @@ func newRefFx(t *testing.T, o refOpts, steps ...shpStep) *refFx {
 		run = "./accept.sh"
 	}
 	f := &refFx{shpFx: newShpFxRun(t, run, steps...)}
-	if o.external > 0 {
-		f.useExternalShape(o.external)
+	if o.external {
+		f.useExternalShape()
 	}
 	if o.wire != nil {
 		o.wire.configure(f.shpFx)
@@ -1259,33 +1259,6 @@ func TestRefineRefusalsBeforeTheModel(t *testing.T) {
 			if len(dirs) != 0 {
 				t.Fatalf("evidence before the login check: %v", dirs)
 			}
-		}
-	})
-	// ExUnit provider_test.exs "Shape includes enabled workers but Refine can select only the Shape
-	// role": workers on a provider without a login cannot stop Refine at its login check.
-	t.Run("enabled workers need no login for Refine", func(t *testing.T) {
-		parallel(t)
-		f := newRefFx(t, refOpts{})
-		cfg, err := os.ReadFile(filepath.Join(f.Root, ".kogen/project.yaml"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		workers := "shape_workers:\n  enabled: true\n" +
-			"  read: {provider: supergrok, model: grok-4.7, effort: low}\n" +
-			"  probe: {provider: supergrok, model: grok-4.7, effort: low}\n" +
-			"  draft: {provider: supergrok, model: grok-4.7, effort: low}\n"
-		f.write(".kogen/project.yaml", string(cfg)+workers)
-		// The configuration is valid and the shape role (ChatGPT) is signed in, so Refine reaches its
-		// model; a SuperGrok login refusal would mean it checked a worker's role.
-		if _, err := project.LoadConfig(f.Root); err != nil {
-			t.Fatalf("fixture configuration: %v", err)
-		}
-		_, err = f.refine(f.hash()) // the configuration is part of the package hash
-		if se, ok := sys.AsError(err); ok && (se.Reason == "login" || se.Class == "environment") {
-			t.Fatalf("Refine stopped before its model: %v", se)
-		}
-		if len(f.Prov.requests()) == 0 {
-			t.Fatalf("Refine never reached its model: %v", err)
 		}
 	})
 	t.Run("no commit", func(t *testing.T) {

@@ -333,7 +333,7 @@ func TestExternalShapeQuestionCheck(t *testing.T) {
 	t.Run("a session of its own: text, schema, directory, rounds and feedback", func(t *testing.T) {
 		parallel(t)
 		f := newShpFx(t)
-		f.useExternalShape(6)
+		f.useExternalShape()
 		x := &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){result(ask), check("technical"), result(shpFiles()), result(map[string]any{"files": []any{map[string]any{"path": ".kogen/intents/is-even/acceptance.feature", "content": shpFeature}}})}}
 		exit, err := f.shapeWith(x, "Add calc.is_even(n).")
 		if err != nil || exit != 0 {
@@ -357,7 +357,7 @@ func TestExternalShapeQuestionCheck(t *testing.T) {
 	t.Run("a UI/UX question reaches the user", func(t *testing.T) {
 		parallel(t)
 		f := newShpFx(t)
-		f.useExternalShape(6)
+		f.useExternalShape()
 		x := &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){result(ask), check("ui_ux")}}
 		exit, err := f.shapeWith(x, "Add calc.is_even(n).")
 		if err != nil || exit != 5 {
@@ -378,7 +378,7 @@ func TestExternalShapeQuestionCheck(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			parallel(t)
 			f := newShpFx(t)
-			f.useExternalShape(6)
+			f.useExternalShape()
 			x := &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){result(ask), tc.round}}
 			exit, err := f.shapeWith(x, "Add calc.is_even(n).")
 			shpWantError(t, err, "shape", "question_check_invalid", "", 1)
@@ -457,7 +457,7 @@ func TestShapeDecisionEvidenceExternal(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			parallel(t)
 			f := newShpFx(t)
-			f.useExternalShape(6)
+			f.useExternalShape()
 			x := &shapeExec{t: t, bash: bash, rounds: []func(int, string) (executor.RoundResult, error){result(ran), result(map[string]any{"files": []any{map[string]any{"path": ".kogen/intents/is-even/acceptance.feature", "content": shpFeature}}})}}
 			exit, err := f.shapeWith(x, "Add calc.is_even(n).")
 			if bash {

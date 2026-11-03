@@ -11,7 +11,7 @@ import (
 // clock time, request id or counter) is created once when the conversation starts, recorded in
 // the conversation's evidence as a `cache_identity` event, and passed on every request of that
 // conversation: retries, transient-stream retries and working-window resets included. The
-// shaper, each shape worker, a refinement and the setup conversation never share one. Shape
+// shaper, a refinement and the setup conversation never share one. Shape
 // and Refine have no resume of their own, so an identity lives as long as one invocation.
 func newCacheID() string { return provider.NewCacheID() }
 

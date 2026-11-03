@@ -116,7 +116,7 @@ func TestUnwrittenTestsThreeTimesEndNotReadyWithTheItems(t *testing.T) {
 func TestExternalShapeReceivesTheUnwrittenTestsRefusalAsFeedback(t *testing.T) {
 	parallel(t)
 	f := newShpFx(t)
-	f.useExternalShape(6)
+	f.useExternalShape()
 	f.unwrittenReport()
 	x := &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){result(shpFiles()), result(shpFiles()), result(shpFiles())}}
 	exit, err := f.shapeWith(x, "Add calc.is_even(n).")

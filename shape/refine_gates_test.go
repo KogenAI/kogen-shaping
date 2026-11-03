@@ -68,7 +68,7 @@ func TestRefineReviewsAPassingCandidateWithoutAnotherRefinerRequest(t *testing.T
 // The external refiner receives the refusal text as its round feedback.
 func TestRefineGivesTheExternalRefinerShapesRefusalText(t *testing.T) {
 	parallel(t)
-	f := newRefFx(t, refOpts{external: 6})
+	f := newRefFx(t, refOpts{external: true})
 	f.unwrittenReport()
 	files := result(map[string]any{"files": []any{map[string]any{"path": refIntentPath, "content": refTitled}}})
 	x := &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){files, files, files}}

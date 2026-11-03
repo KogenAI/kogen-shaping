@@ -109,9 +109,6 @@ func shapeRun(ctx context.Context, s *sys.Session, in ShapeInput) (exit int, err
 	if err := verify.RequireTools(s, tools, root, cfg, false); err != nil {
 		return 0, err
 	}
-	if err := requireShapeRoute(cfg); err != nil {
-		return 0, err
-	}
 	var ext executor.Executor
 	extMax := 0
 	if cfg.Models["shape"].External() {
@@ -533,24 +530,16 @@ type shaping struct {
 	declaredSteps []string          // proposed JavaScript steps once declared in Acceptance:
 	ready         *verify.Ready
 	requests      int
-	batchUsed     bool
 
 	inspected bool             // a read, list or search tool answered in this conversation
 	docs      []map[string]any // documentation tool results of this conversation
 	window    *window
 	cacheID   string // this conversation's cache identity
 
-	submissions   int              // submissions made in this run
-	priorInvalid  int              // invalid submissions before the current attempt
-	lastUncovered []map[string]any // defects a last-attempt files submission left uncovered
-	auditResult   *auditResult     // the request audit; nil when disabled
-	auditUsage    provider.Usage   // the native audit call's tokens
-	auditRounds   int              // the external audit session's rounds
+	submissions  int // submissions made in this run
+	priorInvalid int // invalid submissions before the current attempt
 
-	request        string         // the request text of this shaping
-	decisionChecks int            // decision check calls made
-	decisionUsage  provider.Usage // the native decision checks' tokens
-	decisionRounds int            // the external decision check sessions' rounds
+	request string // the request text of this shaping
 
 	earlier             string          // the earlier questions and answers, as the shaper reads them
 	questionChecks      int             // question check calls made
@@ -634,9 +623,6 @@ func (sh *shaping) shape(ctx context.Context, st *state) (int, error) {
 
 	defs := ShaperToolDefinitions(sh.mainTools()...)
 	defs = append(defs, ShaperToolDefinitions(ProposeFilesTool, SubmitTool)...)
-	if sh.cfg.ShapeWorkers.Enabled {
-		defs = append(defs, ShaperToolDefinitions(ShapeBatchTool)...)
-	}
 	sh.toolDefs = agent.AsAny(defs)
 
 	protected, err := project.Protected(sh.root, sh.cfg)
@@ -653,14 +639,6 @@ func (sh *shaping) shape(ctx context.Context, st *state) (int, error) {
 	}
 	sh.request = st.Request
 	sh.earlier = roundsText(st.Rounds)
-	if sh.cfg.ShapeAudit.Enabled {
-		if err := sh.ev.Checking(func() error { return sh.audit(ctx, st.Request) }); err != nil {
-			return 0, err
-		}
-		if m, ok := blocks[1].(map[string]any); ok {
-			m["text"] = textOf(m["text"]) + sh.auditResult.block()
-		}
-	}
 	input := []any{map[string]any{"role": "user", "content": blocks}}
 	sh.window = newShapeWindow(sh.root, sh.slug, input)
 	sh.cacheID = startConversation(sh.ev, "shape")
@@ -678,7 +656,7 @@ func (sh *shaping) shape(ctx context.Context, st *state) (int, error) {
 		var x *extSession
 		res, x, err = sh.converseExternal(ctx, blocks)
 		if x != nil {
-			usageLine = fmt.Sprintf("shape %s/%s %s %d round(s) wall_ms=%d", role.Model, role.Effort, executor.ClaudeCode, x.rounds+sh.auditRounds+sh.decisionRounds+sh.contractRounds+sh.questionRounds, time.Since(t0).Milliseconds())
+			usageLine = fmt.Sprintf("shape %s/%s %s %d round(s) wall_ms=%d", role.Model, role.Effort, executor.ClaudeCode, x.rounds+sh.contractRounds+sh.questionRounds, time.Since(t0).Milliseconds())
 		}
 		if err != nil {
 			return 0, err
@@ -692,7 +670,7 @@ func (sh *shaping) shape(ctx context.Context, st *state) (int, error) {
 			}
 			return 0, err
 		}
-		usageLine = fmt.Sprintf("shape %s/%s %s wall_ms=%d", role.Model, role.Effort, sh.auditUsage.Add(sh.decisionUsage).Add(sh.contractUsage).Add(sh.questionUsage).Add(usage).Line(), time.Since(t0).Milliseconds())
+		usageLine = fmt.Sprintf("shape %s/%s %s wall_ms=%d", role.Model, role.Effort, sh.contractUsage.Add(sh.questionUsage).Add(usage).Line(), time.Since(t0).Milliseconds())
 	}
 
 	switch res.kind {
@@ -890,19 +868,6 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 				continue
 			}
 			switch {
-			case c.Name == ShapeBatchTool && sh.cfg.ShapeWorkers.Enabled:
-				var batch map[string]any
-				if sh.batchUsed {
-					batch = map[string]any{"status": "refused", "reason": "one batch per conversation", "jobs": []any{}}
-				} else if err = sh.toolSpan(func() (err error) { batch, err = sh.runBatch(ctx, c.Args()); return }); err != nil {
-					return outcome{}, usage, err
-				}
-				text, err := project.EncodeJSON(batch)
-				if err != nil {
-					return outcome{}, usage, err
-				}
-				sh.batchUsed = true
-				outputs = append(outputs, toolOutput(c, string(text)))
 			case c.Name == ProposeFilesTool:
 				var text string
 				err := sh.toolSpan(func() (err error) { text, err = sh.proposeFiles(c.Args()); return })
@@ -1291,18 +1256,6 @@ func (sh *shaping) submitOne(ctx context.Context, args map[string]any) (string, 
 				"\nNo proposals from this submission were retained; earlier proposals are unchanged.",
 			outcome{kind: outInvalid, problems: problems}, nil
 	}
-	lines, uncovered := sh.auditUncovered(sub)
-	lastAttempt := sh.priorInvalid >= submissionRetryLimit(sh.in.SubmissionRetryLimit)-1
-	if lines != nil && !lastAttempt {
-		sh.refused("audit", lines)
-		for _, f := range sub.files {
-			sh.proposed[f.path] = f.content
-		}
-		return strings.Join(lines, "\n"), outcome{kind: outInvalid, problems: lines}, nil
-	}
-	if lines != nil && sub.files != nil {
-		sh.lastUncovered = uncovered
-	}
 	switch {
 	case sub.questions != nil:
 		text, refused, err := sh.questionGate(ctx, sub.questions)
@@ -1324,29 +1277,11 @@ func (sh *shaping) submitOne(ctx context.Context, args map[string]any) (string, 
 			outcome{kind: outInvalid, problems: problems}, nil
 	}
 	text, out, err := sh.acceptFiles(ctx, sub.files)
-	if err == nil && out.kind == outReady && len(sh.lastUncovered) > 0 {
-		defects := make([]any, len(sh.lastUncovered))
-		for i, d := range sh.lastUncovered {
-			defects[i] = d
-		}
-		all := make([]any, len(sh.auditResult.defects))
-		for i, d := range sh.auditResult.defects {
-			all[i] = d
-		}
-		sh.ev.Record(map[string]any{"event": "request_audit", "examples": sh.auditResult.examples, "rules": sh.auditResult.rules,
-			"cells": sh.auditResult.cells, "defects": all, "uncovered": defects})
-	}
 	if err == nil && out.kind == outReady {
-		rec := sh.lastUncovered
-		if rec == nil {
-			rec = []map[string]any{}
-		}
-		b, _ := json.Marshal(rec)
-		if werr := os.WriteFile(filepath.Join(sh.ev.Dir, unresolvedFile), b, 0o600); werr != nil {
+		if werr := os.WriteFile(filepath.Join(sh.ev.Dir, unresolvedFile), []byte("[]"), 0o600); werr != nil {
 			return "", outcome{}, werr
 		}
 	}
-	sh.lastUncovered = nil
 	return text, out, err
 }
 
@@ -1477,28 +1412,6 @@ func (sh *shaping) checkSubmission(ctx context.Context, files []string) (string,
 		return "", outcome{}, err
 	} else if refused {
 		return text, out, nil
-	}
-	if sh.cfg.ShapeDecisionCheck.Enabled {
-		text := written
-		lines, items, err := sh.decisionCheck(ctx, string(text))
-		if err != nil {
-			return "", outcome{}, err
-		}
-		if lines != nil && sh.priorInvalid >= submissionRetryLimit(sh.in.SubmissionRetryLimit)-1 {
-			if marked, statements, placement, ok := markAssumptions(items, string(text)); ok {
-				p := project.IntentMDPath(sh.slug)
-				if err := os.WriteFile(filepath.Join(sh.root, p), []byte(marked), 0o666); err != nil {
-					return "", outcome{}, err
-				}
-				sh.proposed[p] = marked
-				sh.ev.Record(map[string]any{"event": "decision_assumptions_marked", "statements": statements, "placement": placement})
-				lines = nil
-			}
-		}
-		if lines != nil {
-			sh.refused("decision_check", lines[1:])
-			return strings.Join(lines, "\n"), outcome{kind: outInvalid, problems: lines[1:]}, nil
-		}
 	}
 	sh.progress("kogen: checking step code")
 	feedback, err := sh.stepSelfcheck(ctx)

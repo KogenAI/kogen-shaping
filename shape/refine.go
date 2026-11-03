@@ -212,9 +212,6 @@ func refineLocked(ctx context.Context, s *sys.Session, in RefineInput, repo *git
 		return 0, err
 	}
 	tools := in.tools()
-	if err := requireShapeRoute(cfg); err != nil {
-		return 0, err
-	}
 	var ext executor.Executor
 	extMax := 0
 	if shaper := cfg.Models["shape"]; shaper.External() {

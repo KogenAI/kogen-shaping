@@ -326,18 +326,6 @@ func TestProposeFilesDroppedStream(t *testing.T) {
 func TestProposeFilesNativeOnly(t *testing.T) {
 	parallel(t)
 
-	t.Run("workers follow submit in the native list", func(t *testing.T) {
-		parallel(t)
-		f := newShpFx(t, shpAnswer(shpCall("q", "submit", map[string]any{"questions": []any{shpQuestion("Which?")}})), shpUI(1))
-		f.withWorkers()
-		if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 5 {
-			t.Fatalf("exit %d, err %v\n%s", exit, err, f.Stderr)
-		}
-		reqs := shpShaperRequests(f.Prov.requests())
-		shpEq(t, "requests", len(reqs), 1)
-		shpEq(t, "tools", strings.Join(shpToolNames(reqs[0]), ", "), "read_file, view_image, list_files, search_text, probe, documentation, propose_files, submit, shape_batch")
-	})
-
 	t.Run("refine does not offer it", func(t *testing.T) {
 		parallel(t)
 		f := newRefFx(t, refOpts{approved: true}, refSubmit("c1", refIntentPath, refTitled))
@@ -353,7 +341,7 @@ func TestProposeFilesNativeOnly(t *testing.T) {
 	t.Run("the external shaper names it unavailable and keeps submit's schema", func(t *testing.T) {
 		parallel(t)
 		f := newShpFx(t)
-		f.useExternalShape(6)
+		f.useExternalShape()
 		x := &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){result(shpFiles()), result(map[string]any{"files": []any{
 			map[string]any{"path": pfFeaturePath, "content": shpFeature}}})}}
 		if exit, err := f.shapeWith(x, "Add calc.is_even(n)."); err != nil || exit != 0 {

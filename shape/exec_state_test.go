@@ -70,7 +70,7 @@ func (s startMutating) external() External {
 
 // TestShapeExecutionStateBoundary: the pin of hooks and executable-selecting configuration is
 // compared at every external boundary, before any later Git command: startup (also a failed one),
-// a later round, a round that fails, and the audit session; the refusal names the path or key,
+// a later round, and a round that fails; the refusal names the path or key,
 // publishes nothing and runs nothing.
 func TestShapeExecutionStateBoundary(t *testing.T) {
 	parallel(t)
@@ -80,7 +80,7 @@ func TestShapeExecutionStateBoundary(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				parallel(t)
 				f := newShpFx(t)
-				f.useExternalShape(6)
+				f.useExternalShape()
 				var marker string
 				x := startMutating{shapeExec: &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){result(shpFiles())}},
 					onStart: func() { marker = f.plant("commit-msg") }, startErr: startErr}
@@ -98,7 +98,7 @@ func TestShapeExecutionStateBoundary(t *testing.T) {
 	t.Run("a later round", func(t *testing.T) {
 		parallel(t)
 		f := newShpFx(t)
-		f.useExternalShape(6)
+		f.useExternalShape()
 		var marker string
 		x := &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){
 			result(map[string]any{"files": []any{}}),
@@ -117,7 +117,7 @@ func TestShapeExecutionStateBoundary(t *testing.T) {
 	t.Run("a failed round", func(t *testing.T) {
 		parallel(t)
 		f := newShpFx(t)
-		f.useExternalShape(6)
+		f.useExternalShape()
 		var marker string
 		x := &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){
 			func(int, string) (executor.RoundResult, error) {
@@ -146,7 +146,7 @@ func TestShapeExecutionStateBoundary(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				parallel(t)
 				f := newShpFx(t)
-				f.useExternalShape(6)
+				f.useExternalShape()
 				x := &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){
 					func(n int, root string) (executor.RoundResult, error) {
 						c.mutate(f)
@@ -158,28 +158,10 @@ func TestShapeExecutionStateBoundary(t *testing.T) {
 			})
 		}
 	})
-	t.Run("the audit session", func(t *testing.T) {
-		parallel(t)
-		f := newShpFx(t)
-		f.useExternalShape(6)
-		f.write(".kogen/project.yaml", f.read(".kogen/project.yaml")+"shape_audit:\n  enabled: true\n")
-		f.git("add", ".kogen/project.yaml")
-		f.git("commit", "-qm", "audit")
-		var marker string
-		x := &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){
-			func(n int, root string) (executor.RoundResult, error) {
-				marker = f.plant("commit-msg")
-				return result(map[string]any{"examples": []any{}, "rules": []any{}, "cells": []any{}, "defects": []any{}})(n, root)
-			}}}
-		_, err := f.shapeWith(x, "Add calc.is_even(n).")
-		wantStateRefusal(t, err, "execution_state_changed", "commit-msg")
-		notRun(t, marker)
-		shapeAbsent(t, f)
-	})
 	t.Run("config values are never named", func(t *testing.T) {
 		parallel(t)
 		f := newShpFx(t)
-		f.useExternalShape(6)
+		f.useExternalShape()
 		x := &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){
 			func(n int, root string) (executor.RoundResult, error) {
 				f.git("config", "core.sshCommand", "ssh -i /secret/token-value")
@@ -206,7 +188,7 @@ func TestRefineExecutionStateBoundary(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			parallel(t)
-			f := newRefFx(t, refOpts{approved: true, external: 6})
+			f := newRefFx(t, refOpts{approved: true, external: true})
 			before, approval, head := f.pkg(), f.read(".kogen/local/approvals/is-even.json"), f.head()
 			var marker string
 			x := &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){
@@ -229,7 +211,7 @@ func TestRefineExecutionStateBoundary(t *testing.T) {
 	}
 	t.Run("startup", func(t *testing.T) {
 		parallel(t)
-		f := newRefFx(t, refOpts{approved: true, external: 6})
+		f := newRefFx(t, refOpts{approved: true, external: true})
 		before := f.pkg()
 		var marker string
 		x := startMutating{shapeExec: &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){result(map[string]any{"files": []any{}})}},

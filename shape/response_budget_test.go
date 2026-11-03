@@ -12,7 +12,7 @@ import (
 	"kogen-loop/sys"
 )
 
-// These tests run Shape, Refine and the shape workers with the production settings: none of them
+// These tests run Shape and Refine with the production settings: none of them
 // configures a response budget, so each sends under the pinned loop's 30 minutes. The budget is
 // observed on the real client's transport deadline, and the run log and the expiry diagnostic are
 // read as a user sees them. Tests changing process-wide settings run in separate processes.
@@ -182,43 +182,4 @@ func TestShapeBudgetRolesShape(t *testing.T) {
 		wantBudgetRecord(t, f.evidenceEvents())
 	})
 
-	t.Run("shape workers send under the same thirty minutes within the one record", func(t *testing.T) {
-		parallel(t)
-		f := newShpFx(t)
-		f.withWorkers()
-		obs := observeDeadlines(f.Client)
-		brief := f.brief("features/steps/draft.js")
-		jobs := []any{shpJob("inspect", "probe", []any{"app.txt"}), shpJob("draft", "draft", []any{}, "features/steps/draft.js")}
-		draft := map[string]any{"path": "features/steps/draft.js", "content": "// drafted\n"}
-		f.Prov.route = func(req map[string]any) *shpStep {
-			switch workerJobID(req) {
-			case "inspect":
-				st := shpWorkerResult("w3", "inspected the fixture")
-				return &st
-			case "draft":
-				st := shpWorkerResult("d1", "drafted the step", draft)
-				return &st
-			}
-			return nil
-		}
-		f.Prov.seq = []shpStep{
-			shpAnswer(shpCall("b1", "shape_batch", map[string]any{"brief": brief, "jobs": jobs})),
-			shpSubmit("q", map[string]any{"questions": []any{shpQuestion("Q?")}}), shpUI(1),
-		}
-		f.newSession()
-		exit, err := f.shape("Add calc.is_even(n).")
-		if err != nil || exit != 5 {
-			t.Fatalf("exit %d, err %v\n%s", exit, err, f.Stderr)
-		}
-		workers := 0
-		for _, r := range f.Prov.requests() {
-			if workerJobID(r) != "" {
-				workers++
-			}
-		}
-		shpEq(t, "worker requests", workers, 2)
-		obs.wantThirtyMinutes(t, len(f.Prov.requests()))
-		shpEq(t, "client response budget", f.Client.ResponseBudget, time.Duration(0))
-		wantBudgetRecord(t, f.events())
-	})
 }
