@@ -544,7 +544,9 @@ func TestShapeSubmissionEnvelopeProblems(t *testing.T) {
 		{"a question without text", map[string]any{"questions": []any{map[string]any{"question": " "}}}, "every question needs question text and optional options with string labels and boolean recommended values"},
 		{"an option without a label", map[string]any{"questions": []any{map[string]any{"question": "Q?", "options": []any{map[string]any{"recommended": true}}}}}, "every question needs question text and optional options with string labels and boolean recommended values"},
 		{"a recommended that is not boolean", map[string]any{"questions": []any{map[string]any{"question": "Q?", "options": []any{map[string]any{"label": "a", "recommended": "yes"}}}}}, "every question needs question text and optional options with string labels and boolean recommended values"},
-		{"blocked paths that are not protected", map[string]any{"blocked": map[string]any{"paths": []any{"calc.js"}, "reason": "needed"}}, "blocked path calc.js is not protected by the current contract"},
+		{"blocked paths that are not protected", map[string]any{"blocked": map[string]any{"paths": []any{"calc.js"}, "reason": "needed"}}, "blocked path calc.js is not protected by the current contract: the builder may edit it, so it is no reason to block\n" +
+			"protected paths under the current contract (configured protect patterns and automatic baseline): [\".kogen/project.yaml\"]\n" +
+			"none of the reported paths is protected: withdraw the blocked report and submit the Intent files"},
 		{"blocked without reason", map[string]any{"blocked": map[string]any{"paths": []any{".kogen/project.yaml"}}}, "blocked.reason must be non-empty text"},
 		{"blocked without paths", map[string]any{"blocked": map[string]any{"paths": []any{}, "reason": "x"}}, "blocked.paths must be a non-empty list"},
 		{"blocked with a blank path", map[string]any{"blocked": map[string]any{"paths": []any{" "}, "reason": "x"}}, "blocked.paths must contain non-empty paths"},

@@ -1814,15 +1814,28 @@ func (sh *shaping) validateBlocked(blocked any) (submission, []string, error) {
 		return submission{}, nil, err
 	}
 	var out []string
+	var unprotected, anyProtected bool
 	for _, p := range list {
 		if isText(p) {
-			if !slices.Contains(protected, p.(string)) {
-				problems = append(problems, "blocked path "+p.(string)+" is not protected by the current contract")
+			if slices.Contains(protected, p.(string)) {
+				anyProtected = true
+			} else {
+				unprotected = true
+				problems = append(problems, "blocked path "+p.(string)+" is not protected by the current contract: the builder may edit it, so it is no reason to block")
 			}
 		}
 		if s, ok := p.(string); ok {
 			out = append(out, s)
 		}
+	}
+	if unprotected {
+		next := "none of the reported paths is protected: withdraw the blocked report and submit the Intent files"
+		if anyProtected {
+			next = "keep only the protected paths in the blocked report, with its reason, or withdraw the report and submit the Intent files if no protected edit is required"
+		}
+		problems = append(problems,
+			"protected paths under the current contract (configured protect patterns and automatic baseline): "+InspectStrings(protected),
+			next)
 	}
 	if len(problems) > 0 {
 		return submission{}, problems, nil
