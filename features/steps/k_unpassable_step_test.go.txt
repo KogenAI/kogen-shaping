@@ -1,0 +1,290 @@
+package shape
+
+import (
+	"fmt"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+
+	"kogen-loop/sys"
+)
+
+// The acceptance harness of k-shape-acceptance-unpassable-step: synthetic shaping journeys with a
+// scripted shaper and a real Cucumber acceptance runner. Each KUNP_MODE is one journey; good and
+// bad check the judgment below on known observations.
+
+const (
+	kunpReason      = "no pass is reachable"
+	kunpHeadline    = "Acceptance has steps that no implementation can pass"
+	kunpEven        = "acceptance.feature line 4: Then it is even"
+	kunpHeader      = "const {Given, When, Then} = require('@cucumber/cucumber');\nconst assert = require('node:assert/strict');\nconst fs = require('node:fs');\n"
+	kunpEvenFeature = "Feature: Is even\n  Scenario: Even numbers\n    Given the number 4\n    Then it is even\n"
+	kunpEvenSteps   = "Given('the number {int}', function (n) { this.n = n; });\nThen('it is even', function () { assert.strictEqual(require('../../calc').isEven(this.n), true); });\n"
+	kunpStubStep    = "Then('the coverage is complete', function () { throw new Error('coverage incomplete: this step is a stub'); });\n"
+	kunpReadmeStep  = "Then('the readme is checked', function () { const text = fs.readFileSync('README.md', 'utf8'); assert.ok(false); });\n"
+	kunpStubFeature = "Feature: Is even\n  Scenario: Coverage\n    Then the coverage is complete\n"
+	kunpServiceStep = "Then('the sandbox service answers', {timeout: 500}, function () {\n  return new Promise((resolve, reject) => {\n    const socket = require('node:net').connect(%d, '127.0.0.1');\n    socket.unref();\n    socket.on('data', () => { socket.destroy(); resolve(); });\n    socket.on('error', reject);\n  });\n});\n"
+	kunpAckPrefix   = "Inspect whether fixtures, inputs and commands reached the intended behavior"
+)
+
+var kunpTargets = map[string]string{
+	"stub":        "acceptance.feature line 7: Then the coverage is complete",
+	"assertfalse": "acceptance.feature line 7: Then the readme is checked",
+	"only":        "acceptance.feature line 3: Then the coverage is complete",
+	"repair":      "acceptance.feature line 3: Then the coverage is complete",
+	"missing":     kunpEven,
+	"inputs":      "acceptance.feature line 3: Then 3 is even",
+	"service":     "acceptance.feature line 3: Then the sandbox service answers",
+}
+
+type kunpObservation struct {
+	mode      string
+	requests  int
+	feedback  string            // the submit result of the first submission
+	published bool              // exit 0 with readiness evidence recorded
+	remaining string            // the intent/not_ready lines
+	verdicts  map[string]string // unpassable_check step -> verdict, over every event
+	standIn   bool              // missing: the step passes once a trivial isEven stand-in exists
+	stepBytes string            // repair: the published step file
+	fixed     string            // repair: the corrected step file
+	detail    string
+}
+
+func kunpCheck(t *testing.T, o kunpObservation) {
+	t.Helper()
+	target := kunpTargets[o.mode]
+	where := fmt.Sprintf("TestKUnpassableStepAcceptance %s: ", o.mode)
+	approved := func(requests int) {
+		if o.requests != requests {
+			t.Errorf("%srequests = %d, want %d (%s)", where, o.requests, requests, o.detail)
+		}
+		if strings.Contains(o.feedback, kunpReason) || !strings.Contains(o.feedback, "Readiness observations") {
+			t.Errorf("%sthe first submission was not returned as ordinary readiness observations: %q", where, o.feedback)
+		}
+		if !o.published {
+			t.Errorf("%sthe approved candidate was not published (%s)", where, o.detail)
+		}
+	}
+	refusal := func(text string) {
+		if !strings.Contains(text, kunpHeadline) || !strings.Contains(text, kunpReason) || !strings.Contains(text, target) {
+			t.Errorf("%sfeedback does not refuse %q with %q: %q", where, target, kunpReason, text)
+		}
+	}
+	switch o.mode {
+	case "stub", "assertfalse", "only":
+		if o.requests != 3 {
+			t.Errorf("%srequests = %d, want 3 refused submissions (%s)", where, o.requests, o.detail)
+		}
+		refusal(o.feedback)
+		if strings.Contains(o.feedback, "acceptance.feature line 4") {
+			t.Errorf("%sthe refusal names the missing-feature step: %q", where, o.feedback)
+		}
+		if o.published {
+			t.Errorf("%sthe refused candidate was published", where)
+		}
+		if !strings.Contains(o.remaining, kunpReason) || !strings.Contains(o.remaining, target) {
+			t.Errorf("%sremaining findings = %q (%s)", where, o.remaining, o.detail)
+		}
+		if o.verdicts[target] != "unpassable" {
+			t.Errorf("%sverdict of %q = %q, want unpassable (all: %v)", where, target, o.verdicts[target], o.verdicts)
+		}
+		if o.mode != "only" && o.verdicts[kunpEven] != "stand_in_used" {
+			t.Errorf("%sverdict of %q = %q, want stand_in_used (all: %v)", where, kunpEven, o.verdicts[kunpEven], o.verdicts)
+		}
+	case "missing", "inputs", "service":
+		approved(2)
+		want := map[string]string{"missing": "stand_in_used", "inputs": "passed", "service": "timeout"}[o.mode]
+		if o.verdicts[target] != want {
+			t.Errorf("%sverdict of %q = %q, want %s (all: %v)", where, target, o.verdicts[target], want, o.verdicts)
+		}
+		if o.mode == "missing" && !o.standIn {
+			t.Errorf("%sthe step did not pass once a trivial isEven stand-in existed (%s)", where, o.detail)
+		}
+		if o.mode == "service" && (!strings.Contains(o.feedback, kunpAckPrefix) || !strings.Contains(o.feedback, "function timed out")) {
+			t.Errorf("%sthe timeout did not come back as the existing readiness text: %q", where, o.feedback)
+		}
+	case "repair":
+		if o.requests != 3 {
+			t.Errorf("%srequests = %d, want 3 (refused, repaired, acknowledged) (%s)", where, o.requests, o.detail)
+		}
+		refusal(o.feedback)
+		if !o.published || o.stepBytes != o.fixed {
+			t.Errorf("%sthe repaired candidate was not published: published=%v step=%q (%s)", where, o.published, o.stepBytes, o.detail)
+		}
+		if o.verdicts[target] != "unpassable" || o.verdicts[kunpEven] != "stand_in_used" {
+			t.Errorf("%sverdicts = %v, want %q unpassable and %q stand_in_used", where, o.verdicts, target, kunpEven)
+		}
+	default:
+		t.Fatalf("%sunknown mode", where)
+	}
+}
+
+func kunpCandidate(t *testing.T, mode string, port int) (feature, steps string) {
+	t.Helper()
+	switch mode {
+	case "stub":
+		return kunpEvenFeature + "\n  Scenario: Coverage\n    Then the coverage is complete\n", kunpHeader + kunpEvenSteps + kunpStubStep
+	case "assertfalse":
+		return kunpEvenFeature + "\n  Scenario: Readme\n    Then the readme is checked\n", kunpHeader + kunpEvenSteps + kunpReadmeStep
+	case "only", "repair":
+		return kunpStubFeature, kunpHeader + kunpStubStep
+	case "missing":
+		return kunpEvenFeature, kunpHeader + kunpEvenSteps
+	case "inputs":
+		return "Feature: Is even\n  Scenario Outline: Parity\n    Then <n> is even\n\n    Examples:\n      | n |\n      | 4 |\n      | 3 |\n",
+			kunpHeader + "Then('{int} is even', function (n) { assert.strictEqual(n % 2, 0); });\n"
+	case "service":
+		return "Feature: Is even\n  Scenario: Sandbox service\n    Then the sandbox service answers\n", kunpHeader + fmt.Sprintf(kunpServiceStep, port)
+	}
+	t.Fatalf("TestKUnpassableStepAcceptance: unknown mode %q", mode)
+	return "", ""
+}
+
+func kunpFiles(feature, steps string) map[string]any {
+	files := shpFiles()
+	list := files["files"].([]any)
+	list[0].(map[string]any)["content"] = strings.Replace(shpIntentMD, "calc.is_even(n) returns True for even integers.", "calc.isEven(n) returns true for even integers.", 1)
+	list[1].(map[string]any)["content"] = feature
+	list[2].(map[string]any)["content"] = steps
+	return files
+}
+
+func kunpAck(id, feature string) shpStep {
+	return shpSubmit(id, map[string]any{"files": []any{map[string]any{"path": ".kogen/intents/is-even/acceptance.feature", "content": feature}}})
+}
+
+// kunpService is a local service that accepts connections and never answers.
+func kunpService(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var conns []net.Conn
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			conns = append(conns, c)
+			mu.Unlock()
+		}
+	}()
+	t.Cleanup(func() {
+		ln.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		for _, c := range conns {
+			c.Close()
+		}
+	})
+	return ln.Addr().(*net.TCPAddr).Port
+}
+
+func kunpJourney(t *testing.T, mode string) kunpObservation {
+	t.Helper()
+	port := 0
+	if mode == "service" {
+		port = kunpService(t)
+	}
+	feature, steps := kunpCandidate(t, mode, port)
+	f := newShpFx(t)
+	modules := os.Getenv("KOGEN_CUCUMBER")
+	runner := filepath.Join(modules, "@cucumber/cucumber/bin/cucumber.js")
+	f.write("features/steps/calc_steps.js", "// existing steps\n")
+	f.write("calc.js", "exports.add = (a, b) => a + b;\n")
+	f.write("accept.sh", fmt.Sprintf("#!/bin/sh\necho run >> '%s/trace'\ncase \"$KOGEN_ACCEPTANCE_FEATURES\" in */check.feature) : > \"$KOGEN_ACCEPTANCE_REPORT\"; exit 0;; esac\n"+
+		"NODE_PATH='%s' \"${KOGEN_NODE:-node}\" '%s' --strict --require 'features/steps/*.js' --format \"message:$KOGEN_ACCEPTANCE_REPORT\" \"$KOGEN_ACCEPTANCE_FEATURES\"\n", f.Aux, modules, runner))
+	f.git("add", "-A")
+	f.git("commit", "-qm", "unpassable-step fixture")
+	bad := kunpFiles(feature, steps)
+	fixed := kunpHeader + kunpEvenSteps
+	switch mode {
+	case "stub", "assertfalse", "only":
+		f.Prov.seq = []shpStep{shpSubmit("bad", bad), shpSubmit("again", bad), shpSubmit("last", bad)}
+	case "repair":
+		f.Prov.seq = []shpStep{shpSubmit("bad", bad), shpSubmit("fixed", kunpFiles(kunpEvenFeature, fixed)), kunpAck("ack", kunpEvenFeature)}
+	default:
+		f.Prov.seq = []shpStep{shpSubmit("bad", bad), kunpAck("ack", feature)}
+	}
+	exit, err := f.shape("Add calc.isEven(n).")
+	o := kunpObservation{mode: mode, verdicts: map[string]string{}, fixed: fixed, detail: fmt.Sprintf("shape exit=%d err=%v", exit, err)}
+	reqs := f.Prov.requests()
+	o.requests = len(reqs)
+	if len(reqs) > 1 {
+		o.feedback = shpOutputs(reqs[1])["bad"]
+	}
+	o.published = err == nil && exit == 0 && f.exists(".kogen/local/readiness/is-even.json")
+	if e, ok := sys.AsError(err); ok {
+		o.remaining = strings.Join(e.Lines, "\n")
+	}
+	for _, ev := range shpNamed(f.events(), "unpassable_check") {
+		list, _ := ev["steps"].([]any)
+		for _, raw := range list {
+			if m, ok := raw.(map[string]any); ok {
+				o.verdicts[fmt.Sprint(m["step"])] = fmt.Sprint(m["verdict"])
+			}
+		}
+	}
+	switch mode {
+	case "missing":
+		f.write("calc.js", "exports.add = (a, b) => a + b;\nexports.isEven = n => n % 2 === 0;\n")
+		cmd := exec.Command(os.Getenv("KOGEN_NODE"), runner, "--strict", "--require", "features/steps/*.js", ".kogen/intents/is-even/acceptance.feature")
+		cmd.Dir = f.Root
+		cmd.Env = append(os.Environ(), "NODE_PATH="+modules)
+		out, err := cmd.CombinedOutput()
+		o.standIn = err == nil
+		if err != nil {
+			o.detail += fmt.Sprintf("\nstand-in run: %v\n%s", err, out)
+		}
+	case "repair":
+		o.stepBytes = f.read("features/steps/is_even_steps.js")
+	}
+	return o
+}
+
+// kunpControls judges known observations: good ones are accepted; bad turns the stub's verdict
+// into a reachable one, which must be rejected.
+func kunpControls(t *testing.T, bad bool) {
+	refusal := func(target string) string {
+		return kunpHeadline + ": 1 step definition(s) fail the same way whatever the repository contains, so no pass is reachable; nothing was published.\n- " + target + " (step definition): no pass is reachable: it fails whatever the repository contains"
+	}
+	ack := kunpAckPrefix + ".\n\nReadiness observations\n"
+	var obs []kunpObservation
+	for _, mode := range []string{"stub", "assertfalse", "only"} {
+		v := map[string]string{kunpTargets[mode]: "unpassable"}
+		if mode != "only" {
+			v[kunpEven] = "stand_in_used"
+		}
+		obs = append(obs, kunpObservation{mode: mode, requests: 3, feedback: refusal(kunpTargets[mode]), remaining: "- " + kunpTargets[mode] + ": " + kunpReason, verdicts: v})
+	}
+	obs = append(obs,
+		kunpObservation{mode: "missing", requests: 2, feedback: ack, published: true, verdicts: map[string]string{kunpEven: "stand_in_used"}, standIn: true},
+		kunpObservation{mode: "inputs", requests: 2, feedback: ack, published: true, verdicts: map[string]string{kunpTargets["inputs"]: "passed"}},
+		kunpObservation{mode: "service", requests: 2, feedback: ack + "Error: function timed out, ensure the promise resolves within 500 milliseconds", published: true, verdicts: map[string]string{kunpTargets["service"]: "timeout"}},
+		kunpObservation{mode: "repair", requests: 3, feedback: refusal(kunpTargets["repair"]), published: true, stepBytes: "fixed", fixed: "fixed",
+			verdicts: map[string]string{kunpTargets["repair"]: "unpassable", kunpEven: "stand_in_used"}},
+	)
+	if bad {
+		obs[0].verdicts[kunpTargets["stub"]] = "stand_in_used"
+	}
+	for _, o := range obs {
+		kunpCheck(t, o)
+	}
+}
+
+func TestKUnpassableStepAcceptance(t *testing.T) {
+	mode := os.Getenv("KUNP_MODE")
+	if mode == "good" || mode == "bad" {
+		kunpControls(t, mode == "bad")
+		return
+	}
+	kunpCheck(t, kunpJourney(t, mode))
+}

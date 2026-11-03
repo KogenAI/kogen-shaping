@@ -647,7 +647,12 @@ func (sh *shaping) shape(ctx context.Context, st *state) (int, error) {
 	sh.window = newShapeWindow(sh.root, sh.slug, input)
 	sh.cacheID = startConversation(sh.ev, "shape")
 	sh.rd.BeforeRecord = func() error { return sh.window.validate(sh.root) }
-	sh.rd.Gate = readinessGate
+	sh.rd.Gate = func(ready *verify.Ready) error {
+		if err := readinessGate(ready); err != nil {
+			return err
+		}
+		return sh.unpassableGate(ctx, ready)
+	}
 
 	var res outcome
 	var usageLine string
@@ -1462,6 +1467,11 @@ func (sh *shaping) checkSubmission(ctx context.Context, files []string) (string,
 		sh.refused("runner_observer", observer.items)
 		return observer.text(), outcome{kind: outInvalid, problems: observer.items}, nil
 	}
+	var unpassable *unpassableError
+	if errors.As(err, &unpassable) {
+		sh.refused("unpassable_step", unpassable.items)
+		return unpassable.text(), outcome{kind: outInvalid, problems: unpassable.items}, nil
+	}
 	if err != nil {
 		e, ok := sys.AsError(err)
 		if ok && (e.Reason == "not_ready" || e.Reason == "parse" || e.Reason == "lint") {
@@ -1589,6 +1599,7 @@ func (e *runnerObserverError) text() string {
 
 // readinessGate judges the complete checked result of a candidate: the unwritten-tests refusal
 // wins, and the runner-observer refusal is judged only when no scenario has an unwritten test.
+// Shape adds the unpassable-step check after both (unpassableGate).
 func readinessGate(ready *verify.Ready) error {
 	if err := unwrittenTestsGate(ready); err != nil {
 		return err
