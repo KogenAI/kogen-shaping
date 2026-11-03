@@ -504,11 +504,22 @@ func shpMessages(t *testing.T, scenarios []project.Scenario, status string) stri
 			pickleSteps = append(pickleSteps, msg{"id": pid, "astNodeIds": []any{fmt.Sprintf("ast-step-%d-%d", n, j+1)}, "text": st.Text})
 			testSteps = append(testSteps, msg{"id": tid, "pickleStepId": pid})
 			result := msg{"status": status}
-			if status == "FAILED" && j > 0 {
+			if status == "PREPARATION_FAILED" {
+				// The first step, the Given, fails and the rest do not run.
 				result["status"] = "SKIPPED"
+				if j == 0 {
+					result["status"] = "FAILED"
+					result["message"] = "fixture rejected in scenario " + sc.Name
+				}
 			}
 			if status == "FAILED" {
-				result["message"] = "assertion failed in scenario " + sc.Name
+				// The last step fails and every earlier one passed: red of the behaviour under
+				// test, not of the preparation.
+				if j < len(sc.Steps)-1 {
+					result["status"] = "PASSED"
+				} else {
+					result["message"] = "assertion failed in scenario " + sc.Name
+				}
 			}
 			finished = append(finished, msg{"testStepFinished": msg{"testCaseStartedId": fmt.Sprintf("s-%d", n), "testStepId": tid, "testStepResult": result}})
 		}

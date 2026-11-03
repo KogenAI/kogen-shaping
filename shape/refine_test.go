@@ -606,8 +606,10 @@ func TestRefineRedOriginalGivesTheModelItsObservationsAndAcknowledgmentReusesThe
 	body := shpBody(reqs[0])
 	shpContains(t, "original observations", body, "Readiness observations\nChecked baseline: "+f.hash0)
 	shpContains(t, "original observations", body, "Scenario: Even numbers (acceptance.feature line 2)")
-	shpContains(t, "original skipped", body, "Unexercised acceptance steps: 2")
-	shpContains(t, "original skipped", body, "acceptance.feature line 4: Then is-even: it is even")
+	shpContains(t, "original failure", body, "acceptance.feature line 4: Then is-even: it is even\nassertion failed in scenario Even numbers")
+	if strings.Contains(body, "Unexercised acceptance steps") {
+		t.Fatalf("the last step failed, so no step is unexercised: %s", body)
+	}
 	rel := strings.TrimPrefix(f.evidence(), f.Root+"/")
 	obs := f.read(rel + "/original-observations.txt")
 	shpEq(t, "observations file", strings.HasPrefix(obs, "Readiness observations\nChecked baseline: "+f.hash0), true)
@@ -639,9 +641,10 @@ func TestRefineRedCandidateReturnsObservationsAndAChangedOneIsCheckedAgain(t *te
 	feedback := shpOutputs(reqs[1])["c1"]
 	shpContains(t, "feedback", feedback, "Inspect whether fixtures, inputs and commands reached the intended behavior")
 	shpContains(t, "feedback", feedback, "Acceptance exit: 1\n")
-	shpContains(t, "skipped feedback", feedback, "Unexercised acceptance steps: 2")
-	shpContains(t, "skipped feedback", feedback, "acceptance.feature line 4: Then is-even: it is even")
-	shpContains(t, "skipped feedback", feedback, "Skipped steps are unexercised; readiness does not prove their behavior or fixture validity.")
+	shpContains(t, "failure feedback", feedback, "acceptance.feature line 4: Then is-even: it is even\nassertion failed in scenario Even numbers")
+	if strings.Contains(feedback, "Unexercised acceptance steps") {
+		t.Fatalf("the last step failed, so no step is unexercised: %s", feedback)
+	}
 	rel := strings.TrimPrefix(f.evidence(), f.Root+"/")
 	shpContains(t, "feedback", feedback, "Evidence: "+filepath.Join(f.Root, rel, "observations-1.txt"))
 	shpEq(t, "acknowledged", shpOutputs(reqs[1])["c1"] != "", true)
@@ -693,7 +696,7 @@ func TestRefineUnchangedRedFromTheInitialContextAcknowledgesItsExistingCheck(t *
 	// only the original's dry run executed; the unchanged acknowledgment reused it
 	shpEq(t, "runner runs", f.runs()-runs, 1)
 	prompt := shpBody(f.Prov.requests()[0])
-	shpContains(t, "prompt", prompt, "Scenario: Even numbers (acceptance.feature line 2)\nacceptance.feature line 3: Given is-even: the number 4\nassertion failed in scenario Even numbers")
+	shpContains(t, "prompt", prompt, "Scenario: Even numbers (acceptance.feature line 2)\nacceptance.feature line 4: Then is-even: it is even\nassertion failed in scenario Even numbers")
 	m := regexp.MustCompile(`(?m)^Evidence: (.+)$`).FindStringSubmatch(prompt)
 	if m == nil {
 		t.Fatalf("no evidence reference in the prompt:\n%s", prompt)

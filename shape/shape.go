@@ -530,6 +530,8 @@ type shaping struct {
 	declaredSteps []string          // proposed JavaScript steps once declared in Acceptance:
 	ready         *verify.Ready
 	requests      int
+	// preparationRefused are the failure signatures of the preparation failures refused in this run.
+	preparationRefused []preparationSignature
 
 	inspected bool             // a read, list or search tool answered in this conversation
 	docs      []map[string]any // documentation tool results of this conversation
@@ -655,6 +657,9 @@ func (sh *shaping) shape(ctx context.Context, st *state) (int, error) {
 	sh.rd.BeforeRecord = func() error { return sh.window.validate(sh.root) }
 	sh.rd.Gate = func(ready *verify.Ready) error {
 		if err := readinessGate(ready); err != nil {
+			return err
+		}
+		if err := sh.preparationGate(ready); err != nil {
 			return err
 		}
 		return sh.unpassableGate(ctx, ready)
@@ -1498,6 +1503,11 @@ func (sh *shaping) checkSubmission(ctx context.Context, files []string) (string,
 	if errors.As(err, &observer) {
 		sh.refused("runner_observer", observer.items)
 		return observer.text(), outcome{kind: outInvalid, problems: observer.items}, nil
+	}
+	var preparation *preparationError
+	if errors.As(err, &preparation) {
+		sh.refused("preparation", preparation.items)
+		return preparation.text(), outcome{kind: outInvalid, problems: preparation.items}, nil
 	}
 	var unpassable *unpassableError
 	if errors.As(err, &unpassable) {
