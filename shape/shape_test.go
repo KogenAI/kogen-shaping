@@ -1015,7 +1015,7 @@ func TestShapeShortensATooLongTitleOnlyOnTheLastAttempt(t *testing.T) {
 		if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 0 {
 			t.Fatalf("exit %d, err %v\n%s", exit, err, f.Stdout)
 		}
-		shpContains(t, "feedback 1", shpOutputs(f.Prov.requests()[1])["c1"], titleTooLong)
+		shpContains(t, "feedback 1", shpOutputs(f.Prov.requests()[1])["c1"], "title:")
 		shpEq(t, "title", strings.SplitN(f.read(".kogen/intents/is-even/intent.md"), "\n", 2)[0], "# "+short)
 		events := shpNamed(f.events(), "title_shortened")
 		shpEq(t, "events", len(events), 1)
@@ -1030,8 +1030,41 @@ func TestShapeShortensATooLongTitleOnlyOnTheLastAttempt(t *testing.T) {
 		f.setReport("PASSED", 0)
 		_, err := f.shape("Add calc.is_even(n).")
 		shpWantError(t, err, "shape", "invalid_output", "", 1)
-		shpEq(t, "events", len(shpNamed(f.events(), "title_shortened")), 0)
+		shpEq(t, "events", len(shpNamed(f.events(), "title_shortened")), 1)
+		shapeAbsent(t, f)
+		retained := f.read(".kogen/local/shaping/is-even/proposed/.kogen/intents/is-even/intent.md")
+		original := unsourced["files"].([]any)[0].(map[string]any)["content"].(string)
+		shpEq(t, "retained", retained, strings.Replace(original, "# "+long+"\n", "# "+short+"\n", 1))
+		refusals := shpNamed(f.events(), "submission_refused")
+		last := fmt.Sprint(refusals[len(refusals)-1]["problems"])
+		if strings.Contains(last, "title:") || !strings.Contains(last, "decisions:") {
+			t.Fatalf("final refusal must report current problems, got %s", last)
+		}
 		shpEq(t, "refused", strings.Join(shpRefused(f), " "), "1:intent 2:intent 3:intent")
+	})
+	t.Run("short title with trailing whitespace and a period", func(t *testing.T) {
+		parallel(t)
+		title := strings.Repeat("a", 49) + ".  "
+		proposal := shpTitled(title, "")
+		f := newShpFx(t, shpSubmit("c1", proposal), shpSubmit("c2", proposal), shpSubmit("c3", proposal))
+		_, err := f.shape("Add calc.is_even(n).")
+		shpWantError(t, err, "shape", "invalid_output", "", 1)
+		shapeAbsent(t, f)
+		shpEq(t, "events", len(shpNamed(f.events(), "title_shortened")), 0)
+		retained := f.read(".kogen/local/shaping/is-even/proposed/.kogen/intents/is-even/intent.md")
+		shpEq(t, "title", strings.SplitN(retained, "\n", 2)[0], "# "+title)
+	})
+	t.Run("short title with combining marks and a period", func(t *testing.T) {
+		parallel(t)
+		title := strings.Repeat("e\u0301", 30) + "."
+		proposal := shpTitled(title, "")
+		f := newShpFx(t, shpSubmit("c1", proposal), shpSubmit("c2", proposal), shpSubmit("c3", proposal))
+		_, err := f.shape("Add calc.is_even(n).")
+		shpWantError(t, err, "shape", "invalid_output", "", 1)
+		shapeAbsent(t, f)
+		shpEq(t, "events", len(shpNamed(f.events(), "title_shortened")), 0)
+		retained := f.read(".kogen/local/shaping/is-even/proposed/.kogen/intents/is-even/intent.md")
+		shpEq(t, "title", strings.SplitN(retained, "\n", 2)[0], "# "+title)
 	})
 }
 

@@ -1373,21 +1373,22 @@ func (sh *shaping) acceptFiles(ctx context.Context, submitted []proposedFile) (s
 	}
 	intent, _, err := project.CheckIntent(sh.root, sh.slug, sh.overlay())
 	if err != nil && sh.priorInvalid >= submissionRetryLimit(sh.in.SubmissionRetryLimit)-1 {
-		if e, ok := sys.AsError(err); ok && e.Reason == "lint" && len(e.Lines) == 1 && e.Lines[0] == titleTooLong {
+		if e, ok := sys.AsError(err); ok && e.Reason == "lint" && slices.ContainsFunc(e.Lines, func(line string) bool { return strings.HasPrefix(line, "title:") }) {
 			p := project.IntentMDPath(sh.slug)
 			before := sh.proposed[p]
 			if first, rest, found := strings.Cut(before, "\n"); strings.HasPrefix(first, "# ") {
 				original := strings.TrimPrefix(first, "# ")
-				short := shortenTitle(original)
-				sh.proposed[p] = "# " + short
-				if found {
-					sh.proposed[p] += "\n" + rest
-				}
-				if intent2, _, err2 := project.CheckIntent(sh.root, sh.slug, sh.overlay()); err2 == nil {
-					intent, err = intent2, nil
+				if titleLength(strings.TrimSpace(original)) > 50 {
+					short := shortenTitle(original)
+					sh.proposed[p] = "# " + short
+					if found {
+						sh.proposed[p] += "\n" + rest
+					}
+					if err := sh.keepProposals(); err != nil {
+						return "", outcome{}, err
+					}
 					sh.ev.Record(map[string]any{"event": "title_shortened", "original": original, "title": short})
-				} else {
-					sh.proposed[p] = before
+					intent, _, err = project.CheckIntent(sh.root, sh.slug, sh.overlay())
 				}
 			}
 		}
@@ -2010,7 +2011,26 @@ func (sh *shaping) printReady(added []string, usageLine string) int {
 	return 0
 }
 
-const titleTooLong = "title: the title must be at most 50 characters"
+// titleLength matches the coordinator's count of user-perceived title characters.
+func titleLength(s string) int {
+	n, ri := 0, 0
+	var prev rune
+	for _, r := range s {
+		regional := r >= 0x1F1E6 && r <= 0x1F1FF
+		pictographic := r >= 0x1F300 && r <= 0x1FAFF || r >= 0x2600 && r <= 0x27BF || r == 0x2764 || r == 0x2B50
+		attach := n > 0 && (prev == '\r' && r == '\n' || unicode.In(r, unicode.Mn, unicode.Me, unicode.Mc) || r == 0x200C || r == 0x200D || r >= 0x1F3FB && r <= 0x1F3FF || r >= 0xE0020 && r <= 0xE007F || prev == 0x200D && pictographic || regional && ri%2 == 1)
+		if regional {
+			ri++
+		} else {
+			ri = 0
+		}
+		if !attach {
+			n++
+		}
+		prev = r
+	}
+	return n
+}
 
 // shortenTitle cuts a title after the last whole word that fits in 50 characters and
 // removes trailing punctuation and spaces.
