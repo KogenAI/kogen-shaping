@@ -273,14 +273,16 @@ func TestInitMixVerificationMatchesElixir(t *testing.T) {
 		Checks   []project.Check
 		Eligible bool
 	}
-	// Check keeps its field names in the golden file as lowercase keys.
+	// Synthetic text and checks came from the Elixir compatibility fixture; eligibility
+	// records its original results or, after an explicit update, current Go validation.
+	// Keep the golden field names lowercase.
 	var raw []struct {
-		Text   string `json:"text"`
 		Checks []struct {
 			Name string `json:"name"`
 			Run  string `json:"run"`
 		} `json:"checks"`
-		Eligible bool `json:"eligible"`
+		Eligible bool   `json:"eligible"`
+		Text     string `json:"text"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		t.Fatal(err)
@@ -300,9 +302,15 @@ func TestInitMixVerificationMatchesElixir(t *testing.T) {
 		t.Fatalf("only %d cases", len(cases))
 	}
 	for i, c := range cases {
-		if got := initMixVerification(c.Text, c.Checks); got != c.Eligible {
-			t.Errorf("case %d: got %v, Elixir says %v\nchecks %v\n%s", i, got, c.Eligible, c.Checks, c.Text)
+		got := initMixVerification(c.Text, c.Checks)
+		if *updateGoldens {
+			raw[i].Eligible = got
+		} else if got != c.Eligible {
+			t.Errorf("case %d: got %v, golden says %v\nchecks %v\n%s", i, got, c.Eligible, c.Checks, c.Text)
 		}
+	}
+	if *updateGoldens && !t.Failed() {
+		writeGolden(t, "testdata/init/mix-golden.json", raw, "")
 	}
 }
 

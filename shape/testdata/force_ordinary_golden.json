@@ -25,8 +25,8 @@
         "Accept": "text/event-stream",
         "Authorization": "Bearer access",
         "Content-Type": "application/json",
-        "Conversation_id": "conversation-<CACHE>",
-        "Session_id": "conversation-<CACHE>"
+        "Conversation_id": "conversation-\u003cCACHE\u003e",
+        "Session_id": "conversation-\u003cCACHE\u003e"
       }
     },
     {
@@ -36,8 +36,8 @@
         "Accept": "text/event-stream",
         "Authorization": "Bearer access",
         "Content-Type": "application/json",
-        "Conversation_id": "conversation-<CACHE>",
-        "Session_id": "conversation-<CACHE>"
+        "Conversation_id": "conversation-\u003cCACHE\u003e",
+        "Session_id": "conversation-\u003cCACHE\u003e"
       }
     }
   ],
@@ -67,8 +67,8 @@
         "Accept": "text/event-stream",
         "Authorization": "Bearer access",
         "Content-Type": "application/json",
-        "Conversation_id": "conversation-<CACHE>",
-        "Session_id": "conversation-<CACHE>"
+        "Conversation_id": "conversation-\u003cCACHE\u003e",
+        "Session_id": "conversation-\u003cCACHE\u003e"
       }
     },
     {
@@ -78,8 +78,8 @@
         "Accept": "text/event-stream",
         "Authorization": "Bearer access",
         "Content-Type": "application/json",
-        "Conversation_id": "conversation-<CACHE>",
-        "Session_id": "conversation-<CACHE>"
+        "Conversation_id": "conversation-\u003cCACHE\u003e",
+        "Session_id": "conversation-\u003cCACHE\u003e"
       }
     }
   ]

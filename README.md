@@ -23,6 +23,16 @@ Then run:
 go build ./... && go vet ./... && go test -race -count=1 ./...
 ```
 
+After deliberate behavior changes or to resolve golden conflicts on the combined tree, regenerate
+synthetic fixtures only (never live user data or providers):
+
+```sh
+go test ./... -update
+```
+
+Inspect the diff, then run `go test ./...` and the normal full checks above. Never hand-merge
+hashes. The force golden is a deliberate compatibility baseline, not a routine snapshot.
+
 The module depends on private KogenAI modules: set `GOPRIVATE=github.com/KogenAI/*`.
 
 ## License

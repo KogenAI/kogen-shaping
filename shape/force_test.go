@@ -404,9 +404,10 @@ func forceRetained(t *testing.T, reqs []map[string]any, i int) {
 
 func TestShapeForceWireCompatibility(t *testing.T) {
 	parallel(t)
-	// Ordinary sessions send the bytes and headers they sent before enforcement existed.
+	// The ordinary synthetic sessions are a deliberate wire compatibility baseline.
 	golden := forceGolden(t)
 	seen := 0
+	actual := make(map[string][]forceCapture)
 	for _, w := range []*forceWire{responsesWire, chatWire} {
 		for _, owner := range []string{"shape", "refine"} {
 			key := owner + "/" + w.name
@@ -415,12 +416,17 @@ func TestShapeForceWireCompatibility(t *testing.T) {
 				t.Fatalf("no golden for %s", key)
 			}
 			seen++
-			if got := forceOrdinary(t, w, owner); !reflect.DeepEqual(got, want) {
+			got := forceOrdinary(t, w, owner)
+			actual[key] = got
+			if !*updateGoldens && !reflect.DeepEqual(got, want) {
 				t.Errorf("%s: ordinary requests changed\n got %+v\nwant %+v", key, got, want)
 			}
 		}
 	}
 	shpEq(t, "golden cases", len(golden), seen)
+	if *updateGoldens && !t.Failed() {
+		writeGolden(t, "testdata/force_ordinary_golden.json", actual, "  ")
+	}
 
 	// Only the inference after a tool-free answer requires the terminal tool; discovery without
 	// a submission does not, and the answer to a forced request restores the automatic choice.

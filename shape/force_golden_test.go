@@ -85,7 +85,8 @@ func forceOrdinary(t *testing.T, w *forceWire, owner string) []forceCapture {
 	return forceNormalize(f, f.Prov.rawRequests())
 }
 
-// forceGolden are the requests of the ordinary sessions as captured before enforcement existed.
+// forceGolden stores normalized synthetic ordinary wire captures, originally recorded before
+// enforcement existed. It is a deliberate compatibility baseline, not a routine snapshot.
 func forceGolden(t *testing.T) map[string][]forceCapture {
 	t.Helper()
 	b, err := os.ReadFile("testdata/force_ordinary_golden.json")
