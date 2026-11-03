@@ -4,6 +4,22 @@ Kogen's human-assisted shaping workflow: `kogen intent shape`, `refine` and `app
 
 It is a component of [Kogen](https://github.com/KogenAI/kogen), which pins an exact version of it and assembles the `kogen` program.
 
+## Getting started
+
+Install Go 1.27.2 or later, Git, Node.js and npm. From a public clone:
+
+```sh
+git clone https://github.com/KogenAI/kogen-shaping.git
+cd kogen-shaping
+go build ./...
+```
+
+For `go test ./...`, first install the integration-test tools as described below.
+
+Shaping helps a human turn a request into an Intent; refinement revises that Intent,
+and approval is the human decision to authorize it. Kogen uses this component for
+that workflow before building the approved work.
+
 ## Packages
 
 - `shape`: shaping, refinement, approval cards, context windows and Intent contracts, and the Shaper's and Refine's model-facing policy: their prompts (`shape/prompts`) and tool definitions.
@@ -14,8 +30,8 @@ Build this repository's module without assembling Kogen:
 
 ```sh
 go build -o kogen-shape ./cmd/kogen-shape
-./kogen-shape --project /path/to/checkout --slug my-intent --request /path/to/request.txt
-# Or: printf 'Request text' | ./kogen-shape --project /path/to/checkout --slug my-intent --request -
+./kogen-shape --project /example/checkout --slug my-intent --request /example/request.txt
+# Or: printf 'Request text' | ./kogen-shape --project /example/checkout --slug my-intent --request -
 ```
 
 The checkout needs Shape's existing project configuration, readiness tools and provider
@@ -30,18 +46,19 @@ stderr. The process status matches `exit_code`. On publication, `intent` contain
 `path` and exact `content` of the written `intent.md`, and `error` is null:
 
 ```json
-{"exit_code":0,"intent":{"path":"/checkout/.kogen/intents/my-intent/intent.md","content":"..."},"error":null}
+{"exit_code":0,"intent":{"path":"/example/checkout/.kogen/intents/my-intent/intent.md","content":"..."},"error":null}
 ```
 
 For a nonzero exit, `intent` is null and `error` is a diagnostic string. Usage or input errors
 exit 2; Shape's own exit codes are preserved. In particular, exit 5 can mean pending questions
 or an existing Intent. For pending questions, rerun the same command with the answers in the
-request file or on stdin (for example `printf '1: a\n' | ./kogen-shape --project /path/to/checkout --slug my-intent --request -`).
+request file or on stdin (for example `printf '1: a\n' | ./kogen-shape --project /example/checkout --slug my-intent --request -`).
 The existing Shape question and answer semantics apply. Standalone Refine is not provided.
 
 ## Testing
 
-Some tests run the real Cucumber and Quint. Install them once:
+The Go commands build and test the packages. Some integration tests run real
+Cucumber and Quint and require Node.js and npm. Install their dependencies first:
 
 ```sh
 npm ci --prefix testdata/tools/cucumber
@@ -67,7 +84,7 @@ policy goldens (`shape/testdata/shaper_policy_golden.json`, `prompts_golden.json
 `defs_golden.json`): they record the prompt and tool bytes the models have always received, and
 change only with a deliberate, reviewed policy change.
 
-The module depends on private KogenAI modules: set `GOPRIVATE=github.com/KogenAI/*`.
+For inquiries, contact contact@kogen.dev.
 
 ## License
 
