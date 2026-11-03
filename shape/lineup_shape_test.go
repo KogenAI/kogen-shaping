@@ -26,7 +26,8 @@ type shapeExec struct {
 	inputs   []executor.Input
 	startErr error
 	seq      int
-	calls    int // rounds over every session
+	calls    int  // rounds over every session
+	bash     bool // the main shaper session completes a Bash call in its first round
 	// contract, when set, answers the contract review and confirmation sessions in order (the
 	// last repeats); they do not count in rounds or calls, and starts holds only the other
 	// sessions. Without it every review finds no contradiction.
@@ -104,12 +105,18 @@ func (s *shapeSession) Round(_ context.Context, in executor.Input) (executor.Rou
 	s.x.mu.Unlock()
 	if s.n == 1 {
 		s.emit(map[string]any{"event": "executor_tool", "name": "Read", "tool_use_id": "t1", "denied": false})
+		if s.x.bash {
+			s.emit(map[string]any{"event": "executor_tool", "name": "Bash", "tool_use_id": "t2", "denied": false})
+		}
 	}
 	res, err := fn(s.n, s.task.Root)
 	if err != nil {
 		return executor.RoundResult{}, err
 	}
-	res.Ending, res.Handle = executor.EndFinish, s.Handle()
+	if res.Ending == "" {
+		res.Ending = executor.EndFinish
+	}
+	res.Handle = s.Handle()
 	return res, nil
 }
 
@@ -253,6 +260,7 @@ func TestClaudeLineupShapeSubmission(t *testing.T) {
 		f.useExternalShape(6)
 		x := &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){
 			result(map[string]any{"questions": []any{shpQuestion("What should is_even do with a non-integer?", "raise TypeError", "return False"), shpQuestion("How should it be named?")}}),
+			result(map[string]any{"items": []any{map[string]any{"number": 1, "class": "ui_ux", "why": "a choice of behavior"}, map[string]any{"number": 2, "class": "ui_ux", "why": "a choice of wording"}}}),
 			result(shpFiles()),
 			result(map[string]any{"files": []any{map[string]any{"path": ".kogen/intents/is-even/acceptance.feature", "content": shpFeature}}}),
 		}}
@@ -269,10 +277,10 @@ func TestClaudeLineupShapeSubmission(t *testing.T) {
 		if err != nil || exit != 0 {
 			t.Fatalf("exit %d, err %v\n%s", exit, err, f.Stderr)
 		}
-		if len(x.starts) != 2 {
-			t.Fatalf("%d sessions, want a fresh one per invocation", len(x.starts))
+		if len(x.starts) != 3 {
+			t.Fatalf("%d sessions, want a fresh one per invocation and one for the question check", len(x.starts))
 		}
-		shpContains(t, "second task", x.starts[1].Brief.Stable, "raise TypeError")
+		shpContains(t, "second task", x.starts[2].Brief.Stable, "raise TypeError")
 		noNativeRequests(t, f)
 	})
 

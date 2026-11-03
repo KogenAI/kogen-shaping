@@ -204,7 +204,7 @@ func TestShapeBudgetRolesShape(t *testing.T) {
 		}
 		f.Prov.seq = []shpStep{
 			shpAnswer(shpCall("b1", "shape_batch", map[string]any{"brief": brief, "jobs": jobs})),
-			shpSubmit("q", map[string]any{"questions": []any{shpQuestion("Q?")}}),
+			shpSubmit("q", map[string]any{"questions": []any{shpQuestion("Q?")}}), shpUI(1),
 		}
 		f.newSession()
 		exit, err := f.shape("Add calc.is_even(n).")

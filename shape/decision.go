@@ -120,7 +120,7 @@ func decisionOutcome(items []decisionItem, request, intent string) (map[string]a
 		}
 		counts[it.verdict]++
 		events[i] = map[string]any{"statement": it.statement, "request_quotes": it.quotes, "verdict": it.verdict, "why": it.why}
-		if it.verdict == "follows" || strings.Contains(it.statement, "(assumption:") {
+		if it.verdict == "follows" || markedStatement(it.statement) {
 			continue
 		}
 		quoted := make([]string, len(it.quotes))
@@ -133,7 +133,7 @@ func decisionOutcome(items []decisionItem, request, intent string) (map[string]a
 	if len(problems) == 0 {
 		return event, nil
 	}
-	head := fmt.Sprintf("Decision check: %d stated decisions are not supported by the request; follow the request, or ask, or mark the decision as an assumption the user must confirm:", len(problems))
+	head := fmt.Sprintf("Decision check: %d stated decisions are not supported by the request; follow the request, cite the repository evidence that decides it with (evidence: ...), or mark the decision as an assumption the user must confirm:", len(problems))
 	return event, append([]string{head, assumptionRule}, problems...)
 }
 
@@ -200,6 +200,12 @@ func (sh *shaping) decisionCheck(ctx context.Context, intent string) ([]string, 
 	return lines, items, nil
 }
 
+// markedStatement is a statement that carries an assumption or evidence marker: the decision
+// check neither counts it as a problem nor marks it.
+func markedStatement(statement string) bool {
+	return strings.Contains(statement, "(assumption:") || strings.Contains(statement, "(evidence:")
+}
+
 // assumptionLines are the Decisions lines marked as assumptions, without their leading "- ",
 // for the approval card; nil unless the decision check is enabled.
 func assumptionLines(cfg *project.Config, intent string) []string {
@@ -229,7 +235,7 @@ func markAssumptions(items []decisionItem, intent string) (marked string, statem
 	var added []string
 	addedSeen := map[string]bool{}
 	for _, it := range items {
-		if it.verdict == "follows" || strings.Contains(it.statement, "(assumption:") {
+		if it.verdict == "follows" || markedStatement(it.statement) {
 			continue
 		}
 		if it.verdict != "unsupported" {

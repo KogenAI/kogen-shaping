@@ -364,7 +364,7 @@ func TestShapeQuestionsPathPrintsNumberedQuestionsAndWritesNothing(t *testing.T)
 	f := newShpFx(t, shpSubmit("q1", map[string]any{"questions": []any{
 		shpQuestion("What should is_even do with a non-integer?", "raise TypeError", "return False"),
 		shpQuestion("How should it be named?"),
-	}}))
+	}}), shpUI(2))
 	exit, err := f.shape("Add calc.is_even(n).")
 	if err != nil || exit != 5 {
 		t.Fatalf("exit %d, err %v", exit, err)
@@ -399,7 +399,7 @@ func TestShapeQuestionsPathPrintsNumberedQuestionsAndWritesNothing(t *testing.T)
 func TestShapeAnswersContinueShapingAndTheDecisionRecordsItsSource(t *testing.T) {
 	parallel(t)
 	f := newShpFx(t,
-		shpSubmit("q1", map[string]any{"questions": []any{shpQuestion("What should is_even do with a non-integer?", "raise TypeError", "return False")}}),
+		shpSubmit("q1", map[string]any{"questions": []any{shpQuestion("What should is_even do with a non-integer?", "raise TypeError", "return False")}}), shpUI(1),
 		shpSubmit("c1", shpFilesWithDecisions("- Non-integers raise TypeError. (source: answer 1)")),
 		shpAck("c2"))
 	if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 5 {
@@ -409,7 +409,7 @@ func TestShapeAnswersContinueShapingAndTheDecisionRecordsItsSource(t *testing.T)
 	if err != nil || exit != 0 {
 		t.Fatalf("exit %d, err %v\n%s", exit, err, f.Stdout)
 	}
-	reqs := f.Prov.requests()
+	reqs := shpShaperRequests(f.Prov.requests())
 	shpEq(t, "requests", len(reqs), 3)
 	body := shpBody(reqs[1])
 	shpContains(t, "request 2", body, "What should is_even do with a non-integer?")
@@ -434,7 +434,7 @@ func TestShapeAnswersContinueShapingAndTheDecisionRecordsItsSource(t *testing.T)
 func TestShapeAllRecommendedAnswersEveryQuestion(t *testing.T) {
 	parallel(t)
 	f := newShpFx(t,
-		shpSubmit("q1", map[string]any{"questions": []any{shpQuestion("First?", "yes", "no"), shpQuestion("Second?", "left", "right")}}),
+		shpSubmit("q1", map[string]any{"questions": []any{shpQuestion("First?", "yes", "no"), shpQuestion("Second?", "left", "right")}}), shpUI(2),
 		shpSubmit("c1", shpFilesWithDecisions("- First. (source: answer 1)", "- Second. (source: answer 2)")),
 		shpAck("c2"))
 	if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 5 {
@@ -443,14 +443,14 @@ func TestShapeAllRecommendedAnswersEveryQuestion(t *testing.T) {
 	if exit, err := f.shape("all: recommended"); err != nil || exit != 0 {
 		t.Fatalf("exit %d, err %v\n%s", exit, err, f.Stdout)
 	}
-	body := shpBody(f.Prov.requests()[1])
+	body := shpBody(shpShaperRequests(f.Prov.requests())[1])
 	shpContains(t, "request 2", body, "answer: 1: a")
 	shpContains(t, "request 2", body, "answer: 2: a")
 }
 
 func TestShapePendingQuestionsRejectInputeTheCallerCannotUse(t *testing.T) {
 	parallel(t)
-	f := newShpFx(t, shpSubmit("q1", map[string]any{"questions": []any{shpQuestion("First?", "yes", "no"), shpQuestion("Second?", "left", "right")}}))
+	f := newShpFx(t, shpSubmit("q1", map[string]any{"questions": []any{shpQuestion("First?", "yes", "no"), shpQuestion("Second?", "left", "right")}}), shpUI(2))
 	if _, err := f.shape("Add calc.is_even(n)."); err != nil {
 		t.Fatal(err)
 	}
@@ -463,7 +463,7 @@ func TestShapePendingQuestionsRejectInputeTheCallerCannotUse(t *testing.T) {
 		shpWantError(t, err, "intent", tc.reason, tc.detail, 2)
 		shpEq(t, "exit for "+tc.input, exit, 2)
 	}
-	shpEq(t, "requests", len(f.Prov.requests()), 1)
+	shpEq(t, "requests", len(shpShaperRequests(f.Prov.requests())), 1)
 
 	// Missing answers are asked again, without a model request; free text answers a question.
 	exit, err := f.shape("1: a")
@@ -474,19 +474,19 @@ func TestShapePendingQuestionsRejectInputeTheCallerCannotUse(t *testing.T) {
 	if strings.Contains(f.Stdout.String(), "1. First?") {
 		t.Fatalf("only unanswered questions are printed:\n%s", f.Stdout)
 	}
-	shpEq(t, "requests", len(f.Prov.requests()), 1)
+	shpEq(t, "requests", len(shpShaperRequests(f.Prov.requests())), 1)
 	// Answers that name a question out of range are dropped; the pending one stays pending.
 	exit, err = f.shape("9: whatever")
 	if err != nil || exit != 5 {
 		t.Fatalf("exit %d, err %v", exit, err)
 	}
 	shpContains(t, "stdout", f.Stdout.String(), "2. Second?\n")
-	shpEq(t, "requests", len(f.Prov.requests()), 1)
+	shpEq(t, "requests", len(shpShaperRequests(f.Prov.requests())), 1)
 }
 
 func TestShapeAllRecommendedNeedsARecommendedOptionForEveryQuestion(t *testing.T) {
 	parallel(t)
-	f := newShpFx(t, shpSubmit("q1", map[string]any{"questions": []any{shpQuestion("First?", "yes", "no"), shpQuestion("Free text?")}}))
+	f := newShpFx(t, shpSubmit("q1", map[string]any{"questions": []any{shpQuestion("First?", "yes", "no"), shpQuestion("Free text?")}}), shpUI(2))
 	if _, err := f.shape("Add calc.is_even(n)."); err != nil {
 		t.Fatal(err)
 	}
@@ -587,7 +587,7 @@ func TestShapeWithoutSubmitIsAskedToEndWithSubmit(t *testing.T) {
 func TestShapeOnlyOneSubmitCountsPerResponse(t *testing.T) {
 	parallel(t)
 	f := newShpFx(t,
-		shpAnswer(shpCall("s1", "submit", map[string]any{"questions": []any{shpQuestion("First?", "yes")}}), shpCall("s2", "submit", shpFiles())))
+		shpAnswer(shpCall("s1", "submit", map[string]any{"questions": []any{shpQuestion("First?", "yes")}}), shpCall("s2", "submit", shpFiles())), shpUI(1))
 	exit, err := f.shape("Add calc.is_even(n).")
 	if err != nil || exit != 5 {
 		t.Fatalf("exit %d, err %v", exit, err)
@@ -709,7 +709,7 @@ func TestShapeUndefinedStepGoesBackToTheShaperAndStaysNotReady(t *testing.T) {
 
 func TestShapeAfterANotReadyAttemptTheShaperMayAskQuestions(t *testing.T) {
 	parallel(t)
-	f := newShpFx(t, shpSubmit("c1", shpFiles()), shpSubmit("q1", map[string]any{"questions": []any{shpQuestion("Which way?", "this", "that")}}),
+	f := newShpFx(t, shpSubmit("c1", shpFiles()), shpSubmit("q1", map[string]any{"questions": []any{shpQuestion("Which way?", "this", "that")}}), shpUI(1),
 		shpSubmit("c2", shpFilesWithDecisions("- Non-integers raise TypeError. (source: answer 1)")), shpAck("c3"))
 	f.setReport("UNDEFINED", 1)
 	exit, err := f.shape("Add calc.is_even(n).")
@@ -728,7 +728,7 @@ func TestShapeAfterANotReadyAttemptTheShaperMayAskQuestions(t *testing.T) {
 		t.Fatalf("answering with files present: exit %d, err %v\n%s", exit, err, f.Stderr)
 	}
 	shpContains(t, "intent", f.read(".kogen/intents/is-even/intent.md"), "(source: answer 1)")
-	shpContains(t, "manifest names the files of the earlier attempt as originals", shpBody(f.Prov.requests()[2]), "features/steps/is_even_steps.js")
+	shpContains(t, "manifest names the files of the earlier attempt as originals", shpBody(shpShaperRequests(f.Prov.requests())[2]), "features/steps/is_even_steps.js")
 }
 
 func TestShapeRejectsAnAbandonedDeclaredStep(t *testing.T) {
@@ -794,7 +794,7 @@ func TestShapeProbeFailuresAreFindingsNotErrors(t *testing.T) {
 		shpCall("p2", "probe", map[string]any{"command": "true", "files": []any{map[string]any{"path": "../escape.txt", "content": "x"}}}),
 		shpCall("p3", "probe", map[string]any{"command": "true", "files": []any{map[string]any{"path": "x"}}}),
 		shpCall("p4", "probe", map[string]any{}),
-	), shpSubmit("q", map[string]any{"questions": []any{shpQuestion("Q?")}}))
+	), shpSubmit("q", map[string]any{"questions": []any{shpQuestion("Q?")}}), shpUI(1))
 	if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 5 {
 		t.Fatalf("exit %d, err %v", exit, err)
 	}
@@ -821,7 +821,7 @@ func TestShapeReadOnlyToolsAnswerAsTheModelExpects(t *testing.T) {
 		shpCall("r4", "write_file", map[string]any{"path": "x.txt", "content": "x"}),
 		shpCall("r5", "shell", map[string]any{"command": "true"}),
 		shpCall("r6", "shape_batch", map[string]any{}),
-	), shpSubmit("q", map[string]any{"questions": []any{shpQuestion("Q?")}}))
+	), shpSubmit("q", map[string]any{"questions": []any{shpQuestion("Q?")}}), shpUI(1))
 	if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 5 {
 		t.Fatalf("exit %d, err %v", exit, err)
 	}
@@ -850,7 +850,7 @@ func TestShapeViewImageDeliversPixelsAndRecordsReadAndDelivery(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := newShpFx(t, shpAnswer(shpCall("i1", "view_image", map[string]any{"path": "shot.png"})),
-		shpSubmit("q", map[string]any{"questions": []any{shpQuestion("Q?")}}))
+		shpSubmit("q", map[string]any{"questions": []any{shpQuestion("Q?")}}), shpUI(1))
 	f.write("shot.png", png.String())
 	if exit, err := f.shape("Look at shot.png."); err != nil || exit != 5 {
 		t.Fatalf("exit %d, err %v\n%s", exit, err, f.Stderr)
@@ -1082,7 +1082,7 @@ func TestShapeProbeMinimalEnvironmentWiring(t *testing.T) {
 		"command": `cat extra.txt; "$KOGEN_NODE"; echo "lc=$LC_ALL"; command -v sh >/dev/null && echo path-ok; echo "home=$HOME"; echo home-count-begin; ls -A "$HOME" | wc -l; echo home-count-end; env`,
 		"files":   []any{map[string]any{"path": "extra.txt", "content": "overlay\n"}},
 	})
-	f := newShpFx(t, shpAnswer(probe), shpSubmit("q", map[string]any{"questions": []any{shpQuestion("Q?")}}))
+	f := newShpFx(t, shpAnswer(probe), shpSubmit("q", map[string]any{"questions": []any{shpQuestion("Q?")}}), shpUI(1))
 	node := filepath.Join(f.Aux, "node")
 	if err := os.WriteFile(node, []byte("#!/bin/sh\necho node-ran\n"), 0o755); err != nil {
 		t.Fatal(err)
@@ -1147,7 +1147,7 @@ func TestShapeQuestionsFileListsKindsOptionsAndRecommendations(t *testing.T) {
 		map[string]any{"question": "Sign in to the provider in your browser", "kind": "handoff"},
 		shpQuestion("Which wording?", "keep", "shorter"),
 		map[string]any{"question": "Pick one", "options": []any{map[string]any{"label": "x"}, map[string]any{"label": "y", "recommended": true}, map[string]any{"label": "z", "recommended": true}}},
-	}}))
+	}}), shpUI(3))
 	if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 5 {
 		t.Fatalf("exit %d, err %v", exit, err)
 	}
@@ -1163,7 +1163,7 @@ func TestShapeQuestionsFileListsKindsOptionsAndRecommendations(t *testing.T) {
 func TestShapeQuestionsFileFollowsThePendingRoundAndGoesWhenReady(t *testing.T) {
 	parallel(t)
 	f := newShpFx(t,
-		shpSubmit("q1", map[string]any{"questions": []any{shpQuestion("First?", "yes", "no"), shpQuestion("Second?", "left", "right")}}),
+		shpSubmit("q1", map[string]any{"questions": []any{shpQuestion("First?", "yes", "no"), shpQuestion("Second?", "left", "right")}}), shpUI(2),
 		shpSubmit("c1", shpFilesWithDecisions("- First. (source: answer 1)", "- Second. (source: answer 2)")),
 		shpAck("c2"))
 	if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 5 {
@@ -1183,7 +1183,7 @@ func TestShapeQuestionsFileFollowsThePendingRoundAndGoesWhenReady(t *testing.T) 
 	left := f.questionsDoc()["questions"].([]any)
 	shpEq(t, "pending after 2: a", len(left), 1)
 	shpEq(t, "remaining number", left[0].(map[string]any)["number"], any(float64(1)))
-	shpEq(t, "requests", len(f.Prov.requests()), 1)
+	shpEq(t, "requests", len(shpShaperRequests(f.Prov.requests())), 1)
 
 	if exit, err := f.shape("all: recommended"); err != nil || exit != 0 {
 		t.Fatalf("exit %d, err %v\n%s", exit, err, f.Stdout)

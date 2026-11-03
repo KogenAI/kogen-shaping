@@ -329,12 +329,12 @@ func TestProposeFilesNativeOnly(t *testing.T) {
 
 	t.Run("workers follow submit in the native list", func(t *testing.T) {
 		parallel(t)
-		f := newShpFx(t, shpAnswer(shpCall("q", "submit", map[string]any{"questions": []any{shpQuestion("Which?")}})))
+		f := newShpFx(t, shpAnswer(shpCall("q", "submit", map[string]any{"questions": []any{shpQuestion("Which?")}})), shpUI(1))
 		f.withWorkers()
 		if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 5 {
 			t.Fatalf("exit %d, err %v\n%s", exit, err, f.Stderr)
 		}
-		reqs := f.Prov.requests()
+		reqs := shpShaperRequests(f.Prov.requests())
 		shpEq(t, "requests", len(reqs), 1)
 		shpEq(t, "tools", strings.Join(shpToolNames(reqs[0]), ", "), "read_file, view_image, list_files, search_text, probe, documentation, data_stores, propose_files, submit, shape_batch")
 	})

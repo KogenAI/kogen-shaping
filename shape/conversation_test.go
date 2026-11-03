@@ -85,13 +85,13 @@ func TestEveryShapeWorkerHasItsOwnCacheIdentity(t *testing.T) {
 	}
 	f.Prov.seq = []shpStep{
 		shpAnswer(shpCall("b1", "shape_batch", map[string]any{"brief": f.brief(), "jobs": jobs})),
-		shpSubmit("q", map[string]any{"questions": []any{shpQuestion("Q?")}}),
+		shpSubmit("q", map[string]any{"questions": []any{shpQuestion("Q?")}}), shpUI(1),
 	}
 	if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 5 {
 		t.Fatalf("exit %d, err %v\n%s", exit, err, f.Stderr)
 	}
 	perConversation := map[string][]string{}
-	for _, r := range f.Prov.requests() {
+	for _, r := range shpShaperRequests(f.Prov.requests()) {
 		id := workerJobID(r)
 		k, _ := r["prompt_cache_key"].(string)
 		perConversation[id] = append(perConversation[id], k)

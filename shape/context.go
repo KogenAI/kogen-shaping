@@ -381,6 +381,25 @@ type promptInput struct {
 	selected   string // the context index text
 }
 
+// roundsText is the shaper's earlier questions and the caller's answers, one `Round <k>:` block
+// per round; "" when there is none.
+func roundsText(all []map[string]any) string {
+	var rounds []string
+	for n, r := range all {
+		var qa []string
+		answers := answersOf(r)
+		for i, q := range questionsOf(r) {
+			var opts strings.Builder
+			for k, o := range optionsOf(q) {
+				fmt.Fprintf(&opts, "\n   %c) %s", 'a'+k, textOf(o["label"]))
+			}
+			qa = append(qa, fmt.Sprintf("%d. %s%s\n   answer: %d: %s", i+1, textOf(q["question"]), opts.String(), i+1, textOf(answers[fmt.Sprint(i+1)])))
+		}
+		rounds = append(rounds, fmt.Sprintf("Round %d:\n%s", n+1, strings.Join(qa, "\n")))
+	}
+	return strings.Join(rounds, "\n")
+}
+
 // contextBlocks is the shaper's first message content: the stable contract text and the
 // dynamic navigation index, as two input_text blocks.
 func contextBlocks(p promptInput) ([]any, error) {
@@ -406,20 +425,7 @@ func contextBlocks(p promptInput) ([]any, error) {
 		}
 	}
 
-	var rounds []string
-	for n, r := range p.state.Rounds {
-		var qa []string
-		answers := answersOf(r)
-		for i, q := range questionsOf(r) {
-			var opts strings.Builder
-			for k, o := range optionsOf(q) {
-				fmt.Fprintf(&opts, "\n   %c) %s", 'a'+k, textOf(o["label"]))
-			}
-			qa = append(qa, fmt.Sprintf("%d. %s%s\n   answer: %d: %s", i+1, textOf(q["question"]), opts.String(), i+1, textOf(answers[fmt.Sprint(i+1)])))
-		}
-		rounds = append(rounds, fmt.Sprintf("Round %d:\n%s", n+1, strings.Join(qa, "\n")))
-	}
-	roundText := strings.Join(rounds, "\n")
+	roundText := roundsText(p.state.Rounds)
 
 	var checks []string
 	for _, c := range p.cfg.Checks {

@@ -71,7 +71,7 @@ func TestShapeRefusesToPublishBeforeAnythingWasInspected(t *testing.T) {
 
 func TestShapeQuestionsDoNotNeedInspection(t *testing.T) {
 	parallel(t)
-	f := newShpFx(t, shpSubmit("c1", map[string]any{"questions": []any{map[string]any{"question": "Which layout?"}}}))
+	f := newShpFx(t, shpSubmit("c1", map[string]any{"questions": []any{map[string]any{"question": "Which layout?"}}}), shpUI(1))
 	exit, err := f.shape("Add calc.is_even(n).")
 	if err != nil || exit != 5 {
 		t.Fatalf("exit %d, err %v", exit, err)
@@ -87,12 +87,12 @@ func TestShapeKeepsAHandoffQuestionAndRejectsEngineeringQuestions(t *testing.T) 
 			map[string]any{"question": "Sign in to the provider in your browser", "kind": "handoff"},
 			map[string]any{"question": "Which layout?", "kind": "product", "options": []any{map[string]any{"label": "Wide", "recommended": true}}},
 			map[string]any{"question": "Dark mode?"},
-		}}))
+		}}), shpUI(3))
 	exit, err := f.shape("Add calc.is_even(n).")
 	if err != nil || exit != 5 {
 		t.Fatalf("exit %d, err %v\nstderr %s", exit, err, f.Stderr)
 	}
-	reqs := f.Prov.requests()
+	reqs := shpShaperRequests(f.Prov.requests())
 	shpEq(t, "requests", len(reqs), 3)
 	rejection := "questions: decide technical questions inside shaping; only kind product or handoff may reach the caller"
 	shpContains(t, "engineering question", shpOutputs(reqs[1])["c1"], rejection)

@@ -14,7 +14,8 @@ func TestDecisionOutcomeRules(t *testing.T) {
 	const request = "Add f. f(0) returns True."
 	const decision = "- f(0) returns False. (source: request)"
 	const assumed = "- Zero is even. (assumption: silent) (source: request)"
-	intent := "## Decisions\n" + decision + "\n" + assumed + "\n"
+	const evidenced = "- Zero is even. (evidence: calc.js) (source: request)"
+	intent := "## Decisions\n" + decision + "\n" + assumed + "\n" + evidenced + "\n"
 	item := func(statement string, quotes []string, verdict string) decisionItem {
 		return decisionItem{statement: statement, quotes: quotes, verdict: verdict, why: "w"}
 	}
@@ -34,6 +35,7 @@ func TestDecisionOutcomeRules(t *testing.T) {
 		{"quote not in request", item(decision, []string{"f(0) returns True.", "nope"}, "follows"),
 			"unsupported", []string{`statement: ` + decision + ` | request_quotes: "f(0) returns True.", "nope" | why: w`}},
 		{"assumption not fed back", item(assumed, nil, "unsupported"), "unsupported", nil},
+		{"evidence not fed back", item(evidenced, nil, "unsupported"), "unsupported", nil},
 		{"assumption contradicting not fed back", item(assumed, []string{"nope"}, "contradicts"), "unsupported", nil},
 	}
 	for _, c := range cases {
@@ -51,7 +53,7 @@ func TestDecisionOutcomeRules(t *testing.T) {
 			}
 			continue
 		}
-		head := "Decision check: 1 stated decisions are not supported by the request; follow the request, or ask, or mark the decision as an assumption the user must confirm:"
+		head := "Decision check: 1 stated decisions are not supported by the request; follow the request, cite the repository evidence that decides it with (evidence: ...), or mark the decision as an assumption the user must confirm:"
 		if !slices.Equal(lines, append([]string{head, "Mark an assumption with (assumption: <what the user must confirm>) before the required trailing tag, e.g. - <decision> (assumption: <what the user must confirm>) (source: request); every Decision line keeps its trailing (source: request) or (source: answer N)."}, c.feedback...)) {
 			t.Errorf("%s: lines %q", c.name, lines)
 		}

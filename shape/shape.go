@@ -545,6 +545,14 @@ type shaping struct {
 	decisionUsage  provider.Usage // the native decision checks' tokens
 	decisionRounds int            // the external decision check sessions' rounds
 
+	earlier             string          // the earlier questions and answers, as the shaper reads them
+	questionChecks      int             // question check calls made
+	questionUsage       provider.Usage  // the native question checks' tokens
+	questionRounds      int             // the external question check sessions' rounds
+	environmentRefusals int             // environment-only question refusals in this run
+	probed              map[string]bool // the commands of the probe calls of this run
+	ranCommand          bool            // the external session completed a Bash call
+
 	contractUsage    provider.Usage      // the native contract review and confirmation calls' tokens
 	contractRounds   int                 // the external contract review and confirmation sessions' rounds
 	contractSessions map[string]int      // external sessions started per kind (review, confirmation)
@@ -621,6 +629,7 @@ func (sh *shaping) shape(ctx context.Context, st *state) (int, error) {
 		return 0, err
 	}
 	sh.request = st.Request
+	sh.earlier = roundsText(st.Rounds)
 	if sh.cfg.ShapeAudit.Enabled {
 		if err := sh.audit(ctx, st.Request); err != nil {
 			return 0, err
@@ -641,7 +650,7 @@ func (sh *shaping) shape(ctx context.Context, st *state) (int, error) {
 		var x *extSession
 		res, x, err = sh.converseExternal(ctx, blocks)
 		if x != nil {
-			usageLine = fmt.Sprintf("shape %s/%s %s %d round(s) wall_ms=%d", role.Model, role.Effort, executor.ClaudeCode, x.rounds+sh.auditRounds+sh.decisionRounds+sh.contractRounds, time.Since(t0).Milliseconds())
+			usageLine = fmt.Sprintf("shape %s/%s %s %d round(s) wall_ms=%d", role.Model, role.Effort, executor.ClaudeCode, x.rounds+sh.auditRounds+sh.decisionRounds+sh.contractRounds+sh.questionRounds, time.Since(t0).Milliseconds())
 		}
 		if err != nil {
 			return 0, err
@@ -655,7 +664,7 @@ func (sh *shaping) shape(ctx context.Context, st *state) (int, error) {
 			}
 			return 0, err
 		}
-		usageLine = fmt.Sprintf("shape %s/%s %s wall_ms=%d", role.Model, role.Effort, sh.auditUsage.Add(sh.decisionUsage).Add(sh.contractUsage).Add(usage).Line(), time.Since(t0).Milliseconds())
+		usageLine = fmt.Sprintf("shape %s/%s %s wall_ms=%d", role.Model, role.Effort, sh.auditUsage.Add(sh.decisionUsage).Add(sh.contractUsage).Add(sh.questionUsage).Add(usage).Line(), time.Since(t0).Milliseconds())
 	}
 
 	switch res.kind {
@@ -919,6 +928,9 @@ func (sh *shaping) converseExternal(ctx context.Context, blocks []any) (outcome,
 		func(e map[string]any) {
 			if inspectedBy(e) {
 				sh.inspected = true
+				if e["name"] == "Bash" {
+					sh.ranCommand = true
+				}
 			}
 		})
 	if err != nil {
@@ -1128,6 +1140,10 @@ func documentationAgent(c *provider.Client) string {
 // probe is the probe tool: the command in a scratch copy of the working tree, five minutes at
 // most; its result is the text the model reads.
 func (sh *shaping) probe(ctx context.Context, command string, files any) (string, error) {
+	if sh.probed == nil {
+		sh.probed = map[string]bool{}
+	}
+	sh.probed[command] = true
 	p := verify.Probe{Root: sh.root, Command: command, Tools: sh.in.tools()}
 	var problems []string
 	switch list := files.(type) {
@@ -1220,6 +1236,13 @@ func (sh *shaping) submitOne(ctx context.Context, args map[string]any) (string, 
 	}
 	switch {
 	case sub.questions != nil:
+		text, refused, err := sh.questionGate(ctx, sub.questions)
+		if err != nil {
+			return "", outcome{}, err
+		}
+		if refused != nil {
+			return text, outcome{kind: outInvalid, problems: refused}, nil
+		}
 		return "accepted", outcome{kind: outQuestions, questions: sub.questions}, nil
 	case sub.blocked:
 		return "blocked: required protected edits reported", outcome{kind: outBlocked, paths: sub.paths, reason: sub.reason}, nil
@@ -1355,11 +1378,17 @@ func (sh *shaping) checkSubmission(ctx context.Context, files []string) (string,
 	} else if refused {
 		return text, out, nil
 	}
+	written, err := os.ReadFile(filepath.Join(sh.root, project.IntentMDPath(sh.slug)))
+	if err != nil {
+		return "", outcome{}, err
+	}
+	if text, out, refused, err := sh.evidenceGate(string(written)); err != nil {
+		return "", outcome{}, err
+	} else if refused {
+		return text, out, nil
+	}
 	if sh.cfg.ShapeDecisionCheck.Enabled {
-		text, err := os.ReadFile(filepath.Join(sh.root, project.IntentMDPath(sh.slug)))
-		if err != nil {
-			return "", outcome{}, err
-		}
+		text := written
 		lines, items, err := sh.decisionCheck(ctx, string(text))
 		if err != nil {
 			return "", outcome{}, err

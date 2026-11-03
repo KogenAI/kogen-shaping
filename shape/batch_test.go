@@ -136,13 +136,13 @@ func TestShapeBatchRunsWorkersAndReturnsTheirResults(t *testing.T) {
 	}
 	f.Prov.seq = []shpStep{
 		shpAnswer(shpCall("b1", "shape_batch", map[string]any{"brief": brief, "jobs": jobs})),
-		shpSubmit("q", map[string]any{"questions": []any{shpQuestion("Q?")}}),
+		shpSubmit("q", map[string]any{"questions": []any{shpQuestion("Q?")}}), shpUI(1),
 	}
 	exit, err := f.shape("Add calc.is_even(n).")
 	if err != nil || exit != 5 {
 		t.Fatalf("exit %d, err %v\n%s", exit, err, f.Stderr)
 	}
-	reqs := f.Prov.requests()
+	reqs := shpShaperRequests(f.Prov.requests())
 	var main, workers []map[string]any
 	for _, r := range reqs {
 		if workerJobID(r) == "" {
@@ -241,7 +241,7 @@ func TestShapeBatchBoundsTwelveToolsAndTwoProbes(t *testing.T) {
 			f.Prov.seq = []shpStep{
 				shpAnswer(shpCall("b1", "shape_batch", map[string]any{"brief": f.brief(), "jobs": []any{shpJob("inspect", "probe", []any{"app.txt"})}})),
 				shpAnswer(calls...),
-				shpSubmit("q", map[string]any{"questions": []any{shpQuestion("Inspect the fixture?")}}),
+				shpSubmit("q", map[string]any{"questions": []any{shpQuestion("Inspect the fixture?")}}), shpUI(1),
 			}
 			exit, err := f.shape("Inspect only the fixture.")
 			if err != nil || exit != 5 {
@@ -278,12 +278,12 @@ func TestShapeBatchRefusalsAndOneBatchPerConversation(t *testing.T) {
 			shpCall("b2", "shape_batch", map[string]any{"brief": f.brief(), "jobs": []any{shpJob("inspect", "read", []any{})}}),
 			shpCall("b3", "shape_batch", map[string]any{"brief": f.brief(), "jobs": []any{shpJob("inspect", "read", []any{})}})),
 		shpWorkerResult("w1", "nothing to find"),
-		shpSubmit("q", map[string]any{"questions": []any{shpQuestion("Q?")}}),
+		shpSubmit("q", map[string]any{"questions": []any{shpQuestion("Q?")}}), shpUI(1),
 	}
 	if exit, err := f.shape("Inspect."); err != nil || exit != 5 {
 		t.Fatalf("exit %d, err %v\n%s", exit, err, f.Stderr)
 	}
-	reqs := f.Prov.requests()
+	reqs := shpShaperRequests(f.Prov.requests())
 	refused := batchResult(t, reqs[1], "b1")
 	shpEq(t, "status", refused["status"], any("refused"))
 	shpEq(t, "reason", refused["reason"], any("incomplete boundaries, stale revision, unsafe path or conflicting ownership"))
@@ -338,12 +338,12 @@ func TestShapeBatchWorkerFailuresAreResultsNotErrors(t *testing.T) {
 			f.Prov.seq = []shpStep{
 				shpAnswer(shpCall("b1", "shape_batch", map[string]any{"brief": f.brief(), "jobs": []any{shpJob("inspect", "read", []any{})}})),
 				tc.step(f),
-				shpSubmit("q", map[string]any{"questions": []any{shpQuestion("Q?")}}),
+				shpSubmit("q", map[string]any{"questions": []any{shpQuestion("Q?")}}), shpUI(1),
 			}
 			if exit, err := f.shape("Inspect."); err != nil || exit != 5 {
 				t.Fatalf("exit %d, err %v\n%s", exit, err, f.Stderr)
 			}
-			reqs := f.Prov.requests()
+			reqs := shpShaperRequests(f.Prov.requests())
 			result := batchResult(t, reqs[len(reqs)-1], "b1")
 			shpEq(t, "status", result["status"], any("failed"))
 			job := result["jobs"].([]any)[0].(map[string]any)
@@ -375,12 +375,12 @@ func TestShapeBatchPartialWhenOneJobFails(t *testing.T) {
 	}
 	f.Prov.seq = []shpStep{
 		shpAnswer(shpCall("b1", "shape_batch", map[string]any{"brief": f.brief(), "jobs": []any{shpJob("good", "read", []any{}), shpJob("bad", "read", []any{})}})),
-		shpSubmit("q", map[string]any{"questions": []any{shpQuestion("Q?")}}),
+		shpSubmit("q", map[string]any{"questions": []any{shpQuestion("Q?")}}), shpUI(1),
 	}
 	if exit, err := f.shape("Inspect."); err != nil || exit != 5 {
 		t.Fatalf("exit %d, err %v", exit, err)
 	}
-	reqs := f.Prov.requests()
+	reqs := shpShaperRequests(f.Prov.requests())
 	result := batchResult(t, reqs[len(reqs)-1], "b1")
 	shpEq(t, "status", result["status"], any("partial"))
 	batch := shpNamed(f.events(), "batch_result")
@@ -601,7 +601,7 @@ func TestWorkersReceiveBoundedLongLineReadsAndReplayTheDeliveredDisplayExactly(t
 	}
 	f.Prov.seq = []shpStep{
 		shpAnswer(shpCall("b1", "shape_batch", map[string]any{"brief": brief, "jobs": []any{job}})),
-		shpSubmit("q", map[string]any{"questions": []any{shpQuestion("Continue bounded worker inspection?")}}),
+		shpSubmit("q", map[string]any{"questions": []any{shpQuestion("Continue bounded worker inspection?")}}), shpUI(1),
 	}
 	exit, err := f.shape("Inspect the selected long line with one read worker.")
 	if err != nil || exit != 5 {
@@ -624,7 +624,7 @@ func TestWorkersReceiveBoundedLongLineReadsAndReplayTheDeliveredDisplayExactly(t
 	}
 	shpEq(t, "replayed display", shpOutputs(replayed)["large"], delivered)
 	shpEq(t, "file", f.read("large.json"), original)
-	result := batchResult(t, f.Prov.requests()[len(f.Prov.requests())-1], "b1")
+	result := batchResult(t, shpShaperRequests(f.Prov.requests())[len(shpShaperRequests(f.Prov.requests()))-1], "b1")
 	jobs, _ := result["jobs"].([]any)
 	if result["status"] != "completed" || len(jobs) != 1 || jobs[0].(map[string]any)["status"] != "completed" {
 		t.Fatalf("batch result %v", result)

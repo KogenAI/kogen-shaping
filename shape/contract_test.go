@@ -73,7 +73,7 @@ func TestShapeInvalidQuestionOptionsGetCorrectionFeedbackAndAreNeverPersisted(t 
 			steps = append(steps, shpSubmit("bad"+string(rune('a'+n)), map[string]any{"questions": []any{map[string]any{"question": "Which display?", "options": options}}}))
 		}
 	}
-	steps = append(steps, shpSubmit("good", map[string]any{"questions": valid}))
+	steps = append(steps, shpSubmit("good", map[string]any{"questions": valid}), shpUI(len(valid)))
 	f := newShpFx(t, steps...)
 	const slug = "options"
 	state := filepath.Join(f.Root, ".kogen/local/shaping/options/state.json")
@@ -109,7 +109,7 @@ func TestShapeInvalidQuestionOptionsGetCorrectionFeedbackAndAreNeverPersisted(t 
 	}
 	// Seven malformed lists, three attempts each, then the valid one.
 	requests := len(f.Prov.requests())
-	shpEq(t, "requests", requests, 22)
+	shpEq(t, "requests", requests, 23)
 	if !anyContains(f.allToolOutputs(), "options") {
 		t.Fatal("the correction feedback does not mention options")
 	}
@@ -131,7 +131,7 @@ func TestShapeBlockedSubmissionsNeedAnActualProtectedPathAndAReason(t *testing.T
 	var steps []shpStep
 	for i, submission := range invalid {
 		id := string(rune('a' + i))
-		steps = append(steps, shpSubmit("blocked-"+id, submission), shpSubmit("ask-"+id, map[string]any{"questions": []any{map[string]any{"question": "Continue?"}}}))
+		steps = append(steps, shpSubmit("blocked-"+id, submission), shpSubmit("ask-"+id, map[string]any{"questions": []any{map[string]any{"question": "Continue?"}}}), shpUI(1))
 	}
 	f := newShpFx(t, steps...)
 	for i, tc := range []struct{ slug, expected string }{
@@ -145,7 +145,7 @@ func TestShapeBlockedSubmissionsNeedAnActualProtectedPathAndAReason(t *testing.T
 		}
 		shpContains(t, tc.slug+" stdout", f.Stdout.String(), "Continue?")
 		id := string(rune('a' + i))
-		reqs := f.Prov.requests()
+		reqs := shpShaperRequests(f.Prov.requests())
 		shpContains(t, tc.slug+" feedback", shpOutputs(reqs[len(reqs)-1])["blocked-"+id], tc.expected)
 		if f.exists(".kogen/intents/"+tc.slug+"/intent.md") || f.exists(".kogen/local/approvals/"+tc.slug+".json") {
 			t.Fatalf("%s: a rejected blocked report leaves no Intent and no approval", tc.slug)
