@@ -129,6 +129,10 @@ type refine struct {
 	// ext is the executor of an external shape role (nil: the native shaper).
 	ext    executor.Executor
 	extMax int
+
+	// checks is Shape's acceptance checks bound to the scratch checkout; nil until the first
+	// candidate check.
+	checks *shaping
 }
 
 func refineLocked(ctx context.Context, s *sys.Session, in RefineInput, repo *git.Repo) (int, error) {
@@ -1177,6 +1181,50 @@ func (r *refine) submit(ctx context.Context, args map[string]any) (string, refin
 		refineOutcome{kind: refineInvalid, diagnostic: diagnostic}, nil
 }
 
+// acceptanceChecks is Shape's acceptance checks (the readiness gates, the unpassable-step
+// control run and the contract check) bound to the scratch checkout, so that Refine judges a
+// candidate with the same checks, texts and events as Shape. Its contract memory (the package
+// hashes checked clean or refused) spans the run.
+func (r *refine) acceptanceChecks() *shaping {
+	if r.checks == nil {
+		r.checks = &shaping{
+			s: r.s, repo: r.scratchR, root: r.scratch, slug: r.slug, cfg: r.cfg, role: r.cfg.Models["shape"],
+			ev: r.ev, rd: r.scratchD, client: r.client, ext: r.ext, extMax: r.extMax,
+			started: time.Now(), proposed: r.proposed,
+			contractSessions: map[string]int{}, contractChecked: map[string]bool{}, contractRefused: map[string]contractConfirmed{},
+			providerErr: func(e *sys.Error) error { return e },
+		}
+	}
+	return r.checks
+}
+
+// refusal is the text Shape returns to its shaper when the err of a candidate's readiness check
+// is one of its acceptance gates' refusals; false for any other error.
+func refusal(err error) (string, bool) {
+	var unwritten *unwrittenTestsError
+	var observer *runnerObserverError
+	var unpassable *unpassableError
+	switch {
+	case errors.As(err, &unwritten):
+		return unwritten.text(), true
+	case errors.As(err, &observer):
+		return observer.text(), true
+	case errors.As(err, &unpassable):
+		return unpassable.text(), true
+	}
+	return "", false
+}
+
+// refused is the outcome of a candidate an acceptance check refused: its text goes back to the
+// refiner as it is and counts as an invalid submission. The refused candidate's readiness is
+// never kept to acknowledge.
+func (r *refine) refused(attempt int, text string) (string, refineOutcome, error) {
+	if err := r.save("", map[string][]byte{fmt.Sprintf("diagnostic-%d.txt", attempt): []byte(text)}, 0o666); err != nil {
+		return "", refineOutcome{}, err
+	}
+	return text, refineOutcome{kind: refineInvalid, diagnostic: text}, nil
+}
+
 // check formats and checks the accumulated candidate in the scratch checkout. A *sys.Error is
 // a diagnostic for the model (refinement_constraint: unsupported work); anything else ends
 // the run.
@@ -1226,14 +1274,33 @@ func (r *refine) check(ctx context.Context, attempt int, paths []string) (string
 		}
 	}
 
+	checks := r.acceptanceChecks()
+	hash, err := checks.packageHash()
+	if err != nil {
+		return "", refineOutcome{}, err
+	}
+	if confirmed, ok := checks.contractRefused[hash]; ok {
+		return r.refused(attempt, contractFeedback(confirmed))
+	}
 	acknowledged := r.observed != nil && r.scratchD.Current(r.s, r.slug, r.observed)
 	ready := r.observed
 	if !acknowledged {
-		if err := r.ev.Timed("readiness", func() error {
+		r.scratchD.Gate = func(ready *verify.Ready) error {
+			if err := readinessGate(ready); err != nil {
+				return err
+			}
+			return checks.unpassableGate(ctx, ready)
+		}
+		err := r.ev.Timed("readiness", func() error {
 			var err error
 			ready, err = r.scratchD.Check(ctx, r.s, r.slug)
 			return err
-		}); err != nil {
+		})
+		r.scratchD.Gate = nil
+		if text, ok := refusal(err); ok {
+			return r.refused(attempt, text)
+		}
+		if err != nil {
 			return "", refineOutcome{}, err
 		}
 	}
@@ -1257,11 +1324,28 @@ func (r *refine) check(ctx context.Context, attempt int, paths []string) (string
 		return "", refineOutcome{}, err
 	}
 
+	observations := ""
 	if !acknowledged && ready.Failures() {
 		reference := filepath.Join(r.evidence, fmt.Sprintf("observations-%d.txt", attempt))
-		if err := os.WriteFile(reference, []byte(verify.Observations(r.slug, ready, reference)), 0o666); err != nil {
+		observations = verify.Observations(r.slug, ready, reference)
+		if err := os.WriteFile(reference, []byte(observations), 0o666); err != nil {
 			return "", refineOutcome{}, err
 		}
+	}
+	if !acknowledged && !checks.contractChecked[hash] {
+		checks.ready = ready
+		confirmed, err := checks.contractCheck(ctx, hash, observations)
+		if err != nil {
+			return "", refineOutcome{}, err
+		}
+		if !confirmed.empty() {
+			checks.contractRefused[hash] = confirmed
+			return r.refused(attempt, contractFeedback(confirmed))
+		}
+		checks.contractChecked[hash] = true
+	}
+	if !acknowledged && ready.Failures() {
+		reference := filepath.Join(r.evidence, fmt.Sprintf("observations-%d.txt", attempt))
 		r.observed = ready
 		return verify.Acknowledgment(r.slug, ready, reference), refineOutcome{kind: refineObservations}, nil
 	}

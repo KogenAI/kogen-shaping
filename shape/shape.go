@@ -574,6 +574,10 @@ type shaping struct {
 	lastObservationsPath string
 	lastFresh            bool   // the last certify ran readiness
 	lastObservations     string // the readiness observations of that check; "" when green
+
+	// providerErr, when set, ends a check that a provider error stopped (Refine's checks, which
+	// run through a shaping bound to its scratch checkout); nil: the shaping's own ending.
+	providerErr func(*sys.Error) error
 }
 
 // toolSpan runs one native main-conversation tool call and adds its time to the shaper's tools.
@@ -768,6 +772,9 @@ func questionList(qs []map[string]any) []any {
 // providerFailed reports the provider error, then ends shaping with the sentence that says
 // what to rerun.
 func (sh *shaping) providerFailed(e *sys.Error) error {
+	if sh.providerErr != nil {
+		return sh.providerErr(e)
+	}
 	e = agent.WithOriginHint(e)
 	sh.s.Out(e.Render())
 	if kept := sortedKeys(sh.proposed); len(kept) > 0 {

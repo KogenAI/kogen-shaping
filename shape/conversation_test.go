@@ -137,7 +137,7 @@ func TestARefinementKeepsOneCacheIdentityOfItsOwn(t *testing.T) {
 	}
 	events := 0
 	for _, e := range f.evidenceEvents() {
-		if e["event"] == "cache_identity" {
+		if e["event"] == "cache_identity" && e["owner"] != "contract-review" {
 			events++
 			if e["owner"] != "refine" || e["id"] != keys[0] {
 				t.Fatalf("saved identity %v, wire key %q", e, keys[0])

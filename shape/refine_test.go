@@ -59,6 +59,7 @@ func newRefFx(t *testing.T, o refOpts, steps ...shpStep) *refFx {
 	}
 	if o.wire != nil {
 		o.wire.configure(f.shpFx)
+		f.Prov.contractWire = func(call map[string]any) shpStep { return o.wire.calls(call) }
 	}
 	status, code := "PASSED", 0
 	if o.red {
@@ -463,7 +464,12 @@ func TestRefineWritesTheCorrectionAndPrintsTheLines(t *testing.T) {
 
 	// Evidence events of the run.
 	events := f.evidenceEvents()
-	calls := shpNamed(events, "provider_call")
+	var calls []map[string]any
+	for _, c := range shpNamed(events, "provider_call") {
+		if c["scope"] == "targeted refinement" {
+			calls = append(calls, c)
+		}
+	}
 	shpEq(t, "provider calls", len(calls), 1)
 	shpEq(t, "scope", calls[0]["scope"], any("targeted refinement"))
 	shpEq(t, "role", calls[0]["role"], any("shape"))
