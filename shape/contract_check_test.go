@@ -287,6 +287,7 @@ func ccRefused(f *shpFx) []map[string]any {
 func TestContractCheckRefusesAConfirmedContradictionAndPublishesItsCorrection(t *testing.T) {
 	parallel(t)
 	f := newShpFx(t, shpSubmit("c1", shpFiles()), ccCorrected("c2"), ccIntentOnly("c3"))
+	f.setFeatureReport("corrected-report", ccCorrectedFeature, "FAILED", 1)
 	f.Prov.contract = []shpStep{
 		ccReview("r1", ccContradiction()),
 		ccConfirm("v1", ccVerdict(1, "confirmed", "four is even")),
@@ -668,6 +669,7 @@ func TestContractCheckExternalShape(t *testing.T) {
 	t.Run("one read-only session per review and confirmation; the refusal is the next round's feedback", func(t *testing.T) {
 		parallel(t)
 		f := newShpFx(t)
+		f.setFeatureReport("corrected-report", ccCorrectedFeature, "FAILED", 1)
 		f.useExternalShape(6)
 		x := &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){result(shpFiles()), result(correction), result(ack)},
 			contract: []func(int, string) (executor.RoundResult, error){review, confirm, clean}}

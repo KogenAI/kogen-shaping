@@ -418,7 +418,11 @@ func newShpFxRun(t *testing.T, run string, steps ...shpStep) *shpFx {
 echo run >> '%[1]s/trace'
 case "$KOGEN_ACCEPTANCE_FEATURES" in */check.feature) : > "$KOGEN_ACCEPTANCE_REPORT"; exit 0;; esac
 if [ -f '%[1]s/exit' ]; then code=$(cat '%[1]s/exit'); else code=1; fi
-cp '%[1]s/report' "$KOGEN_ACCEPTANCE_REPORT"
+if [ -f '%[1]s/corrected-report' ] && grep -q 'Given the number 6' "$KOGEN_ACCEPTANCE_FEATURES"; then
+  cp '%[1]s/corrected-report' "$KOGEN_ACCEPTANCE_REPORT"
+else
+  cp '%[1]s/report' "$KOGEN_ACCEPTANCE_REPORT"
+fi
 echo "$KOGEN_ACCEPTANCE_FEATURES" > '%[1]s/feature-path'
 exit $code
 `, f.Aux)
@@ -445,11 +449,16 @@ func (f *shpFx) newSession() {
 // the exit code.
 func (f *shpFx) setReport(status string, code int) {
 	f.t.Helper()
-	scenarios, err := project.ParseGherkin(shpFeature)
+	f.setFeatureReport("report", shpFeature, status, code)
+}
+
+func (f *shpFx) setFeatureReport(name, feature, status string, code int) {
+	f.t.Helper()
+	scenarios, err := project.ParseGherkin(feature)
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(f.Aux, "report"), []byte(shpMessages(f.t, scenarios, status)), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(f.Aux, name), []byte(shpMessages(f.t, scenarios, status)), 0o644); err != nil {
 		f.t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(f.Aux, "exit"), []byte(fmt.Sprint(code)), 0o644); err != nil {
