@@ -742,7 +742,7 @@ func (sh *shaping) contractExternal(ctx context.Context, kind, task string, sche
 	}
 	sh.contractSessions[kind]++
 	x, err := startExternal(ctx, sh.ext, sh.extMax, sh.repo, sh.root, sh.s.Getenv("HOME"),
-		fmt.Sprintf("%s/%s-%d", sh.ev.Dir, folder, sh.contractSessions[kind]), sh.slug, sh.role, task, "", mustJSON(schema), sh.ev.Record, nil)
+		fmt.Sprintf("%s/%s-%d", sh.ev.Dir, folder, sh.contractSessions[kind]), sh.slug, sh.role, task, "", mustJSON(schema), sh.ev, nil)
 	if err != nil {
 		return nil, "", err
 	}

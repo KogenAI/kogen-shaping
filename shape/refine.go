@@ -825,7 +825,7 @@ type refineOutcome struct {
 func (r *refine) converseExternal(ctx context.Context, role project.Role, blocks []any) (map[string]string, *verify.Ready, error) {
 	stable := refineInstructions() + "\n\n" + externalNote + "\n\n" + blocksText(blocks)
 	x, err := startExternal(ctx, r.ext, r.extMax, r.repo, r.root, r.s.Getenv("HOME"),
-		filepath.Join(r.evidence, "executor-refine"), r.slug, role, stable, "", schemaOf(agent.SubmitRefinementTool), r.ev.Record, nil)
+		filepath.Join(r.evidence, "executor-refine"), r.slug, role, stable, "", schemaOf(agent.SubmitRefinementTool), r.ev, nil)
 	if err != nil {
 		return nil, nil, err
 	}

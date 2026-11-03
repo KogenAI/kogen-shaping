@@ -40,6 +40,13 @@ type Evidence struct {
 	eventOffset int64
 	counts      map[string]int
 	attempt     int
+
+	account     bool       // Shape's run: Finish ends the record with a shape_time event
+	shaperTotal int64      // the shaper's spans: external rounds, or native model and tool spans
+	shaperModel int64      // the part of them with a reported model time
+	modelKnown  bool       // false once a shaper span has no model time
+	checkSpans  [][2]int64 // Kogen's own checking spans that no phase interval already holds
+	spent       *TimeAccount
 }
 
 // NextAttempt starts the next shaper submission attempt: the requests that follow a refused
@@ -69,7 +76,7 @@ func NewEvidenceWithClock(dir, slug string, now func() time.Time) (*Evidence, er
 		return nil, err
 	}
 	f.Close()
-	e := &Evidence{Dir: dir, Slug: slug, Now: now, intervals: map[string][][2]int64{}, counts: map[string]int{}}
+	e := &Evidence{Dir: dir, Slug: slug, Now: now, intervals: map[string][][2]int64{}, counts: map[string]int{}, modelKnown: true}
 	e.origin = e.clock()
 	e.timestamp = e.origin.UTC().Format("2006-01-02T15:04:05.000000Z")
 	if st, err := os.Stat(path); err == nil {
@@ -161,6 +168,73 @@ func (e *Evidence) Interval(phase string, a, b int64) {
 	e.mu.Lock()
 	e.intervals[phase] = append(e.intervals[phase], [2]int64{a, b})
 	e.mu.Unlock()
+}
+
+// AccountTime makes Finish end the record with the shape time account.
+func (e *Evidence) AccountTime() {
+	e.mu.Lock()
+	e.account = true
+	e.mu.Unlock()
+}
+
+// ShaperRound adds one external main round's span a to b (Millis values). model is the
+// round's model time, nil when unknown.
+func (e *Evidence) ShaperRound(a, b int64, model *int64) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.shaperTotal += max(0, b-a)
+	if model == nil {
+		e.modelKnown = false
+		return
+	}
+	e.shaperModel += *model
+}
+
+// ShaperModel adds a native main-conversation request's span.
+func (e *Evidence) ShaperModel(a, b int64) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.shaperTotal += max(0, b-a)
+	e.shaperModel += max(0, b-a)
+}
+
+// ShaperTool adds a native main-conversation tool call's span.
+func (e *Evidence) ShaperTool(a, b int64) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.shaperTotal += max(0, b-a)
+}
+
+// CheckSpan adds a span of Kogen's own checking work (a submission's handling, the request audit,
+// a main round's custody comparisons).
+func (e *Evidence) CheckSpan(a, b int64) {
+	e.mu.Lock()
+	e.checkSpans = append(e.checkSpans, [2]int64{a, b})
+	e.mu.Unlock()
+}
+
+// Checking runs fn and adds its duration to the check spans, whatever fn returns.
+func (e *Evidence) Checking(fn func() error) error {
+	t := e.Millis()
+	defer func() { e.CheckSpan(t, e.Millis()) }()
+	return fn()
+}
+
+// TimeAccount is where a shape's time went, in milliseconds. A nil Model (and so Tools) is
+// unknown.
+type TimeAccount struct {
+	Elapsed, Shaper int64
+	Model, Tools    *int64
+	Checks          int64
+	Readiness       int64
+	Gap             int64
+}
+
+// Spent is the account Finish recorded; nil when it recorded none.
+func (e *Evidence) Spent() *TimeAccount {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.spent
 }
 
 // Timed runs fn and adds its duration to phase, whatever fn returns.
@@ -450,12 +524,58 @@ func (e *Evidence) Finish() error {
 	}
 	elapsed := e.Millis()
 	e.Record(map[string]any{"event": "phase_duration", "phase": "shape", "timestamp": e.timestamp, "wall_ms": elapsed})
+	e.mu.Lock()
+	account := e.account
+	checks := append(slices.Clone(e.checkSpans), intervals["setup"]...)
+	checks = append(checks, intervals["preparation"]...)
+	acct := &TimeAccount{Elapsed: elapsed, Shaper: e.shaperTotal, Readiness: Union(intervals["readiness"])}
+	if e.modelKnown {
+		model, tools := e.shaperModel, e.shaperTotal-e.shaperModel
+		acct.Model, acct.Tools = &model, &tools
+	}
+	e.mu.Unlock()
+	if account {
+		acct.Checks = Union(checks)
+		acct.Gap = max(0, elapsed-acct.Shaper-acct.Checks)
+		e.Record(map[string]any{
+			"event": "shape_time", "elapsed_ms": acct.Elapsed, "shaper_ms": acct.Shaper,
+			"shaper_model_ms": nullable(acct.Model), "shaper_tools_ms": nullable(acct.Tools),
+			"checks_ms": acct.Checks, "readiness_ms": acct.Readiness, "gap_ms": acct.Gap,
+		})
+		e.mu.Lock()
+		e.spent = acct
+		e.mu.Unlock()
+	}
 	e.Record(map[string]any{
 		"event": "session_end", "elapsed_ms": elapsed, "provider_calls": len(calls), "probe_count": probes,
 		"setup_executions": e.Counted("setup"), "acceptance_executions": e.Counted("acceptance"),
 		"model_executions": e.Counted("quint"),
 	})
 	return nil
+}
+
+func nullable(v *int64) any {
+	if v == nil {
+		return nil
+	}
+	return *v
+}
+
+// seconds is ms in seconds with one decimal, rounded half up; unknown for nil.
+func seconds(ms *int64) string {
+	if ms == nil {
+		return "unknown"
+	}
+	tenths := (*ms + 50) / 100
+	return fmt.Sprintf("%d.%d s", tenths/10, tenths%10)
+}
+
+// Line is the progress line that states the account.
+func (a TimeAccount) Line() string {
+	known := func(v int64) *int64 { return &v }
+	return fmt.Sprintf("kogen: shape time %s: shaper %s (model %s, tools %s), Kogen checks %s (readiness %s), gaps %s",
+		seconds(known(a.Elapsed)), seconds(known(a.Shaper)), seconds(a.Model), seconds(a.Tools),
+		seconds(known(a.Checks)), seconds(known(a.Readiness)), seconds(known(a.Gap)))
 }
 
 // events reads the events this run appended.

@@ -220,6 +220,7 @@ func TestClaudeLineupShapeSubmission(t *testing.T) {
 		for _, part := range []string{"Add calc.is_even(n). Non-integers raise TypeError.", "# Calc", "Use the narrowest test that exercises the rule", "Context navigation: ", "read-only external session"} {
 			shpContains(t, "task", task.Brief.Stable, part)
 		}
+		shpEq(t, "commands paragraph", strings.Count(task.Brief.Stable, shpCommandsParagraph), 1)
 		shpEq(t, "first feedback", x.inputs[0].Feedback, "")
 		shpContains(t, "feedback", x.inputs[1].Feedback, "Readiness observations\nChecked baseline: ")
 		shpContains(t, "feedback", x.inputs[1].Feedback, "Scenario: Even numbers (acceptance.feature line 2)")
@@ -547,6 +548,7 @@ func TestClaudeLineupRefinePreservation(t *testing.T) {
 		shpContains(t, "task", task.Brief.Stable, "Clarify only the existing draft; preserve its executable contract.")
 		shpContains(t, "task", task.Brief.Stable, "--- "+refIntentPath+"\n"+shpScopedIntentMD)
 		shpContains(t, "task", task.Brief.Stable, "# Exclusively owned editable files")
+		shpEq(t, "commands paragraph", strings.Count(task.Brief.Stable, shpCommandsParagraph), 1)
 		var schema map[string]any
 		if json.Unmarshal(task.Schema, &schema) != nil || schema["properties"].(map[string]any)["constraint"] == nil {
 			t.Fatalf("schema %s", task.Schema)
@@ -680,4 +682,106 @@ func (buildOnlyExec) Describe() executor.Descriptor {
 }
 func (buildOnlyExec) Start(context.Context, executor.Task, executor.Sink) (executor.Session, error) {
 	return nil, fmt.Errorf("must not start")
+}
+
+// shpCommandsParagraph is the last line of the session note every external session receives.
+const shpCommandsParagraph = "Commands: Kogen runs readiness on every submission (the configured setup, the acceptance command, the Quint model and the Feasibility checks) and returns its actual results to this session. Do not repeat that work yourself: do not run the configured setup or checks, the acceptance command or a whole test suite, and do not prototype the implementation. Run only short commands that answer a named concrete uncertainty, such as one focused test, a probe or a tool query, each finishing on its own within 5 minutes. Never start a command in the background and never wait or poll with sleep: when you would need a longer run, submit your complete candidate and use Kogen's results."
+
+// TestExecutorRoundTiming: every executor_round event names its session and carries Kogen's span
+// of the round and the model time of the last result line of the round's retained raw stream, null
+// when the stream is missing, has no usable result line or a non-integer duration_api_ms.
+func TestExecutorRoundTiming(t *testing.T) {
+	parallel(t)
+	for name, tc := range map[string]struct {
+		stream string // the round's raw stream; "" writes none
+		want   any
+	}{
+		"the last result line":                      {`{"type":"system"}` + "\n" + `{"type":"result","duration_api_ms":10}` + "\n" + `{"type":"result","duration_api_ms":1368516}` + "\n", float64(1368516)},
+		"an earlier line when the last is unusable": {`{"type":"result","duration_api_ms":7}` + "\n" + `{"type":"result","duration_api_ms":-1}` + "\n" + `{"type":"assistant","duration_api_ms":9}` + "\n" + "not json\n", float64(7)},
+		"a missing file":                            {"", nil},
+		"no result line":                            {`{"type":"system","duration_api_ms":5}` + "\n", nil},
+		"a fractional value":                        {`{"type":"result","duration_api_ms":1.5}` + "\n", nil},
+		"a string value":                            {`{"type":"result","duration_api_ms":"12"}` + "\n", nil},
+		"an absent value":                           {`{"type":"result"}` + "\n", nil},
+		"a null value":                              {`{"type":"result","duration_api_ms":null}` + "\n", nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			parallel(t)
+			f := newShpFx(t)
+			f.useExternalShape(6)
+			dir := filepath.Join(f.Root, ".kogen/local/shaping", shpSlug, "executor-shape")
+			round := func(answer any) func(int, string) (executor.RoundResult, error) {
+				return func(n int, root string) (executor.RoundResult, error) {
+					if tc.stream != "" {
+						if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("round-%d.jsonl", n)), []byte(tc.stream), 0o600); err != nil {
+							return executor.RoundResult{}, err
+						}
+					}
+					return result(answer)(n, root)
+				}
+			}
+			ack := map[string]any{"files": []any{map[string]any{"path": ".kogen/intents/is-even/acceptance.feature", "content": shpFeature}}}
+			x := &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){round(shpFiles()), round(ack)}}
+			if exit, err := f.shapeWith(x, "Add calc.is_even(n). Non-integers raise TypeError."); err != nil || exit != 0 {
+				t.Fatalf("exit %d, err %v\n%s", exit, err, f.Stderr)
+			}
+			events := f.events()
+			rounds := shpNamed(events, "executor_round")
+			var main, review int
+			for _, e := range rounds {
+				if _, ok := e["model_ms"]; !ok {
+					t.Fatalf("no model_ms key: %v", e)
+				}
+				for _, k := range []string{"started_ms", "wall_ms"} {
+					if n, ok := e[k].(float64); !ok || n < 0 {
+						t.Fatalf("%s of %v", k, e)
+					}
+				}
+				switch e["session"] {
+				case "executor-shape":
+					main++
+					shpEq(t, "round "+fmt.Sprint(e["round"]), e["model_ms"], tc.want)
+				case "executor-contract-review-1":
+					review++
+					shpEq(t, "review model_ms", e["model_ms"], nil)
+				default:
+					t.Fatalf("session %v", e["session"])
+				}
+			}
+			shpEq(t, "main rounds", main, 2)
+			shpEq(t, "review rounds", review, 1)
+			accounts := shpNamed(events, "shape_time")
+			if len(accounts) != 1 {
+				t.Fatalf("accounts %v", accounts)
+			}
+			shpEq(t, "unknown model time", accounts[0]["shaper_model_ms"] == nil, tc.want == nil)
+		})
+	}
+}
+
+// TestShapeTimeWithQuestions: a shape that ends with questions records its account and ends on
+// the time line.
+func TestShapeTimeWithQuestions(t *testing.T) {
+	parallel(t)
+	f := newShpFx(t)
+	f.useExternalShape(6)
+	x := &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){
+		result(map[string]any{"questions": []any{shpQuestion("What should is_even do with a non-integer?", "raise TypeError", "return False")}}),
+		result(map[string]any{"items": []any{map[string]any{"number": 1, "class": "ui_ux", "why": "a choice of behavior"}}}),
+	}}
+	exit, err := f.shapeWith(x, "Add calc.is_even(n).")
+	if err != nil || exit != 5 {
+		t.Fatalf("exit %d, err %v", exit, err)
+	}
+	events := f.events()
+	accounts := shpNamed(events, "shape_time")
+	if len(accounts) != 1 || events[len(events)-2]["event"] != "shape_time" || events[len(events)-1]["event"] != "session_end" {
+		t.Fatalf("the record does not end with one account before the session end: %v", events)
+	}
+	lines := strings.Split(strings.TrimSuffix(f.Stderr.String(), "\n"), "\n")
+	last := lines[len(lines)-1]
+	if !strings.HasPrefix(last, "kogen: shape time ") || !strings.Contains(last, "shaper ") {
+		t.Fatalf("last stderr line %q", last)
+	}
+	shpEq(t, "time lines", strings.Count(f.Stderr.String(), "kogen: shape time"), 1)
 }

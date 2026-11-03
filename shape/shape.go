@@ -85,7 +85,14 @@ func shapeRun(ctx context.Context, s *sys.Session, in ShapeInput) (exit int, err
 	if err != nil {
 		return 0, err
 	}
-	defer ev.Finish()
+	ev.AccountTime()
+	defer func() {
+		if ev.Finish() == nil {
+			if spent := ev.Spent(); spent != nil {
+				s.Progress(spent.Line())
+			}
+		}
+	}()
 	if limit := submissionRetryLimit(in.SubmissionRetryLimit); limit != 3 {
 		ev.Record(map[string]any{"event": "submission_retry_limit", "limit": limit})
 	}
@@ -569,6 +576,13 @@ type shaping struct {
 	lastObservations     string // the readiness observations of that check; "" when green
 }
 
+// toolSpan runs one native main-conversation tool call and adds its time to the shaper's tools.
+func (sh *shaping) toolSpan(fn func() error) error {
+	t := sh.ev.Millis()
+	defer func() { sh.ev.ShaperTool(t, sh.ev.Millis()) }()
+	return fn()
+}
+
 func (sh *shaping) elapsed() int64 { return time.Since(sh.started).Milliseconds() / 1000 }
 
 func (sh *shaping) progress(line string) {
@@ -636,7 +650,7 @@ func (sh *shaping) shape(ctx context.Context, st *state) (int, error) {
 	sh.request = st.Request
 	sh.earlier = roundsText(st.Rounds)
 	if sh.cfg.ShapeAudit.Enabled {
-		if err := sh.audit(ctx, st.Request); err != nil {
+		if err := sh.ev.Checking(func() error { return sh.audit(ctx, st.Request) }); err != nil {
 			return 0, err
 		}
 		if m, ok := blocks[1].(map[string]any); ok {
@@ -839,8 +853,10 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 		turns.announce(req, sh.role, sh.ev)
 		call := sh.ev.BeginCall("shape", "", revision.Map(), "main shaping", sh.role).Sized(sh.client, req)
 		resp, err := tools.Deliver(input, "shape", sh.ev.Record, func() (*provider.Response, error) {
+			sent := sh.ev.Millis()
 			r, err := sh.client.Respond(ctx, sh.s, req, call)
 			call.End(r, err)
+			sh.ev.ShaperModel(sent, sh.ev.Millis())
 			return r, err
 		})
 		if err != nil {
@@ -871,7 +887,7 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 				var batch map[string]any
 				if sh.batchUsed {
 					batch = map[string]any{"status": "refused", "reason": "one batch per conversation", "jobs": []any{}}
-				} else if batch, err = sh.runBatch(ctx, c.Args()); err != nil {
+				} else if err = sh.toolSpan(func() (err error) { batch, err = sh.runBatch(ctx, c.Args()); return }); err != nil {
 					return outcome{}, usage, err
 				}
 				text, err := project.EncodeJSON(batch)
@@ -881,7 +897,8 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 				sh.batchUsed = true
 				outputs = append(outputs, toolOutput(c, string(text)))
 			case c.Name == agent.ProposeFilesTool:
-				text, err := sh.proposeFiles(c.Args())
+				var text string
+				err := sh.toolSpan(func() (err error) { text, err = sh.proposeFiles(c.Args()); return })
 				if err != nil {
 					return outcome{}, usage, err
 				}
@@ -895,7 +912,8 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 				result = r
 				outputs = append(outputs, toolOutput(c, text))
 			default:
-				out, err := sh.runTool(ctx, c)
+				var out tools.Output
+				err := sh.toolSpan(func() (err error) { out, err = sh.runTool(ctx, c); return })
 				if err != nil {
 					return outcome{}, usage, err
 				}
@@ -946,7 +964,7 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 func (sh *shaping) converseExternal(ctx context.Context, blocks []any) (outcome, *extSession, error) {
 	stable := ShaperInstructions() + "\n\n" + externalNote + "\n\n" + blocksText(blocks)
 	x, err := startExternal(ctx, sh.ext, sh.extMax, sh.repo, sh.root, sh.s.Getenv("HOME"),
-		filepath.Join(sh.ev.Dir, "executor-shape"), sh.slug, sh.role, stable, "", shaperSubmitSchema(), sh.ev.Record,
+		filepath.Join(sh.ev.Dir, "executor-shape"), sh.slug, sh.role, stable, "", shaperSubmitSchema(), sh.ev,
 		func(e map[string]any) {
 			if inspectedBy(e) {
 				sh.inspected = true
@@ -1233,6 +1251,8 @@ func formatWall(w float64) string {
 // or writes submission files. The text goes back to the shaper.
 func (sh *shaping) submit(ctx context.Context, args map[string]any) (string, outcome, error) {
 	sh.submissions++
+	t := sh.ev.Millis()
+	defer func() { sh.ev.CheckSpan(t, sh.ev.Millis()) }()
 	return sh.submitOne(ctx, args)
 }
 

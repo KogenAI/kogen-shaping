@@ -165,7 +165,7 @@ func (sh *shaping) questionClassify(ctx context.Context, questions []map[string]
 	sh.questionChecks++
 	if sh.ext != nil {
 		x, err := startExternal(ctx, sh.ext, sh.extMax, sh.repo, sh.root, sh.s.Getenv("HOME"),
-			fmt.Sprintf("%s/executor-question-%d", sh.ev.Dir, sh.questionChecks), sh.slug, sh.role, questionInstructions+"\n\n"+input, "", mustJSON(questionSchema()), sh.ev.Record, nil)
+			fmt.Sprintf("%s/executor-question-%d", sh.ev.Dir, sh.questionChecks), sh.slug, sh.role, questionInstructions+"\n\n"+input, "", mustJSON(questionSchema()), sh.ev, nil)
 		if err != nil {
 			return nil, err
 		}

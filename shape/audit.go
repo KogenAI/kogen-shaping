@@ -149,7 +149,7 @@ func (sh *shaping) audit(ctx context.Context, request string) error {
 	var args map[string]any
 	if sh.ext != nil {
 		x, err := startExternal(ctx, sh.ext, sh.extMax, sh.repo, sh.root, sh.s.Getenv("HOME"),
-			sh.ev.Dir+"/executor-audit", sh.slug, sh.role, auditInstructions+"\n\n# Request\n\n"+request, "", mustJSON(auditSchema()), sh.ev.Record, nil)
+			sh.ev.Dir+"/executor-audit", sh.slug, sh.role, auditInstructions+"\n\n# Request\n\n"+request, "", mustJSON(auditSchema()), sh.ev, nil)
 		if err != nil {
 			return err
 		}

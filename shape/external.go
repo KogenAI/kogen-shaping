@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/KogenAI/kogen-coordinator/git"
@@ -29,7 +30,8 @@ type External func(role project.Role) (executor.Executor, error)
 const externalNote = "# This session\n\n" +
 	"You are a read-only external session. You may inspect the checkout with your own tools, but you must not change any file, the Git index or HEAD, including the files you propose: they are submitted in your final structured result and Kogen checks and publishes them.\n" +
 	"The native tools named in the rules above (probe, view_image, documentation records, shape_batch, propose_files) are not available here. Kogen's own scratch checking, readiness, Feasibility checks and documentation records are not produced by your research; what you fetch or run with your tools is observed by the harness only, not retained by Kogen as a documentation event.\n" +
-	"The final structured result is the arguments of the submission described above (for Shape `submit`; for Refine `submit_refinement`). Kogen returns its actual feedback to this same session."
+	"The final structured result is the arguments of the submission described above (for Shape `submit`; for Refine `submit_refinement`). Kogen returns its actual feedback to this same session.\n" +
+	"Commands: Kogen runs readiness on every submission (the configured setup, the acceptance command, the Quint model and the Feasibility checks) and returns its actual results to this session. Do not repeat that work yourself: do not run the configured setup or checks, the acceptance command or a whole test suite, and do not prototype the implementation. Run only short commands that answer a named concrete uncertainty, such as one focused test, a probe or a tool query, each finishing on its own within 5 minutes. Never start a command in the background and never wait or poll with sleep: when you would need a longer run, submit your complete candidate and use Kogen's results."
 
 // selectExternal is the executor a Shape or Refine role selects, validated for the shape role.
 func selectExternal(ext External, role project.Role) (executor.Executor, int, error) {
@@ -75,12 +77,14 @@ type extSession struct {
 	rounds    int
 	sess      executor.Session
 	record    func(map[string]any)
+	ev        *Evidence
+	dir       string
 	usage     executor.Usage
 	usageSeen bool
 }
 
 // startExternal starts the role's fresh session on the stable task text.
-func startExternal(ctx context.Context, ex executor.Executor, max int, repo *git.Repo, root, home, dir, run string, role project.Role, stable, dynamic string, schema json.RawMessage, record func(map[string]any), observe func(map[string]any)) (*extSession, error) {
+func startExternal(ctx context.Context, ex executor.Executor, max int, repo *git.Repo, root, home, dir, run string, role project.Role, stable, dynamic string, schema json.RawMessage, ev *Evidence, observe func(map[string]any)) (*extSession, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
@@ -93,13 +97,13 @@ func startExternal(ctx context.Context, ex executor.Executor, max int, repo *git
 		Model: role.Model, Effort: role.Effort, RunID: run, Home: home, MaxRounds: max, Schema: schema, Dir: dir,
 	}
 	rec := func(e map[string]any) {
-		record(e)
+		ev.Record(e)
 		if observe != nil {
 			observe(e)
 		}
 	}
 	sess, err := ex.Start(ctx, task, rec)
-	x := &extSession{repo: repo, pin: pin, root: root, home: home, model: role, max: max, sess: sess, record: rec}
+	x := &extSession{repo: repo, pin: pin, root: root, home: home, model: role, max: max, sess: sess, record: rec, ev: ev, dir: dir}
 	// Startup runs the executor too: its changes are refused before any trusted Git command, and
 	// before a startup failure is reported.
 	if perr := x.comparePin(); perr != nil {
@@ -157,22 +161,70 @@ func (x *extSession) round(ctx context.Context, feedback string) (executor.Round
 	if x.rounds >= x.max {
 		return executor.RoundResult{}, executor.RoundLimit(x.max)
 	}
-	if err := x.comparePin(); err != nil {
-		return executor.RoundResult{}, err
+	// The main session's custody comparisons are Kogen checks; other sessions run inside one already.
+	main := filepath.Base(x.dir) == mainSession
+	var spans [][2]int64
+	checking := func(fn func()) {
+		a := x.ev.Millis()
+		fn()
+		if main {
+			spans = append(spans, [2]int64{a, x.ev.Millis()})
+		}
 	}
-	before, err := checkoutIdentity(x.repo, x.root)
+	defer func() {
+		for _, s := range spans {
+			x.ev.CheckSpan(s[0], s[1])
+		}
+	}()
+	var before identity
+	var err error
+	checking(func() {
+		if err = x.comparePin(); err == nil {
+			before, err = checkoutIdentity(x.repo, x.root)
+		}
+	})
 	if err != nil {
 		return executor.RoundResult{}, err
 	}
 	x.rounds++
+	started := x.ev.Millis()
 	res, rerr := x.sess.Round(ctx, executor.Input{Feedback: feedback})
+	ended := x.ev.Millis()
+	var model *int64
+	if rerr == nil {
+		model = roundModelMS(x.dir, x.rounds)
+	}
+	if main {
+		x.ev.ShaperRound(started, ended, model)
+	}
+	checking(func() { err = x.afterRound(before, res) })
+	if err != nil {
+		return res, err
+	}
+	if rerr != nil {
+		return res, rerr
+	}
+	h := res.Handle
+	x.record(map[string]any{
+		"event": "executor_round", "role": executor.RoleShape, "round": x.rounds, "executor": h.Executor,
+		"session_id": h.SessionID, "version": h.Version, "ending": string(res.Ending), "usage": res.Usage,
+		"session": filepath.Base(x.dir), "started_ms": started, "wall_ms": ended - started, "model_ms": nullable(model),
+	})
+	x.usage = sumUsage(x.usage, res.Usage, !x.usageSeen)
+	x.usageSeen = true
+	return res, nil
+}
+
+// afterRound compares the Git execution state, then the checkout, raw index and HEAD, with what
+// they were before the round, removing the untracked files the round created.
+func (x *extSession) afterRound(before identity, res executor.RoundResult) error {
 	// Before any Git command that could obey a newly selected hook, filter or monitor.
 	if err := x.comparePin(); err != nil {
-		return res, err
+		return err
 	}
 	after, err := checkoutIdentity(x.repo, x.root)
 	if err != nil {
-		return res, err
+		return err
 	}
 	var created []string
 	for p := range after.untracked {
@@ -191,26 +243,40 @@ func (x *extSession) round(ctx context.Context, feedback string) (executor.Round
 		delete(after.files, p)
 	}
 	if len(failed) > 0 {
-		return res, sys.Fail("candidate", "shape_untracked_remove_failed",
+		return sys.Fail("candidate", "shape_untracked_remove_failed",
 			"the Shape round created untracked files that could not be removed; nothing was published: "+strings.Join(failed, ", "), 1)
 	}
 	if len(created) > 0 {
 		x.record(map[string]any{"event": "shape_untracked_removed", "paths": created})
 	}
-	if err := before.changedTo(after); err != nil {
-		return res, err
+	return before.changedTo(after)
+}
+
+// mainSession is the base name of the main Shape session's directory.
+const mainSession = "executor-shape"
+
+// roundModelMS is the model time Claude Code reports for round n of the session in dir: the
+// duration_api_ms of the last result line of the retained raw stream round-<n>.jsonl. It is nil
+// when the file is missing or unreadable or has no such line; it is never estimated.
+func roundModelMS(dir string, n int) *int64 {
+	data, err := os.ReadFile(filepath.Join(dir, fmt.Sprintf("round-%d.jsonl", n)))
+	if err != nil {
+		return nil
 	}
-	if rerr != nil {
-		return res, rerr
+	lines := strings.Split(string(data), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		var line struct {
+			Type string          `json:"type"`
+			API  json.RawMessage `json:"duration_api_ms"`
+		}
+		if json.Unmarshal([]byte(lines[i]), &line) != nil || line.Type != "result" {
+			continue
+		}
+		if ms, err := strconv.ParseInt(string(line.API), 10, 64); err == nil && ms >= 0 {
+			return &ms
+		}
 	}
-	h := res.Handle
-	x.record(map[string]any{
-		"event": "executor_round", "role": executor.RoleShape, "round": x.rounds, "executor": h.Executor,
-		"session_id": h.SessionID, "version": h.Version, "ending": string(res.Ending), "usage": res.Usage,
-	})
-	x.usage = sumUsage(x.usage, res.Usage, !x.usageSeen)
-	x.usageSeen = true
-	return res, nil
+	return nil
 }
 
 // summary is the role's identity and totals, retained once with the Shape/Refine evidence.

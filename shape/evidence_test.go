@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -262,4 +263,82 @@ func TestEvidenceCallWithoutAnAttemptRecordsHowItEnded(t *testing.T) {
 	shpEq(t, "completed", calls[1]["status"], any("completed"))
 	shpEq(t, "job", calls[1]["job"], any("job-1"))
 	shpEq(t, "main has no job", calls[0]["job"], nil)
+}
+
+func TestShapeTimeAccount(t *testing.T) {
+	parallel(t)
+	run := func(t *testing.T, modelKnown bool) (*Evidence, []map[string]any) {
+		ev, clock, dir := newTestEvidence(t)
+		ev.AccountTime()
+		_ = ev.Timed("setup", func() error { clock.advance(100); return nil }) // 0-100
+		a := ev.Millis()
+		clock.advance(300) // 100-400: a main round
+		model := int64(250)
+		var known *int64
+		if modelKnown {
+			known = &model
+		}
+		ev.ShaperRound(a, ev.Millis(), known)
+		b := ev.Millis()
+		clock.advance(50)                                                          // 400-450: a submission
+		_ = ev.Timed("readiness", func() error { clock.advance(200); return nil }) // 450-650 inside it
+		ev.CheckSpan(b, ev.Millis())
+		ev.CheckSpan(b+20, b+100) // nested: counted once
+		clock.advance(70)         // 650-720: a gap
+		if err := ev.Finish(); err != nil {
+			t.Fatal(err)
+		}
+		return ev, readEvents(t, dir)
+	}
+	t.Run("known model time", func(t *testing.T) {
+		parallel(t)
+		ev, events := run(t, true)
+		n := len(events)
+		want := map[string]any{"event": "shape_time", "elapsed_ms": 720.0, "shaper_ms": 300.0, "shaper_model_ms": 250.0,
+			"shaper_tools_ms": 50.0, "checks_ms": 350.0, "readiness_ms": 200.0, "gap_ms": 70.0}
+		if !reflect.DeepEqual(events[n-2], want) || events[n-1]["event"] != "session_end" {
+			t.Fatalf("events %v, want %v before session_end", events[n-2:], want)
+		}
+		shpEq(t, "session_end elapsed", events[n-1]["elapsed_ms"], want["elapsed_ms"])
+		shpEq(t, "readiness phase", phaseWall(events, "readiness")[0], want["readiness_ms"].(float64))
+		shpEq(t, "line", ev.Spent().Line(), "kogen: shape time 0.7 s: shaper 0.3 s (model 0.3 s, tools 0.1 s), Kogen checks 0.4 s (readiness 0.2 s), gaps 0.1 s")
+	})
+	t.Run("a round without model time leaves model and tools null", func(t *testing.T) {
+		parallel(t)
+		ev, events := run(t, false)
+		got := events[len(events)-2]
+		shpEq(t, "model", got["shaper_model_ms"], nil)
+		shpEq(t, "tools", got["shaper_tools_ms"], nil)
+		shpEq(t, "shaper", got["shaper_ms"], 300.0)
+		shpEq(t, "line", strings.Contains(ev.Spent().Line(), "(model unknown, tools unknown)"), true)
+	})
+	t.Run("a run that is not Shape records no account", func(t *testing.T) {
+		parallel(t)
+		ev, clock, dir := newTestEvidence(t)
+		clock.advance(5)
+		ev.Finish()
+		shpEq(t, "accounts", len(shpNamed(readEvents(t, dir), "shape_time")), 0)
+		shpEq(t, "spent", ev.Spent() == nil, true)
+	})
+	t.Run("the gap is never negative", func(t *testing.T) {
+		parallel(t)
+		ev, clock, dir := newTestEvidence(t)
+		ev.AccountTime()
+		ev.CheckSpan(0, 10)
+		clock.advance(5)
+		ev.Finish()
+		shpEq(t, "gap", shpNamed(readEvents(t, dir), "shape_time")[0]["gap_ms"], 0.0)
+	})
+}
+
+func TestShapeTimeLine(t *testing.T) {
+	parallel(t)
+	ms := func(v int64) *int64 { return &v }
+	for in, want := range map[*int64]string{ms(1250): "1.3 s", ms(1249): "1.2 s", ms(0): "0.0 s", ms(49): "0.0 s", ms(50): "0.1 s", ms(61_000): "61.0 s", nil: "unknown"} {
+		shpEq(t, "seconds", seconds(in), want)
+	}
+	a := TimeAccount{Elapsed: 6100, Shaper: 1900, Model: ms(500), Tools: ms(1400), Checks: 3000, Readiness: 2100, Gap: 1200}
+	shpEq(t, "line", a.Line(), "kogen: shape time 6.1 s: shaper 1.9 s (model 0.5 s, tools 1.4 s), Kogen checks 3.0 s (readiness 2.1 s), gaps 1.2 s")
+	a.Model, a.Tools = nil, nil
+	shpEq(t, "unknown", a.Line(), "kogen: shape time 6.1 s: shaper 1.9 s (model unknown, tools unknown), Kogen checks 3.0 s (readiness 2.1 s), gaps 1.2 s")
 }

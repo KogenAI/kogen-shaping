@@ -144,7 +144,7 @@ func (sh *shaping) decisionCheck(ctx context.Context, intent string) ([]string, 
 	sh.decisionChecks++
 	if sh.ext != nil {
 		x, err := startExternal(ctx, sh.ext, sh.extMax, sh.repo, sh.root, sh.s.Getenv("HOME"),
-			fmt.Sprintf("%s/executor-decision-%d", sh.ev.Dir, sh.decisionChecks), sh.slug, sh.role, decisionInstructions+"\n\n"+input, "", mustJSON(decisionSchema()), sh.ev.Record, nil)
+			fmt.Sprintf("%s/executor-decision-%d", sh.ev.Dir, sh.decisionChecks), sh.slug, sh.role, decisionInstructions+"\n\n"+input, "", mustJSON(decisionSchema()), sh.ev, nil)
 		if err != nil {
 			return nil, nil, err
 		}

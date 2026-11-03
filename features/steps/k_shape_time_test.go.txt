@@ -1,0 +1,146 @@
+package shape
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/KogenAI/kogen-executor/executor"
+	"kogen-loop/sys"
+)
+
+// TestKShapeTimeAcceptance is the acceptance harness of k-shape-time: one scripted shaping run of
+// the is-even fixture, then one KST observation line. KST_MODE is external (a scripted Claude
+// Code shaper whose rounds sleep and may leave a stream result line with duration_api_ms) or
+// native (the loopback provider). KST_ROUNDS lists the external main rounds as
+// <sleep ms>:<duration_api_ms|none>; KST_CONTRACT_MS is how long each external contract review
+// round sleeps; KST_ACCEPT_SECONDS makes every acceptance run sleep that long.
+func TestKShapeTimeAcceptance(t *testing.T) {
+	mode := os.Getenv("KST_MODE")
+	request := "Add calc.is_even(n). Non-integers raise TypeError."
+	var f *shpFx
+	var x *shapeExec
+	switch mode {
+	case "external":
+		f = newShpFx(t)
+		f.useExternalShape(6)
+	case "native":
+		f = newShpFx(t, shpSubmit("c1", shpFiles()), shpAck("c2"))
+	default:
+		t.Fatalf("TestKShapeTimeAcceptance: unknown KST_MODE %q", mode)
+	}
+	if secs := os.Getenv("KST_ACCEPT_SECONDS"); secs != "" && secs != "0" {
+		script := f.read("accept.sh")
+		slow := strings.Replace(script, "esac\n", "esac\nsleep "+secs+"\n", 1)
+		if slow == script {
+			t.Fatalf("TestKShapeTimeAcceptance: the fixture's accept.sh has no esac line:\n%s", script)
+		}
+		f.write("accept.sh", slow)
+		f.git("commit", "-qam", "slow acceptance")
+	}
+
+	var exit int
+	var err error
+	if mode == "external" {
+		stream := filepath.Join(f.Root, ".kogen/local/shaping", shpSlug, "executor-shape")
+		ack := map[string]any{"files": []any{map[string]any{"path": ".kogen/intents/is-even/acceptance.feature", "content": shpFeature}}}
+		answers := []any{shpFiles(), ack}
+		specs := strings.Split(os.Getenv("KST_ROUNDS"), ",")
+		if len(specs) != len(answers) {
+			t.Fatalf("TestKShapeTimeAcceptance: KST_ROUNDS %q must list %d rounds", os.Getenv("KST_ROUNDS"), len(answers))
+		}
+		x = &shapeExec{t: t}
+		for i, spec := range specs {
+			sleep, api, ok := strings.Cut(spec, ":")
+			ms, serr := strconv.Atoi(sleep)
+			if !ok || serr != nil {
+				t.Fatalf("TestKShapeTimeAcceptance: bad round %q", spec)
+			}
+			b, _ := json.Marshal(answers[i])
+			x.rounds = append(x.rounds, func(n int, _ string) (executor.RoundResult, error) {
+				time.Sleep(time.Duration(ms) * time.Millisecond)
+				if api != "none" {
+					text := `{"type":"system","subtype":"init"}` + "\n" +
+						fmt.Sprintf(`{"type":"result","subtype":"success","is_error":false,"duration_ms":%d,"duration_api_ms":%s}`, ms, api) + "\n"
+					if werr := os.WriteFile(filepath.Join(stream, fmt.Sprintf("round-%d.jsonl", n)), []byte(text), 0o600); werr != nil {
+						return executor.RoundResult{}, werr
+					}
+				}
+				return executor.RoundResult{Structured: b, Usage: executor.Usage{State: executor.UsageUnknown, Source: executor.UsageHarness}}, nil
+			})
+		}
+		contractMS, _ := strconv.Atoi(os.Getenv("KST_CONTRACT_MS"))
+		x.contract = []func(int, string) (executor.RoundResult, error){func(int, string) (executor.RoundResult, error) {
+			time.Sleep(time.Duration(contractMS) * time.Millisecond)
+			b, _ := json.Marshal(map[string]any{"findings": []any{}, "environment": []any{}})
+			return executor.RoundResult{Structured: b, Usage: executor.Usage{State: executor.UsageUnknown, Source: executor.UsageHarness}}, nil
+		}}
+		exit, err = f.shapeWith(x, request)
+	} else {
+		exit, err = f.shape(request)
+	}
+
+	obs := map[string]any{"mode": mode, "exit": exit, "stop": ""}
+	if err != nil {
+		if e, ok := sys.AsError(err); ok {
+			obs["exit"], obs["stop"] = e.Exit, e.Render()
+		} else {
+			obs["exit"], obs["stop"] = -1, err.Error()
+		}
+	}
+	obs["stdout"] = strings.Split(strings.TrimSuffix(f.Stdout.String(), "\n"), "\n")
+	timeLines := []string{}
+	obs["stderr_last"] = ""
+	for _, l := range strings.Split(f.Stderr.String(), "\n") {
+		if strings.HasPrefix(l, "kogen: shape time") {
+			timeLines = append(timeLines, l)
+		}
+		if l != "" {
+			obs["stderr_last"] = l
+		}
+	}
+	obs["time_lines"] = timeLines
+	events := f.events()
+	accounts := []any{}
+	obs["after_account"] = ""
+	for i, e := range events {
+		if e["event"] == "shape_time" {
+			accounts = append(accounts, e)
+			if i+1 < len(events) {
+				obs["after_account"] = events[i+1]["event"]
+			}
+		}
+	}
+	obs["accounts"] = accounts
+	obs["session_end"] = shpNamed(events, "session_end")
+	readiness := []any{}
+	for _, e := range shpNamed(events, "phase_duration") {
+		if e["phase"] == "readiness" {
+			readiness = append(readiness, e["wall_ms"])
+		}
+	}
+	obs["readiness_phase"] = readiness
+	rounds := []any{}
+	for _, e := range shpNamed(events, "executor_round") {
+		rounds = append(rounds, e)
+	}
+	obs["rounds"] = rounds
+	obs["brief"] = ""
+	if x != nil {
+		for _, task := range x.starts {
+			if filepath.Base(task.Dir) == "executor-shape" {
+				obs["brief"] = task.Brief.Stable
+			}
+		}
+	}
+	b, err := json.Marshal(obs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Printf("KST %s\n", b)
+}
