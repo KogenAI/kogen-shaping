@@ -1646,8 +1646,8 @@ func (e *runnerObserverError) Error() string { return strings.SplitN(e.text(), "
 
 func (e *runnerObserverError) text() string {
 	return fmt.Sprintf("Acceptance rejects the test runner's real output: %d scenario(s) fail although the test runner reported a passing run, or pass an anchored regular expression as a name filter the runner matches literally; nothing was published. "+
-		"A step that observes a test runner must accept the summary the runner really prints on the unchanged tree (minitest's default reporter prints \"N runs\", other reporters \"N tests\") "+
-		"and give a literal name filter (minitest's -n and -i) only the plain test name. Rewrite these steps; resubmitting them unchanged is refused again.", e.scenarios) +
+		"A step that observes a test runner must accept the summary the runner really prints on the unchanged tree "+
+		"and give a literal name filter only the plain test name. Rewrite these steps; resubmitting them unchanged is refused again.", e.scenarios) +
 		"\n" + strings.Join(e.items, "\n")
 }
 

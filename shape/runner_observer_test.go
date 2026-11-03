@@ -10,8 +10,8 @@ import (
 )
 
 const runnerObserverHeadline = "Acceptance rejects the test runner's real output: 2 scenario(s) fail although the test runner reported a passing run, or pass an anchored regular expression as a name filter the runner matches literally; nothing was published. " +
-	"A step that observes a test runner must accept the summary the runner really prints on the unchanged tree (minitest's default reporter prints \"N runs\", other reporters \"N tests\") " +
-	"and give a literal name filter (minitest's -n and -i) only the plain test name. Rewrite these steps; resubmitting them unchanged is refused again."
+	"A step that observes a test runner must accept the summary the runner really prints on the unchanged tree " +
+	"and give a literal name filter only the plain test name. Rewrite these steps; resubmitting them unchanged is refused again."
 
 const (
 	runnerObserverItem1 = "- Even numbers (line 2): the step failed although the test runner reported a passing run: 1 runs, 7 assertions, 0 failures, 0 errors, 0 skips"

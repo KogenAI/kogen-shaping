@@ -1,0 +1,277 @@
+package shape
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// The test-runner observer guidance and refusal of K-SHAPE-RUNNER-GUIDANCE-GENERAL: the general
+// rule only, without one runner's reporter wording or name-filter options. The runner is
+// synthetic: the scripted acceptance runner replays failure messages of an invented
+// ./bin/orchard-check whose summary line has the shape the unchanged runner-observer gate reads.
+
+const krgGuidance = "Test-runner observers: a step that runs a test runner and judges its output must accept that runner's real output on the unchanged tree, in the environment acceptance runs in. Derive the summary wording and the name-filter semantics from a real run of an existing passing test there, not from memory; an observer control's known-good input is that real output, not hand-written runner text. Shape refuses a candidate whose step fails although the test runner it ran reported a passing run, or whose anchored name filter made the runner run nothing.\n"
+
+const krgHeadline = "Acceptance rejects the test runner's real output: 2 scenario(s) fail although the test runner reported a passing run, or pass an anchored regular expression as a name filter the runner matches literally; nothing was published. " +
+	"A step that observes a test runner must accept the summary the runner really prints on the unchanged tree and give a literal name filter only the plain test name. Rewrite these steps; resubmitting them unchanged is refused again."
+
+const (
+	krgItem1 = "- Even numbers (line 2): the step failed although the test runner reported a passing run: 1 runs, 3 assertions, 0 failures, 0 errors, 0 skips"
+	krgItem2 = "- Odd numbers (line 5): the name filter -n ^frost_alarm_rings$ is a regular expression that the runner matched as a literal test name, so nothing ran: 0 runs, 0 assertions, 0 failures, 0 errors, 0 skips"
+	krgFeed  = krgHeadline + "\n" + krgItem1 + "\n" + krgItem2
+
+	krgMsg1 = "Required test; ./bin/orchard-check -n frost_alarm_rings; exit 0\nRun options: -n frost_alarm_rings --seed 7\n\n.\n\n1 runs, 3 assertions, 0 failures, 0 errors, 0 skips\n"
+	krgMsg2 = "./bin/orchard-check -n ^frost_alarm_rings$; exit 1\nRun options: -n \"^frost_alarm_rings$\" --seed 7\n\n\n0 runs, 0 assertions, 0 failures, 0 errors, 0 skips\n"
+)
+
+// krgSpecific is runner-specific knowledge that neither the guidance nor the refusal carries.
+var krgSpecific = []string{"minitest", "CI_PROGRESS_BAR", "bin/rails", "rails", "\"N runs\"", "\"N tests\"", "N (runs|tests)", "-n and -i", "^name$", "1 runs, 7 assertions"}
+
+// The old texts, the known-bad controls' inputs.
+const (
+	krgOldGuidance = "Test-runner observers: a step that runs a test runner and judges its output must accept that runner's real output on the unchanged tree, in the environment acceptance runs in. Derive the summary wording and the name-filter semantics from a real run of an existing passing test there, not from memory; an observer control's known-good input is that real output, not hand-written runner text. For example, minitest's default reporter (bin/rails test with CI_PROGRESS_BAR=0) prints \"1 runs, 7 assertions, 0 failures, 0 errors, 0 skips\" where other reporters print \"1 tests, ...\", so match \"N (runs|tests)\"; minitest's -n and -i match a plain name literally, so pass the test name itself, never ^name$. Shape refuses a candidate whose step fails although the test runner it ran reported a passing run, or whose anchored name filter made the runner run nothing.\n"
+	krgOldHeadline = "Acceptance rejects the test runner's real output: 2 scenario(s) fail although the test runner reported a passing run, or pass an anchored regular expression as a name filter the runner matches literally; nothing was published. " +
+		"A step that observes a test runner must accept the summary the runner really prints on the unchanged tree (minitest's default reporter prints \"N runs\", other reporters \"N tests\") " +
+		"and give a literal name filter (minitest's -n and -i) only the plain test name. Rewrite these steps; resubmitting them unchanged is refused again."
+)
+
+// krgGuidanceObs is what the guidance journey observes: the instructions of Shape's first request
+// and Refine's instructions.
+type krgGuidanceObs struct {
+	Exit         int
+	Instructions string
+	Refine       string
+}
+
+// krgRefusalObs is what the refusal journey observes.
+type krgRefusalObs struct {
+	Exit      int
+	Err       string
+	Requests  int
+	Feedback  []string // the submit outputs of c1, c2 and c3
+	Gates     []string // the gate of each submission_refused event
+	Problems  []int    // the problem count of each submission_refused event
+	Published string   // the published acceptance.feature
+}
+
+// krgJudgeGuidance lists what is wrong with a guidance observation.
+func krgJudgeGuidance(o krgGuidanceObs) []string {
+	var p []string
+	if o.Exit != 0 {
+		p = append(p, fmt.Sprintf("Shape exit %d, want 0", o.Exit))
+	}
+	if !strings.HasSuffix(o.Instructions, krgGuidance) {
+		p = append(p, "the instructions Shape sent do not end with the general test-runner observers paragraph")
+	}
+	if n := strings.Count(o.Instructions, "Test-runner observers:"); n != 1 {
+		p = append(p, fmt.Sprintf("the instructions carry %d test-runner observers paragraphs, want 1", n))
+	}
+	if !strings.Contains(o.Instructions, "Unwritten tests:") || strings.Index(o.Instructions, "Unwritten tests:") > strings.Index(o.Instructions, "Test-runner observers:") {
+		p = append(p, "the unwritten-tests paragraph does not precede the test-runner observers paragraph")
+	}
+	for _, s := range krgSpecific {
+		if strings.Contains(o.Instructions, s) {
+			p = append(p, fmt.Sprintf("the instructions Shape sent carry runner-specific text %q", s))
+		}
+	}
+	if strings.Contains(o.Refine, "Test-runner observers:") {
+		p = append(p, "Refine's instructions carry the test-runner observers paragraph")
+	}
+	return p
+}
+
+// krgJudgeRefusal lists what is wrong with a refusal observation.
+func krgJudgeRefusal(o krgRefusalObs) []string {
+	var p []string
+	if o.Exit != 0 || o.Err != "" {
+		p = append(p, fmt.Sprintf("Shape exit %d, error %q; want exit 0 with the corrected package published", o.Exit, o.Err))
+	}
+	if o.Requests != 4 {
+		p = append(p, fmt.Sprintf("Shape made %d requests, want 4", o.Requests))
+	}
+	if len(o.Feedback) != 3 {
+		p = append(p, fmt.Sprintf("%d submission outputs observed, want 3", len(o.Feedback)))
+	} else {
+		for i := 0; i < 2; i++ {
+			if o.Feedback[i] != krgFeed {
+				p = append(p, fmt.Sprintf("refusal %d is not the general refusal with the two items:\n got: %s\nwant: %s", i+1, o.Feedback[i], krgFeed))
+			}
+			head := strings.SplitN(o.Feedback[i], "\n", 2)[0]
+			for _, s := range krgSpecific {
+				if strings.Contains(head, s) {
+					p = append(p, fmt.Sprintf("refusal %d's headline carries runner-specific text %q", i+1, s))
+				}
+			}
+		}
+		if !strings.Contains(o.Feedback[2], "Readiness observations") {
+			p = append(p, "the corrected candidate's output has no readiness observations: "+o.Feedback[2])
+		}
+	}
+	if strings.Join(o.Gates, ",") != "runner_observer,runner_observer" {
+		p = append(p, fmt.Sprintf("submission_refused gates %v, want two runner_observer refusals", o.Gates))
+	}
+	for i, n := range o.Problems {
+		if n != 2 {
+			p = append(p, fmt.Sprintf("refusal %d has %d problems, want 2", i+1, n))
+		}
+	}
+	if o.Published != shpFeature+"# behavioural\n" {
+		p = append(p, fmt.Sprintf("published acceptance.feature %q, want the corrected candidate", o.Published))
+	}
+	return p
+}
+
+func krgReplace(f *shpFx, was, now string) {
+	f.t.Helper()
+	path := filepath.Join(f.Aux, "report")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	from, _ := json.Marshal(was)
+	to, _ := json.Marshal(now)
+	if !strings.Contains(string(b), string(from)) {
+		f.t.Fatalf("report has no failure message %q to replace", was)
+	}
+	if err := os.WriteFile(path, []byte(strings.Replace(string(b), string(from), string(to), 1)), 0o644); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+func krgObserveGuidance(t *testing.T) krgGuidanceObs {
+	f := newShpFx(t, shpSubmit("c1", shpFiles()), shpAck("c2"))
+	exit, err := f.shape("Add calc.is_even(n). Non-integers raise TypeError.")
+	if err != nil {
+		t.Fatalf("Shape failed: exit %d, err %v\nstderr: %s", exit, err, f.Stderr)
+	}
+	instructions, _ := f.Prov.requests()[0]["instructions"].(string)
+	return krgGuidanceObs{Exit: exit, Instructions: instructions, Refine: refineInstructions()}
+}
+
+func krgObserveRefusal(t *testing.T) krgRefusalObs {
+	f := newShpFx(t)
+	f.Prov.seq = []shpStep{
+		shpSubmit("c1", shpFiles()),
+		shpSubmit("c2", shpFiles()),
+		shpAnswer(shpCall("c3-inspect", "read_file", map[string]any{"path": "README.md"}), shpCall("c3", "submit", behaviouralFiles())),
+		shpSubmit("c4", map[string]any{"files": []any{
+			map[string]any{"path": ".kogen/intents/is-even/acceptance.feature", "content": shpFeature + "# behavioural\n"},
+		}}),
+	}
+	f.setReport("FAILED", 1)
+	krgReplace(f, "assertion failed in scenario Even numbers", krgMsg1)
+	krgReplace(f, "assertion failed in scenario Odd numbers", krgMsg2)
+	// The corrected candidate's red is the plain one.
+	f.Prov.route = func(req map[string]any) *shpStep {
+		if _, ok := shpOutputs(req)["c2"]; ok {
+			f.setReport("FAILED", 1)
+		}
+		return nil
+	}
+	exit, err := f.shape("Add calc.is_even(n).")
+	o := krgRefusalObs{Exit: exit}
+	if err != nil {
+		o.Err = err.Error()
+	}
+	reqs := f.Prov.requests()
+	o.Requests = len(reqs)
+	for i, id := range []string{"c1", "c2", "c3"} {
+		if i+1 < len(reqs) {
+			o.Feedback = append(o.Feedback, shpOutputs(reqs[i+1])[id])
+		}
+	}
+	for _, e := range shpNamed(f.events(), "submission_refused") {
+		o.Gates = append(o.Gates, fmt.Sprint(e["gate"]))
+		problems, _ := e["problems"].([]any)
+		o.Problems = append(o.Problems, len(problems))
+	}
+	if f.exists(".kogen/intents/is-even/acceptance.feature") {
+		o.Published = f.read(".kogen/intents/is-even/acceptance.feature")
+	}
+	return o
+}
+
+func krgGoodGuidance() krgGuidanceObs {
+	return krgGuidanceObs{Instructions: "Named-test helpers: x\nUnwritten tests: y\n" + krgGuidance, Refine: "refine policy\n"}
+}
+
+func krgGoodRefusal() krgRefusalObs {
+	return krgRefusalObs{Requests: 4, Feedback: []string{krgFeed, krgFeed, "Readiness observations: red"},
+		Gates: []string{"runner_observer", "runner_observer"}, Problems: []int{2, 2}, Published: shpFeature + "# behavioural\n"}
+}
+
+// krgBad is every known-bad observation, each breaking one rule.
+func krgBad() map[string][]string {
+	bad := map[string][]string{}
+	g := func(name string, edit func(*krgGuidanceObs)) {
+		o := krgGoodGuidance()
+		edit(&o)
+		bad["guidance/"+name] = krgJudgeGuidance(o)
+	}
+	r := func(name string, edit func(*krgRefusalObs)) {
+		o := krgGoodRefusal()
+		edit(&o)
+		bad["refusal/"+name] = krgJudgeRefusal(o)
+	}
+	g("old paragraph", func(o *krgGuidanceObs) { o.Instructions = "Unwritten tests: y\n" + krgOldGuidance })
+	g("paragraph dropped", func(o *krgGuidanceObs) { o.Instructions = "Unwritten tests: y\n" })
+	g("paragraph not last", func(o *krgGuidanceObs) { o.Instructions = "Unwritten tests: y\n" + krgGuidance + "More.\n" })
+	g("paragraph twice", func(o *krgGuidanceObs) { o.Instructions = "Unwritten tests: y\n" + krgGuidance + krgGuidance })
+	g("unwritten after", func(o *krgGuidanceObs) { o.Instructions = "Named-test helpers: x\n" + krgGuidance[:len(krgGuidance)-1] + " Unwritten tests: y\n" + krgGuidance[len(krgGuidance)-1:] })
+	g("example elsewhere", func(o *krgGuidanceObs) { o.Instructions = "minitest's -n and -i\nUnwritten tests: y\n" + krgGuidance })
+	g("refine carries it", func(o *krgGuidanceObs) { o.Refine = krgGuidance })
+	g("exit", func(o *krgGuidanceObs) { o.Exit = 5 })
+	r("old headline", func(o *krgRefusalObs) {
+		old := krgOldHeadline + "\n" + krgItem1 + "\n" + krgItem2
+		o.Feedback = []string{old, old, o.Feedback[2]}
+	})
+	r("second old", func(o *krgRefusalObs) { o.Feedback[1] = krgOldHeadline + "\n" + krgItem1 + "\n" + krgItem2 })
+	r("item dropped", func(o *krgRefusalObs) { o.Feedback[0] = krgHeadline + "\n" + krgItem1 })
+	r("not refused", func(o *krgRefusalObs) { o.Feedback[0] = "Readiness observations: red" })
+	r("no observations", func(o *krgRefusalObs) { o.Feedback[2] = "published" })
+	r("other gate", func(o *krgRefusalObs) { o.Gates = []string{"readiness", "runner_observer"} })
+	r("one refusal", func(o *krgRefusalObs) { o.Gates, o.Problems = o.Gates[:1], o.Problems[:1] })
+	r("one problem", func(o *krgRefusalObs) { o.Problems = []int{1, 2} })
+	r("not published", func(o *krgRefusalObs) { o.Published = "" })
+	r("refused published", func(o *krgRefusalObs) { o.Published = shpFeature })
+	r("not ready", func(o *krgRefusalObs) { o.Exit, o.Err = 1, "the Intent is not ready to build" })
+	r("requests", func(o *krgRefusalObs) { o.Requests = 3 })
+	r("missing output", func(o *krgRefusalObs) { o.Feedback = o.Feedback[:2] })
+	return bad
+}
+
+func TestKShapeRunnerGuidanceAcceptance(t *testing.T) {
+	mode := os.Getenv("KRG_MODE")
+	var problems []string
+	switch mode {
+	case "guidance":
+		problems = krgJudgeGuidance(krgObserveGuidance(t))
+	case "refusal":
+		problems = krgJudgeRefusal(krgObserveRefusal(t))
+	case "good":
+		problems = append(krgJudgeGuidance(krgGoodGuidance()), krgJudgeRefusal(krgGoodRefusal())...)
+	case "bad":
+		// Fails (rejected) only when every known-bad observation is rejected.
+		bad := krgBad()
+		var accepted []string
+		for name, p := range bad {
+			if len(p) == 0 {
+				accepted = append(accepted, name)
+			}
+		}
+		if len(accepted) == 0 {
+			t.Fatalf("all %d known-bad observations rejected", len(bad))
+		}
+		t.Logf("known-bad observations accepted: %v", accepted)
+		return
+	default:
+		t.Fatalf("unknown KRG_MODE %q", mode)
+	}
+	if len(problems) > 0 {
+		t.Fatalf("KRG_MODE=%s:\n%s", mode, strings.Join(problems, "\n"))
+	}
+}
