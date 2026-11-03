@@ -13,6 +13,7 @@ import (
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/agent"
 	"github.com/KogenAI/kogen-executor/executor"
+	"github.com/KogenAI/kogen-verification/verify"
 	"kogen-loop/provider"
 	"kogen-loop/sys"
 	"kogen-loop/tools"
@@ -652,6 +653,53 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 	if why != "" {
 		return incomplete(why, 0, 0, nil, nil)
 	}
+	// Kept assertions must agree with the unchanged tree. Repeat the entire existing
+	// readiness observation once, only when a counted kept scenario is assertion-red.
+	kept := map[string]bool{}
+	for _, p := range props {
+		if p.kind == "kept" && p.observable && propertyCounts(p, sh.request, questions) {
+			for _, name := range ev.declaredScenarios(p.scenarios) {
+				kept[name] = true
+				for _, sc := range scenarios {
+					if sc.Outline != nil && normalizeWhitespace(sc.Outline.Name) == name {
+						kept[normalizeWhitespace(sc.Name)] = true
+					}
+				}
+			}
+		}
+	}
+	first := keptAssertionFailures(sh.ready, kept)
+	if len(first) > 0 && sh.lastObservationsPath != "" {
+		sh.progress("kogen: repeating kept assertion observation (execution 2 of 2 maximum)")
+		repeat, err := sh.rd.Check(ctx, sh.s, sh.slug)
+		if err != nil {
+			return contractConfirmed{}, err
+		}
+		sh.ready = repeat
+		second := keptAssertionFailures(repeat, kept)
+		var lines []string
+		for scenario := range first {
+			if detail, ok := second[scenario]; ok {
+				lines = append(lines, fmt.Sprintf("- %s (line %d): %s", scenario.name, scenario.line, normalizeWhitespace(detail)))
+			}
+		}
+		slices.Sort(lines)
+		outcome := "no persistent kept assertion red"
+		if len(lines) > 0 {
+			outcome = "persistent kept assertion red"
+		}
+		sh.progress("kogen: kept assertion repeat outcome: " + outcome + " (cap 2 executions)")
+		sh.ev.Record(map[string]any{"event": "kept_assertion_repeat", "package": hash, "execution_cap": 2, "outcome": outcome})
+		reference := filepath.Join(sh.root, sh.lastObservationsPath)
+		sh.lastObservations = verify.Observations(sh.slug, repeat, reference)
+		if err := os.WriteFile(reference, []byte(sh.lastObservations+"\nKept assertion repeat: "+outcome+"; cap 2 executions.\n"), 0o666); err != nil {
+			return contractConfirmed{}, err
+		}
+		if len(lines) > 0 {
+			lines = append([]string{"Derive expected values from unchanged code or the scenario's own fixture, not another fixture or the request's prose; do not change or drop scenarios automatically."}, lines...)
+			return contractConfirmed{contradictions: lines}, nil
+		}
+	}
 	items := make([]contractItem, len(findings))
 	var evidenced []string
 	for i, f := range findings {
@@ -857,4 +905,24 @@ func approveContractContradictions(root, slug, sha string) error {
 	e := sys.Fail("intent", "contract_contradicts", "Shape's contract check found acceptance expectations that contradict the Intent or code it keeps unchanged; correct the Intent's files, or shape it again with kogen intent shape "+slug+" <request-file>", 1)
 	e.Lines = rec.Lines
 	return e
+}
+
+type keptScenario struct {
+	name string
+	line int
+}
+
+// keptAssertionFailures selects assertion failures, not missing prerequisites or process errors.
+func keptAssertionFailures(ready *verify.Ready, kept map[string]bool) map[keptScenario]string {
+	out := map[keptScenario]string{}
+	if ready == nil {
+		return out
+	}
+	for _, sc := range ready.Scenarios {
+		name := normalizeWhitespace(sc.Name)
+		if kept[name] && sc.Status == "failed" && sc.Detail != nil && (strings.Contains(*sc.Detail, "AssertionError") || strings.Contains(strings.ToLower(*sc.Detail), "assertion failed")) {
+			out[keptScenario{name, sc.Line}] = *sc.Detail
+		}
+	}
+	return out
 }

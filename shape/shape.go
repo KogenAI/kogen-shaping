@@ -1528,6 +1528,7 @@ func (sh *shaping) checkSubmission(ctx context.Context, files []string) (string,
 		return "", outcome{}, err
 	}
 	if sh.lastFresh && !sh.contractChecked[hash] {
+		beforeContract := sh.ready
 		confirmed, err := sh.contractCheck(ctx, hash, sh.lastObservations)
 		if err != nil {
 			return "", outcome{}, err
@@ -1542,6 +1543,13 @@ func (sh *shaping) checkSubmission(ctx context.Context, files []string) (string,
 			return contractFeedback(confirmed), outcome{kind: outInvalid, problems: lines}, nil
 		}
 		sh.contractChecked[hash] = true
+		if sh.ready != beforeContract {
+			if sh.ready.Failures() {
+				reference := filepath.Join(sh.root, sh.lastObservationsPath)
+				return verify.Acknowledgment(sh.slug, sh.ready, reference), outcome{kind: outObservations}, nil
+			}
+			return "accepted: the Intent is ready", outcome{kind: outReady}, nil
+		}
 	}
 	return text, result, nil
 }
