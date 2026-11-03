@@ -1,0 +1,6 @@
+=== RUN   TestKModelsFileShapingAcceptance
+=== PAUSE TestKModelsFileShapingAcceptance
+=== CONT  TestKModelsFileShapingAcceptance
+KMFS {"automatic_baseline":"automatic baseline: every file in `.kogen/intents/is-even/`, every path listed under the Intent's `Acceptance:` (including step files), and `.kogen/project.yaml`.","automatic_paths":"automatic paths currently present or listed: [\".kogen/project.yaml\"]","effort":"high","error":"kmfs: the scripted shaper stops at its first round","exit":70,"layout":"project-yaml","model":"team-shape-model","shaper_sessions":1}
+--- PASS: TestKModelsFileShapingAcceptance (0.74s)
+PASS

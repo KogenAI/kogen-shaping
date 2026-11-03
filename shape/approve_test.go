@@ -241,6 +241,10 @@ func TestApproveCardOutput(t *testing.T) {
 	}
 	sha := f.sha()
 	head := strings.TrimSpace(f.git("rev-parse", "HEAD"))
+	modelsFile := ""
+	if lineupInModelsFile() {
+		modelsFile = "  - .kogen/models.yaml\n"
+	}
 	want := "Source provenance: unavailable (legacy)\n" +
 		"Intent: fixture — Fixture intent\n" +
 		"SHA-256: " + sha + "\n" +
@@ -266,6 +270,7 @@ func TestApproveCardOutput(t *testing.T) {
 		"  - .kogen/intents/fixture/acceptance.feature\n" +
 		"  - features/steps/fixture_steps.js\n" +
 		"  - .kogen/project.yaml\n" +
+		modelsFile +
 		"Approve with:\n" +
 		"  kogen intent approve fixture " + sha + "\n"
 	if out != want {

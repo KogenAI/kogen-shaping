@@ -122,7 +122,9 @@ func (f *refFx) hash() string { return project.Hash(f.Root, f.baseline()) }
 func (f *refFx) pkg() map[string]string {
 	out := map[string]string{}
 	for _, p := range f.baseline() {
-		out[p] = f.read(p)
+		if f.exists(p) {
+			out[p] = f.read(p)
+		}
 	}
 	return out
 }

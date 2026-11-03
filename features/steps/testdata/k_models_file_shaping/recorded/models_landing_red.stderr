@@ -1,0 +1,15 @@
+panic: runtime error: index out of range [1] with length 0 [recovered, repanicked]
+
+goroutine 35 [running]:
+testing.tRunner.func1.2({0x10362daf0, 0x6b1ecf930138})
+	/Users/kogen-runner/.local/share/mise/installs/go/1.27.2/src/testing/testing.go:2125 +0x1a0
+testing.tRunner.func1()
+	/Users/kogen-runner/.local/share/mise/installs/go/1.27.2/src/testing/testing.go:2128 +0x2c8
+panic({0x10362daf0?, 0x6b1ecf930138?})
+	/Users/kogen-runner/.local/share/mise/installs/go/1.27.2/src/runtime/panic.go:859 +0x120
+github.com/KogenAI/kogen-shaping/shape.TestClaudeLineupShapeSubmission.func3(0x6b1ecf8b8488)
+	/tmp/kmf/base/shape/lineup_shape_test.go:253 +0x514
+testing.tRunner(0x6b1ecf8b8488, 0x1036523f8)
+	/Users/kogen-runner/.local/share/mise/installs/go/1.27.2/src/testing/testing.go:2195 +0xc4
+created by testing.(*T).Run in goroutine 12
+	/Users/kogen-runner/.local/share/mise/installs/go/1.27.2/src/testing/testing.go:2260 +0x3b8

@@ -60,7 +60,7 @@ func (f *shpFx) brief(artifacts ...string) map[string]any {
 	return map[string]any{
 		"revision": map[string]any{"head": rev.Head, "tree": rev.Tree}, "outcomes": "literal input", "interfaces": "exact output",
 		"transitions": "stateless", "fixtures": "runner and red baseline", "exclusions": "no authority",
-		"protected_paths": []any{".kogen/project.yaml", "guard.txt"}, "artifacts": list,
+		"protected_paths": []any{".kogen/project.yaml", ".kogen/models.yaml", "guard.txt"}, "artifacts": list,
 	}
 }
 

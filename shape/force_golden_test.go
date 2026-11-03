@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"net/http"
 	"os"
 	"regexp"
@@ -85,11 +87,24 @@ func forceOrdinary(t *testing.T, w *forceWire, owner string) []forceCapture {
 	return forceNormalize(f, f.Prov.rawRequests())
 }
 
+// forceGoldenPath is the golden of the coordinator in use: its requests carry the protection
+// contract, which differs when the lineup file is in the baseline.
+func forceGoldenPath() string {
+	if lineupInModelsFile() {
+		return "testdata/force_ordinary_models_golden.json"
+	}
+	return "testdata/force_ordinary_golden.json"
+}
+
 // forceGolden stores normalized synthetic ordinary wire captures, originally recorded before
 // enforcement existed. It is a deliberate compatibility baseline, not a routine snapshot.
 func forceGolden(t *testing.T) map[string][]forceCapture {
 	t.Helper()
-	b, err := os.ReadFile("testdata/force_ordinary_golden.json")
+	b, err := os.ReadFile(forceGoldenPath())
+	if errors.Is(err, fs.ErrNotExist) && *updateGoldens {
+		// -update creates the golden of a coordinator that has none yet.
+		return map[string][]forceCapture{}
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

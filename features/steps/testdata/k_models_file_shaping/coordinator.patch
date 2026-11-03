@@ -1,0 +1,329 @@
+diff --git a/project/baseline.go b/project/baseline.go
+index 3dc4350..8fb1ed8 100644
+--- a/project/baseline.go
++++ b/project/baseline.go
+@@ -17,7 +17,7 @@ import (
+ )
+ 
+ // Baseline is the acceptance baseline (VER-1, AUT-2) in card order: the Intent's `intent.md` and
+-// `acceptance.feature`, its acceptance list, the rest of its files, the project configuration and
++// `acceptance.feature`, its acceptance list, the rest of its files, the project configuration, the team lineup and
+ // the files `protect` matches, each once.
+ func Baseline(root, slug string, cfg *Config) ([]string, error) {
+ 	var intentFiles []string
+@@ -61,7 +61,7 @@ func Baseline(root, slug string, cfg *Config) ([]string, error) {
+ 	}
+ 	all = append(all, listed...)
+ 	all = append(all, intentFiles...)
+-	all = append(all, ConfigPath)
++	all = append(all, ConfigPath, ModelsPath)
+ 	protected, err := Protected(root, cfg)
+ 	if err != nil {
+ 		return nil, err
+diff --git a/project/config.go b/project/config.go
+index 3f2b714..70062bb 100644
+--- a/project/config.go
++++ b/project/config.go
+@@ -1,11 +1,14 @@
+ // Package project reads and writes what Kogen keeps about a project: `.kogen/project.yaml`
+-// (commands, protected paths, models), Gherkin features, Intent packages with their baseline
++// (commands, checks, protect patterns and settings) with the model lineup in `.kogen/models.yaml`
++// and the per-machine override `.kogen/local/models.yaml`, Gherkin features, Intent packages with their baseline
+ // hash and approvals, and the command detection `kogen init` starts from. It holds data and
+ // files only; the one Git it runs is `git check-ignore` and `git ls-files`.
+ package project
+ 
+ import (
++	"errors"
+ 	"fmt"
++	"io/fs"
+ 	"net/url"
+ 	"os"
+ 	"path/filepath"
+@@ -21,6 +24,15 @@ import (
+ // ConfigPath is the project configuration, relative to the repository root.
+ const ConfigPath = ".kogen/project.yaml"
+ 
++// ModelsPath is the committed team lineup, relative to the repository root.
++const ModelsPath = ".kogen/models.yaml"
++
++// LocalModelsPath is the optional per-machine lineup override; it replaces the roles it names.
++const LocalModelsPath = ".kogen/local/models.yaml"
++
++// SourceDefault is the ModelSources value of a role no lineup file names.
++const SourceDefault = "default"
++
+ // Role is one model selection. Provider "" means the role names no provider (legacy ChatGPT).
+ // BaseURL is set only for the openai-compatible provider (the host's /v1 base); it is
+ // omitted from JSON when empty so existing checkpoints keep their bytes.
+@@ -78,11 +90,14 @@ type ReviewMaterial struct{ Mode string }
+ 
+ // Config is a validated `.kogen/project.yaml` (SET-8).
+ type Config struct {
+-	Setup, Fix         []string
+-	Checks             []Check
+-	Acceptance         *Acceptance // nil when neither run nor steps_dir is set
+-	Protect            []string
+-	Models             map[string]Role // "shape", "build", "review"; defaults where the file says nothing
++	Setup, Fix []string
++	Checks     []Check
++	Acceptance *Acceptance // nil when neither run nor steps_dir is set
++	Protect    []string
++	Models     map[string]Role // the effective lineup: "shape", "build", "review"
++	// ModelSources is where each role of Models came from: LocalModelsPath, ModelsPath or
++	// SourceDefault. It is not part of the JSON encoding.
++	ModelSources       map[string]string `json:"-"`
+ 	ShapeWorkers       Workers
+ 	ShapeAudit         Audit
+ 	ShapeDecisionCheck DecisionCheck
+@@ -92,6 +107,15 @@ type Config struct {
+ // ModelRoles lists the model roles in the order the template writes them.
+ var ModelRoles = [...]string{"shape", "build", "review"}
+ 
++// defaultSources is ModelSources of a lineup that comes from no file.
++func defaultSources() map[string]string {
++	out := map[string]string{}
++	for _, role := range ModelRoles {
++		out[role] = SourceDefault
++	}
++	return out
++}
++
+ // DefaultModels returns the per-role defaults (SET-8); the template is derived from it.
+ func DefaultModels() map[string]Role {
+ 	return map[string]Role{
+@@ -128,17 +152,91 @@ func (c *Config) NamedCommands() []NamedCommand {
+ }
+ 
+ // LoadConfig reads and validates the configuration of an initialized project: errors are
+-// environment/not_initialized, environment/old_kogen_config and environment/project_config_invalid.
++// environment/not_initialized, environment/old_kogen_config, environment/models_moved and
++// environment/project_config_invalid. The effective lineup of each role is the local override's
++// entry, else the team file's, else the default.
+ func LoadConfig(root string) (*Config, error) {
+ 	file := filepath.Join(root, ConfigPath)
+ 	b, err := os.ReadFile(file)
+ 	if err != nil {
+ 		return nil, sys.Fail("environment", "not_initialized", root+" has no .kogen/project.yaml; run kogen init", 3)
+ 	}
+-	return ParseConfig(string(b), file)
++	cfg, err := ParseConfig(string(b), file)
++	if err != nil {
++		return nil, err
++	}
++	for _, source := range []string{ModelsPath, LocalModelsPath} {
++		path := filepath.Join(root, source)
++		text, err := os.ReadFile(path)
++		if errors.Is(err, fs.ErrNotExist) {
++			continue
++		}
++		if err != nil {
++			return nil, err
++		}
++		roles, err := ParseModels(string(text), path)
++		if err != nil {
++			return nil, err
++		}
++		for role, r := range roles {
++			cfg.Models[role] = r
++			cfg.ModelSources[role] = source
++		}
++	}
++	return cfg, nil
++}
++
++// ParseModels validates the text of one lineup file (`.kogen/models.yaml` or
++// `.kogen/local/models.yaml`) and returns the roles it names, without defaults; file names it
++// in errors. A file with only comments and blank lines names no role.
++func ParseModels(text, file string) (map[string]Role, error) {
++	if blank(text) {
++		return map[string]Role{}, nil
++	}
++	var roles map[string]Role
++	node, problems := parseYAML(text)
++	if problems == nil {
++		v := &validator{}
++		roles = v.models(node)
++		problems = v.problems
++	}
++	if err := problemsError(file, problems); err != nil {
++		return nil, err
++	}
++	return roles, nil
+ }
+ 
+-// ParseConfig validates configuration text; file names it in errors.
++// blank reports whether text has nothing but comments and blank lines.
++func blank(text string) bool {
++	for _, raw := range strings.Split(text, "\n") {
++		if strings.TrimSpace(stripComment(trimRightSpace(raw))) != "" {
++			return false
++		}
++	}
++	return true
++}
++
++// problemsError is environment/project_config_invalid for file with one line per problem, sorted
++// by line and message; nil without problems.
++func problemsError(file string, problems []problem) error {
++	if len(problems) == 0 {
++		return nil
++	}
++	sort.SliceStable(problems, func(i, j int) bool {
++		if problems[i].line != problems[j].line {
++			return problems[i].line < problems[j].line
++		}
++		return problems[i].msg < problems[j].msg
++	})
++	e := sys.Fail("environment", "project_config_invalid", file, 3)
++	for _, p := range problems {
++		e.Lines = append(e.Lines, fmt.Sprintf("line %d: %s", p.line, p.msg))
++	}
++	return e
++}
++
++// ParseConfig validates configuration text; file names it in errors. It reads no lineup file:
++// Models is the default lineup with every source SourceDefault.
+ func ParseConfig(text, file string) (*Config, error) {
+ 	var cfg *Config
+ 	var problems []problem
+@@ -147,29 +245,23 @@ func ParseConfig(text, file string) (*Config, error) {
+ 	case probs != nil:
+ 		problems = probs
+ 	case node.kind == kindMap:
+-		hasVersion := false
++		hasVersion, hasModels := false, false
+ 		for _, p := range node.pairs {
+ 			hasVersion = hasVersion || p.key == "version"
++			hasModels = hasModels || p.key == "models"
+ 		}
+ 		if !hasVersion {
+ 			return nil, sys.Fail("environment", "old_kogen_config", ".kogen/ is from an earlier Kogen; move it aside (git mv .kogen .kogen-old), commit, and run kogen init", 3)
+ 		}
++		if hasModels {
++			return nil, sys.Fail("environment", "models_moved", ".kogen/project.yaml still has models:; move that lineup to .kogen/models.yaml", 3)
++		}
+ 		cfg, problems = validateConfig(node)
+ 	default:
+ 		cfg, problems = validateConfig(node)
+ 	}
+-	if len(problems) > 0 {
+-		sort.SliceStable(problems, func(i, j int) bool {
+-			if problems[i].line != problems[j].line {
+-				return problems[i].line < problems[j].line
+-			}
+-			return problems[i].msg < problems[j].msg
+-		})
+-		e := sys.Fail("environment", "project_config_invalid", file, 3)
+-		for _, p := range problems {
+-			e.Lines = append(e.Lines, fmt.Sprintf("line %d: %s", p.line, p.msg))
+-		}
+-		return nil, e
++	if err := problemsError(file, problems); err != nil {
++		return nil, err
+ 	}
+ 	return cfg, nil
+ }
+@@ -188,7 +280,7 @@ func validateConfig(node *yamlNode) (*Config, []problem) {
+ 		return nil, []problem{{node.line, "the file must be a mapping"}}
+ 	}
+ 	v := &validator{}
+-	c := &Config{Models: DefaultModels(), ShapeWorkers: Workers{Roles: map[string]Role{}}, ReviewMaterial: ReviewMaterial{Mode: "parts"}}
++	c := &Config{Models: DefaultModels(), ModelSources: defaultSources(), ShapeWorkers: Workers{Roles: map[string]Role{}}, ReviewMaterial: ReviewMaterial{Mode: "parts"}}
+ 	for _, p := range node.pairs {
+ 		switch p.key {
+ 		case "version":
+@@ -207,8 +299,6 @@ func validateConfig(node *yamlNode) (*Config, []problem) {
+ 			c.ShapeDecisionCheck = DecisionCheck(v.enabledOnly(p.node, "shape_decision_check"))
+ 		case "review_material":
+ 			c.ReviewMaterial = v.reviewMaterial(p.node)
+-		case "models":
+-			c.Models = v.models(p.node)
+ 		default:
+ 			v.add(p.line, "unknown key "+p.key)
+ 		}
+@@ -314,19 +404,21 @@ func hasCheck(list []Check, name string) bool {
+ 	return false
+ }
+ 
++// models validates the top-level mapping of a lineup file and returns the roles it names.
+ func (v *validator) models(node *yamlNode) map[string]Role {
+-	roles := DefaultModels()
++	roles := map[string]Role{}
+ 	if node.kind != kindMap {
+ 		v.add(node.line, "models must be a mapping")
+ 		return roles
+ 	}
++	known := DefaultModels()
+ 	for _, p := range node.pairs {
+ 		// Older project files may retain a planner model. It is ignored: building starts
+ 		// directly and never issues a separate planning request.
+ 		if p.key == "plan" {
+ 			continue
+ 		}
+-		if _, known := roles[p.key]; !known {
++		if _, ok := known[p.key]; !ok {
+ 			v.add(p.line, "unknown key "+p.key)
+ 			continue
+ 		}
+@@ -661,5 +753,5 @@ func ReadableConfig(text string) *Config {
+ 			return cfg
+ 		}
+ 	}
+-	return &Config{Models: DefaultModels(), ShapeWorkers: Workers{Roles: map[string]Role{}}}
++	return &Config{Models: DefaultModels(), ModelSources: defaultSources(), ShapeWorkers: Workers{Roles: map[string]Role{}}}
+ }
+diff --git a/project/render.go b/project/render.go
+index 17beaa2..deb6c0e 100644
+--- a/project/render.go
++++ b/project/render.go
+@@ -5,13 +5,17 @@ import (
+ )
+ 
+ // Template is the configuration `kogen init` writes before it keeps any detected command (SET-8):
+-// every list empty, acceptance null, the default model per role.
+-func Template() string {
++// every list empty, acceptance null. The model lineup is ModelsTemplate.
++func Template() string { return templateHead }
++
++// ModelsTemplate is the team lineup `kogen init` writes to `.kogen/models.yaml`: the default
++// model per role.
++func ModelsTemplate() string {
+ 	var b strings.Builder
+-	b.WriteString(templateHead)
++	b.WriteString("# The team's model lineup. A role named in " + LocalModelsPath + " replaces that role on one machine.\n")
+ 	d := DefaultModels()
+ 	for _, role := range ModelRoles {
+-		b.WriteString("  " + role + ":\n    model: " + d[role].Model + "\n    effort: " + d[role].Effort + "\n")
++		b.WriteString(role + ":\n  model: " + d[role].Model + "\n  effort: " + d[role].Effort + "\n")
+ 	}
+ 	return b.String()
+ }
+@@ -25,7 +29,6 @@ commands:
+     run: null        # the acceptance command (VER-3)
+     steps_dir: null  # where shaping writes step-definition files
+ protect: []          # check configuration the Build must not change, e.g. .credo.exs
+-models:
+ `
+ 
+ // templateLine is the template's own line for key: the empty value with its comment.
+@@ -39,7 +42,7 @@ func templateLine(key string) string {
+ }
+ 
+ // RenderConfig is the template with the commands `init` kept (SET-2): the setup, fix, checks,
+-// protect and acceptance fields of c are written; models keep their defaults.
++// protect and acceptance fields of c are written.
+ func RenderConfig(c *Config) string {
+ 	lines := []string{"version: 1", "commands:"}
+ 	list := func(key string, items []string) {
+@@ -77,9 +80,7 @@ func RenderConfig(c *Config) string {
+ 	} else {
+ 		lines = append(lines, "protect:\n"+strings.Join(prefixed("  - ", quoted(c.Protect)), "\n"))
+ 	}
+-	lines = append(lines, "models:")
+-	_, models, _ := strings.Cut(Template(), "models:\n")
+-	return strings.Join(lines, "\n") + "\n" + models
++	return strings.Join(lines, "\n") + "\n"
+ }
+ 
+ func prefixed(prefix string, ss []string) []string {

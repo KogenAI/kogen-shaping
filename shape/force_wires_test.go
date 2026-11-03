@@ -42,8 +42,7 @@ var (
 		name: "chat", provider: "openai-compatible",
 		configure: func(f *shpFx) {
 			f.t.Helper()
-			f.write(".kogen/project.yaml", f.read(".kogen/project.yaml")+"models:\n  shape: {provider: openai-compatible, model: local-model, effort: high, base_url: '"+f.Prov.srv.URL+"/v1'}\n")
-			f.git("add", ".kogen/project.yaml")
+			f.writeLineup(f.read(".kogen/project.yaml"), "shape: {provider: openai-compatible, model: local-model, effort: high, base_url: '"+f.Prov.srv.URL+"/v1'}\n")
 			f.git("commit", "-qm", "chat completions shape role")
 		},
 		answer: func(text string, calls ...map[string]any) shpStep {
@@ -77,8 +76,7 @@ var (
 		name: "anthropic", provider: "anthropic",
 		configure: func(f *shpFx) {
 			f.t.Helper()
-			f.write(".kogen/project.yaml", f.read(".kogen/project.yaml")+"models:\n  shape: {provider: anthropic, model: claude-sonnet-5-5, effort: high}\n")
-			f.git("add", ".kogen/project.yaml")
+			f.writeLineup(f.read(".kogen/project.yaml"), "shape: {provider: anthropic, model: claude-sonnet-5-5, effort: high}\n")
 			f.git("commit", "-qm", "anthropic shape role")
 			key, _ := json.Marshal(map[string]any{"provider": "anthropic", "api_key": "sk-ant-FIXTURE-KEY"})
 			if err := os.WriteFile(filepath.Join(f.Home, ".kogen", "credentials", "anthropic.json"), key, 0o600); err != nil {

@@ -907,8 +907,7 @@ func TestShapeProbeReportsTimeoutObservationFailure(t *testing.T) {
 // whose Messages endpoint answers every request with a stream that is not a valid message.
 func shpAnthropic(f *shpFx) shpStep {
 	f.t.Helper()
-	f.write(".kogen/project.yaml", f.read(".kogen/project.yaml")+"models:\n  shape: {provider: anthropic, model: claude-sonnet-5-5, effort: high}\n")
-	f.git("add", ".kogen/project.yaml")
+	f.writeLineup(f.read(".kogen/project.yaml"), "shape: {provider: anthropic, model: claude-sonnet-5-5, effort: high}\n")
 	f.git("commit", "-qm", "anthropic shape role")
 	key, _ := json.Marshal(map[string]any{"provider": "anthropic", "api_key": "sk-ant-FIXTURE-KEY"})
 	if err := os.WriteFile(filepath.Join(f.Home, ".kogen", "credentials", "anthropic.json"), key, 0o600); err != nil {

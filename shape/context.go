@@ -400,6 +400,11 @@ func roundsText(all []map[string]any) string {
 	return strings.Join(rounds, "\n")
 }
 
+// modelsFilePath is the team lineup file of a coordinator that reads the lineup from it; it is
+// named literally because a coordinator that keeps the lineup in `.kogen/project.yaml` has no
+// constant for it. It is a protected baseline path exactly when the coordinator's baseline lists it.
+const modelsFilePath = ".kogen/models.yaml"
+
 // contextBlocks is the shaper's first message content: the stable contract text and the
 // dynamic navigation index, as two input_text blocks.
 func contextBlocks(p promptInput) ([]any, error) {
@@ -420,7 +425,7 @@ func contextBlocks(p promptInput) ([]any, error) {
 	}
 	var automatic []string
 	for _, path := range baseline {
-		if path == project.ConfigPath || slices.Contains(acceptancePaths, path) || strings.HasPrefix(path, project.IntentDir(p.slug)+"/") {
+		if path == project.ConfigPath || path == modelsFilePath || slices.Contains(acceptancePaths, path) || strings.HasPrefix(path, project.IntentDir(p.slug)+"/") {
 			automatic = append(automatic, path)
 		}
 	}
@@ -451,7 +456,11 @@ func contextBlocks(p promptInput) ([]any, error) {
 	b.WriteString("  (it runs with KOGEN_ACCEPTANCE_FEATURES set to the Intent's feature path and KOGEN_ACCEPTANCE_REPORT to the report path)\n\n")
 	b.WriteString("# Protection contract\n\n")
 	fmt.Fprintf(&b, "configured protect patterns: %s\npaths currently matched by those patterns: %s\n", InspectStrings(p.cfg.Protect), InspectStrings(p.protected))
-	fmt.Fprintf(&b, "automatic baseline: every file in `%s/`, every path listed under the Intent's `Acceptance:` (including step files), and `.kogen/project.yaml`.\n", project.IntentDir(p.slug))
+	configFiles := "and `.kogen/project.yaml`"
+	if slices.Contains(baseline, modelsFilePath) {
+		configFiles = "`.kogen/project.yaml` and `" + modelsFilePath + "`"
+	}
+	fmt.Fprintf(&b, "automatic baseline: every file in `%s/`, every path listed under the Intent's `Acceptance:` (including step files), %s.\n", project.IntentDir(p.slug), configFiles)
 	fmt.Fprintf(&b, "automatic paths currently present or listed: %s\n", InspectStrings(automatic))
 	b.WriteString("Approval freezes this baseline. It is not an exception or authorization to change a protected path. Inspect the implementation edits required to deliver the requested outcome; do not infer a conflict by scanning request prose. If a required protected edit cannot be avoided without changing the requested outcome, submit the exclusive `blocked` report with actual protected paths and a reason. Never submit a ready package conditional on a protected-edit approval mechanism: no such override exists.\n\n")
 	b.WriteString("Full contract inclusions: exact request, Q&A, README, testing rules and protection/automatic baseline are authoritative and are not clipped.\n")

@@ -412,7 +412,7 @@ func TestShapeForceWireCompatibility(t *testing.T) {
 		for _, owner := range []string{"shape", "refine"} {
 			key := owner + "/" + w.name
 			want, ok := golden[key]
-			if !ok {
+			if !ok && !*updateGoldens {
 				t.Fatalf("no golden for %s", key)
 			}
 			seen++
@@ -423,9 +423,11 @@ func TestShapeForceWireCompatibility(t *testing.T) {
 			}
 		}
 	}
-	shpEq(t, "golden cases", len(golden), seen)
+	if !*updateGoldens {
+		shpEq(t, "golden cases", len(golden), seen)
+	}
 	if *updateGoldens && !t.Failed() {
-		writeGolden(t, "testdata/force_ordinary_golden.json", actual, "  ")
+		writeGolden(t, forceGoldenPath(), actual, "  ")
 	}
 
 	// Only the inference after a tool-free answer requires the terminal tool; discovery without

@@ -1,0 +1,57 @@
+=== RUN   TestShapeBatchInterruptCancelsEveryJob
+=== PAUSE TestShapeBatchInterruptCancelsEveryJob
+=== RUN   TestBatchOwnershipAndBoundaryRefusalPrecedesCallsAndNeverAltersTheRawIndex
+=== PAUSE TestBatchOwnershipAndBoundaryRefusalPrecedesCallsAndNeverAltersTheRawIndex
+=== RUN   TestBatchAnExistingEditableStepIsAValidDraftTarget
+=== PAUSE TestBatchAnExistingEditableStepIsAValidDraftTarget
+=== RUN   TestWorkersReceiveBoundedLongLineReadsAndReplayTheDeliveredDisplayExactly
+=== PAUSE TestWorkersReceiveBoundedLongLineReadsAndReplayTheDeliveredDisplayExactly
+=== RUN   TestClaudeLineupShapeSubmission
+=== PAUSE TestClaudeLineupShapeSubmission
+=== CONT  TestShapeBatchInterruptCancelsEveryJob
+=== CONT  TestWorkersReceiveBoundedLongLineReadsAndReplayTheDeliveredDisplayExactly
+=== CONT  TestBatchAnExistingEditableStepIsAValidDraftTarget
+=== CONT  TestBatchOwnershipAndBoundaryRefusalPrecedesCallsAndNeverAltersTheRawIndex
+--- PASS: TestBatchAnExistingEditableStepIsAValidDraftTarget (0.93s)
+=== CONT  TestClaudeLineupShapeSubmission
+=== RUN   TestClaudeLineupShapeSubmission/readiness_feedback_and_exact_red_acknowledgment_stay_with_one_session
+=== PAUSE TestClaudeLineupShapeSubmission/readiness_feedback_and_exact_red_acknowledgment_stay_with_one_session
+=== RUN   TestClaudeLineupShapeSubmission/an_invalid_submission_is_retried_in_the_same_session_and_three_end_shaping
+=== PAUSE TestClaudeLineupShapeSubmission/an_invalid_submission_is_retried_in_the_same_session_and_three_end_shaping
+=== RUN   TestClaudeLineupShapeSubmission/a_model-supplied_provenance_line_is_not_a_Kogen_documentation_record
+=== PAUSE TestClaudeLineupShapeSubmission/a_model-supplied_provenance_line_is_not_a_Kogen_documentation_record
+=== RUN   TestClaudeLineupShapeSubmission/questions_keep_the_numbered_CLI_and_the_next_invocation_is_a_fresh_session
+=== PAUSE TestClaudeLineupShapeSubmission/questions_keep_the_numbered_CLI_and_the_next_invocation_is_a_fresh_session
+=== RUN   TestClaudeLineupShapeSubmission/startup,_protocol_and_round-cap_failures_publish_nothing_and_never_fall_back
+=== PAUSE TestClaudeLineupShapeSubmission/startup,_protocol_and_round-cap_failures_publish_nothing_and_never_fall_back
+=== CONT  TestClaudeLineupShapeSubmission/readiness_feedback_and_exact_red_acknowledgment_stay_with_one_session
+--- PASS: TestShapeBatchInterruptCancelsEveryJob (1.34s)
+=== CONT  TestClaudeLineupShapeSubmission/a_model-supplied_provenance_line_is_not_a_Kogen_documentation_record
+--- PASS: TestWorkersReceiveBoundedLongLineReadsAndReplayTheDeliveredDisplayExactly (1.83s)
+=== CONT  TestClaudeLineupShapeSubmission/startup,_protocol_and_round-cap_failures_publish_nothing_and_never_fall_back
+=== RUN   TestClaudeLineupShapeSubmission/startup,_protocol_and_round-cap_failures_publish_nothing_and_never_fall_back/unavailable
+=== PAUSE TestClaudeLineupShapeSubmission/startup,_protocol_and_round-cap_failures_publish_nothing_and_never_fall_back/unavailable
+=== RUN   TestClaudeLineupShapeSubmission/startup,_protocol_and_round-cap_failures_publish_nothing_and_never_fall_back/missing_structured_output
+=== PAUSE TestClaudeLineupShapeSubmission/startup,_protocol_and_round-cap_failures_publish_nothing_and_never_fall_back/missing_structured_output
+=== RUN   TestClaudeLineupShapeSubmission/startup,_protocol_and_round-cap_failures_publish_nothing_and_never_fall_back/round_cap
+=== PAUSE TestClaudeLineupShapeSubmission/startup,_protocol_and_round-cap_failures_publish_nothing_and_never_fall_back/round_cap
+=== RUN   TestClaudeLineupShapeSubmission/startup,_protocol_and_round-cap_failures_publish_nothing_and_never_fall_back/auth_refused
+=== PAUSE TestClaudeLineupShapeSubmission/startup,_protocol_and_round-cap_failures_publish_nothing_and_never_fall_back/auth_refused
+=== CONT  TestClaudeLineupShapeSubmission/questions_keep_the_numbered_CLI_and_the_next_invocation_is_a_fresh_session
+=== CONT  TestClaudeLineupShapeSubmission/an_invalid_submission_is_retried_in_the_same_session_and_three_end_shaping
+--- PASS: TestBatchOwnershipAndBoundaryRefusalPrecedesCallsAndNeverAltersTheRawIndex (2.82s)
+=== CONT  TestClaudeLineupShapeSubmission/startup,_protocol_and_round-cap_failures_publish_nothing_and_never_fall_back/unavailable
+=== CONT  TestClaudeLineupShapeSubmission/startup,_protocol_and_round-cap_failures_publish_nothing_and_never_fall_back/round_cap
+=== CONT  TestClaudeLineupShapeSubmission/startup,_protocol_and_round-cap_failures_publish_nothing_and_never_fall_back/auth_refused
+=== CONT  TestClaudeLineupShapeSubmission/startup,_protocol_and_round-cap_failures_publish_nothing_and_never_fall_back/missing_structured_output
+--- PASS: TestClaudeLineupShapeSubmission (0.00s)
+    --- PASS: TestClaudeLineupShapeSubmission/a_model-supplied_provenance_line_is_not_a_Kogen_documentation_record (1.19s)
+    --- PASS: TestClaudeLineupShapeSubmission/readiness_feedback_and_exact_red_acknowledgment_stay_with_one_session (2.27s)
+    --- PASS: TestClaudeLineupShapeSubmission/an_invalid_submission_is_retried_in_the_same_session_and_three_end_shaping (1.20s)
+    --- PASS: TestClaudeLineupShapeSubmission/questions_keep_the_numbered_CLI_and_the_next_invocation_is_a_fresh_session (2.95s)
+    --- PASS: TestClaudeLineupShapeSubmission/startup,_protocol_and_round-cap_failures_publish_nothing_and_never_fall_back (0.00s)
+        --- PASS: TestClaudeLineupShapeSubmission/startup,_protocol_and_round-cap_failures_publish_nothing_and_never_fall_back/unavailable (0.47s)
+        --- PASS: TestClaudeLineupShapeSubmission/startup,_protocol_and_round-cap_failures_publish_nothing_and_never_fall_back/auth_refused (0.47s)
+        --- PASS: TestClaudeLineupShapeSubmission/startup,_protocol_and_round-cap_failures_publish_nothing_and_never_fall_back/missing_structured_output (0.62s)
+        --- PASS: TestClaudeLineupShapeSubmission/startup,_protocol_and_round-cap_failures_publish_nothing_and_never_fall_back/round_cap (1.66s)
+PASS

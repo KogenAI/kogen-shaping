@@ -1,0 +1,45 @@
+=== RUN   TestApproveCardOutput
+=== PAUSE TestApproveCardOutput
+=== RUN   TestShapeBatchRunsWorkersAndReturnsTheirResults
+=== PAUSE TestShapeBatchRunsWorkersAndReturnsTheirResults
+=== RUN   TestContextBlocksCarryTheContractsAndEarlierRounds
+=== PAUSE TestContextBlocksCarryTheContractsAndEarlierRounds
+=== RUN   TestShapeForceWireCompatibility
+=== PAUSE TestShapeForceWireCompatibility
+=== RUN   TestClaudeLineupNativeCompatibility
+=== PAUSE TestClaudeLineupNativeCompatibility
+=== RUN   TestRefineWritesTheCorrectionAndPrintsTheLines
+=== PAUSE TestRefineWritesTheCorrectionAndPrintsTheLines
+=== RUN   TestShapeAnthropicInvalidProviderFailureReachesTheDiagnostic
+=== PAUSE TestShapeAnthropicInvalidProviderFailureReachesTheDiagnostic
+=== CONT  TestApproveCardOutput
+=== CONT  TestClaudeLineupNativeCompatibility
+=== CONT  TestContextBlocksCarryTheContractsAndEarlierRounds
+=== CONT  TestShapeBatchRunsWorkersAndReturnsTheirResults
+--- PASS: TestClaudeLineupNativeCompatibility (0.00s)
+=== CONT  TestShapeForceWireCompatibility
+--- PASS: TestContextBlocksCarryTheContractsAndEarlierRounds (0.52s)
+=== CONT  TestShapeAnthropicInvalidProviderFailureReachesTheDiagnostic
+--- PASS: TestShapeAnthropicInvalidProviderFailureReachesTheDiagnostic (0.43s)
+=== CONT  TestRefineWritesTheCorrectionAndPrintsTheLines
+--- PASS: TestApproveCardOutput (1.05s)
+--- PASS: TestShapeBatchRunsWorkersAndReturnsTheirResults (1.59s)
+--- PASS: TestRefineWritesTheCorrectionAndPrintsTheLines (2.29s)
+=== RUN   TestShapeForceWireCompatibility/responses/shape
+=== PAUSE TestShapeForceWireCompatibility/responses/shape
+=== RUN   TestShapeForceWireCompatibility/responses/refine
+=== PAUSE TestShapeForceWireCompatibility/responses/refine
+=== RUN   TestShapeForceWireCompatibility/chat/shape
+=== PAUSE TestShapeForceWireCompatibility/chat/shape
+=== RUN   TestShapeForceWireCompatibility/chat/refine
+=== PAUSE TestShapeForceWireCompatibility/chat/refine
+=== CONT  TestShapeForceWireCompatibility/responses/shape
+=== CONT  TestShapeForceWireCompatibility/chat/refine
+=== CONT  TestShapeForceWireCompatibility/chat/shape
+=== CONT  TestShapeForceWireCompatibility/responses/refine
+--- PASS: TestShapeForceWireCompatibility (9.95s)
+    --- PASS: TestShapeForceWireCompatibility/responses/shape (1.95s)
+    --- PASS: TestShapeForceWireCompatibility/chat/shape (2.00s)
+    --- PASS: TestShapeForceWireCompatibility/responses/refine (2.41s)
+    --- PASS: TestShapeForceWireCompatibility/chat/refine (2.45s)
+PASS

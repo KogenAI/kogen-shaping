@@ -1,0 +1,53 @@
+=== RUN   TestShapeBatchInterruptCancelsEveryJob
+=== PAUSE TestShapeBatchInterruptCancelsEveryJob
+=== RUN   TestBatchOwnershipAndBoundaryRefusalPrecedesCallsAndNeverAltersTheRawIndex
+=== PAUSE TestBatchOwnershipAndBoundaryRefusalPrecedesCallsAndNeverAltersTheRawIndex
+=== RUN   TestBatchAnExistingEditableStepIsAValidDraftTarget
+=== PAUSE TestBatchAnExistingEditableStepIsAValidDraftTarget
+=== RUN   TestWorkersReceiveBoundedLongLineReadsAndReplayTheDeliveredDisplayExactly
+=== PAUSE TestWorkersReceiveBoundedLongLineReadsAndReplayTheDeliveredDisplayExactly
+=== RUN   TestClaudeLineupShapeSubmission
+=== PAUSE TestClaudeLineupShapeSubmission
+=== CONT  TestShapeBatchInterruptCancelsEveryJob
+=== CONT  TestWorkersReceiveBoundedLongLineReadsAndReplayTheDeliveredDisplayExactly
+=== CONT  TestClaudeLineupShapeSubmission
+=== CONT  TestBatchAnExistingEditableStepIsAValidDraftTarget
+=== RUN   TestClaudeLineupShapeSubmission/readiness_feedback_and_exact_red_acknowledgment_stay_with_one_session
+=== PAUSE TestClaudeLineupShapeSubmission/readiness_feedback_and_exact_red_acknowledgment_stay_with_one_session
+=== RUN   TestClaudeLineupShapeSubmission/an_invalid_submission_is_retried_in_the_same_session_and_three_end_shaping
+=== PAUSE TestClaudeLineupShapeSubmission/an_invalid_submission_is_retried_in_the_same_session_and_three_end_shaping
+=== RUN   TestClaudeLineupShapeSubmission/a_model-supplied_provenance_line_is_not_a_Kogen_documentation_record
+=== PAUSE TestClaudeLineupShapeSubmission/a_model-supplied_provenance_line_is_not_a_Kogen_documentation_record
+=== RUN   TestClaudeLineupShapeSubmission/questions_keep_the_numbered_CLI_and_the_next_invocation_is_a_fresh_session
+=== PAUSE TestClaudeLineupShapeSubmission/questions_keep_the_numbered_CLI_and_the_next_invocation_is_a_fresh_session
+=== RUN   TestClaudeLineupShapeSubmission/startup,_protocol_and_round-cap_failures_publish_nothing_and_never_fall_back
+=== PAUSE TestClaudeLineupShapeSubmission/startup,_protocol_and_round-cap_failures_publish_nothing_and_never_fall_back
+=== CONT  TestBatchOwnershipAndBoundaryRefusalPrecedesCallsAndNeverAltersTheRawIndex
+    batch_test.go:460: the valid draft job is accepted
+=== CONT  TestClaudeLineupShapeSubmission/readiness_feedback_and_exact_red_acknowledgment_stay_with_one_session
+--- FAIL: TestBatchOwnershipAndBoundaryRefusalPrecedesCallsAndNeverAltersTheRawIndex (0.61s)
+=== NAME  TestBatchAnExistingEditableStepIsAValidDraftTarget
+    batch_test.go:517: an existing editable step is a valid draft target, with current boundaries
+--- FAIL: TestBatchAnExistingEditableStepIsAValidDraftTarget (0.72s)
+=== CONT  TestClaudeLineupShapeSubmission/questions_keep_the_numbered_CLI_and_the_next_invocation_is_a_fresh_session
+=== NAME  TestClaudeLineupShapeSubmission/readiness_feedback_and_exact_red_acknowledgment_stay_with_one_session
+    lineup_shape_test.go:187: exit 3, err environment/models_moved: .kogen/project.yaml still has models:; move that lineup to .kogen/models.yaml
+        stdout: 
+        stderr: 
+=== CONT  TestClaudeLineupShapeSubmission/startup,_protocol_and_round-cap_failures_publish_nothing_and_never_fall_back
+=== RUN   TestClaudeLineupShapeSubmission/startup,_protocol_and_round-cap_failures_publish_nothing_and_never_fall_back/auth_refused
+=== PAUSE TestClaudeLineupShapeSubmission/startup,_protocol_and_round-cap_failures_publish_nothing_and_never_fall_back/auth_refused
+=== RUN   TestClaudeLineupShapeSubmission/startup,_protocol_and_round-cap_failures_publish_nothing_and_never_fall_back/unavailable
+=== PAUSE TestClaudeLineupShapeSubmission/startup,_protocol_and_round-cap_failures_publish_nothing_and_never_fall_back/unavailable
+=== RUN   TestClaudeLineupShapeSubmission/startup,_protocol_and_round-cap_failures_publish_nothing_and_never_fall_back/missing_structured_output
+=== PAUSE TestClaudeLineupShapeSubmission/startup,_protocol_and_round-cap_failures_publish_nothing_and_never_fall_back/missing_structured_output
+=== RUN   TestClaudeLineupShapeSubmission/startup,_protocol_and_round-cap_failures_publish_nothing_and_never_fall_back/round_cap
+=== PAUSE TestClaudeLineupShapeSubmission/startup,_protocol_and_round-cap_failures_publish_nothing_and_never_fall_back/round_cap
+=== CONT  TestClaudeLineupShapeSubmission/a_model-supplied_provenance_line_is_not_a_Kogen_documentation_record
+=== NAME  TestClaudeLineupShapeSubmission/questions_keep_the_numbered_CLI_and_the_next_invocation_is_a_fresh_session
+    lineup_shape_test.go:269: exit 3, err environment/models_moved: .kogen/project.yaml still has models:; move that lineup to .kogen/models.yaml
+=== CONT  TestClaudeLineupShapeSubmission/an_invalid_submission_is_retried_in_the_same_session_and_three_end_shaping
+--- FAIL: TestClaudeLineupShapeSubmission (0.90s)
+    --- FAIL: TestClaudeLineupShapeSubmission/readiness_feedback_and_exact_red_acknowledgment_stay_with_one_session (0.15s)
+    --- FAIL: TestClaudeLineupShapeSubmission/questions_keep_the_numbered_CLI_and_the_next_invocation_is_a_fresh_session (0.14s)
+    --- FAIL: TestClaudeLineupShapeSubmission/a_model-supplied_provenance_line_is_not_a_Kogen_documentation_record (0.14s)

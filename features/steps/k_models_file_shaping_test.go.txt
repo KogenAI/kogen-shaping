@@ -1,0 +1,61 @@
+package shape
+
+// The acceptance harness of k-models-file-shaping. Its acceptance step overlays it into ./shape,
+// builds the shape test binary with `go test -c` against the pinned kogen-coordinator and against
+// that coordinator with its K-MODELS-FILE change applied, and runs this test once in each binary.
+// It shapes in the package's fixture project with the package's scripted Claude Code shaper, whose
+// team lineup sits where the coordinator in use reads it, stops at the shaper's first round and
+// prints one KMFS observation line. It judges nothing itself: the step compares the observation
+// with the feature's values.
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+	"testing"
+
+	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-executor/executor"
+	"kogen-loop/sys"
+)
+
+func TestKModelsFileShapingAcceptance(t *testing.T) {
+	layout := "project-yaml"
+	_, perr := project.ParseConfig("version: 1\nmodels:\n  shape: {model: m, effort: high}\n", project.ConfigPath)
+	if se, ok := sys.AsError(perr); ok && se.Class == "environment" && se.Reason == "models_moved" {
+		layout = "models-file"
+	}
+	f := newShpFx(t)
+	role := "shape: {executor: claude-code, model: team-shape-model, effort: high}\n"
+	if layout == "models-file" {
+		f.write(".kogen/models.yaml", role)
+	} else {
+		f.write(".kogen/project.yaml", f.read(".kogen/project.yaml")+"models:\n  "+role)
+	}
+	f.git("add", "-A")
+	f.git("commit", "-qm", "team lineup")
+	x := &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){func(int, string) (executor.RoundResult, error) {
+		return executor.RoundResult{}, errors.New("kmfs: the scripted shaper stops at its first round")
+	}}}
+	exit, err := f.shapeWith(x, "Add calc.is_even(n).")
+	obs := map[string]any{"layout": layout, "exit": exit, "error": fmt.Sprint(err), "shaper_sessions": len(x.starts),
+		"model": "", "effort": "", "automatic_baseline": "", "automatic_paths": ""}
+	if len(x.starts) > 0 {
+		task := x.starts[0]
+		obs["model"], obs["effort"] = task.Model, task.Effort
+		for _, line := range strings.Split(task.Brief.Stable, "\n") {
+			switch {
+			case strings.HasPrefix(line, "automatic baseline: "):
+				obs["automatic_baseline"] = line
+			case strings.HasPrefix(line, "automatic paths currently present or listed: "):
+				obs["automatic_paths"] = line
+			}
+		}
+	}
+	b, err := json.Marshal(obs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Println("KMFS " + string(b))
+}
