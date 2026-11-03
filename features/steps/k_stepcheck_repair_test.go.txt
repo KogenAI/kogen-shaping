@@ -1,0 +1,58 @@
+package shape
+
+import (
+ "os"
+ "strings"
+ "testing"
+)
+
+type repairObservation struct { requests int; feedback, published bool; remaining string }
+func checkRepair(t *testing.T, o repairObservation, mode string) {
+ t.Helper()
+ want := 2
+ if mode == "exhaust" { want = 3 }
+ if o.requests != want { t.Errorf("requests = %d, want %d", o.requests, want) }
+ if !o.feedback { t.Error("shaper did not receive exit_code, step path, go run and go build correction") }
+ if o.published != (mode == "repair") { t.Errorf("published = %v in %s", o.published, mode) }
+ if mode == "exhaust" && !strings.Contains(o.remaining, "exit_code") { t.Errorf("remaining findings = %q", o.remaining) }
+}
+
+func TestKStepcheckRepairAcceptance(t *testing.T) {
+ mode := os.Getenv("KSTEP_MODE")
+ if mode == "good" || mode == "bad" {
+  o := repairObservation{2, true, true, ""}
+  if mode == "bad" { o.feedback = false }
+  checkRepair(t, o, "repair")
+  checkRepair(t, repairObservation{3, true, false, "exit_code features/steps/is_even_steps.js"}, "exhaust")
+  return
+ }
+ f := newShpFx(t)
+ bad := strings.Replace(shpSteps, "function () {}", "function () { const r = require('child_process').spawnSync('sh', ['-c', 'go run .']); require('assert').strictEqual(r.status, 0); }", 1)
+ files := shpFiles()
+ for _, raw := range files["files"].([]any) {
+  m := raw.(map[string]any)
+  if m["path"] == "features/steps/is_even_steps.js" { m["content"] = bad }
+ }
+ f.setReport("PASSED", 0)
+ if mode == "repair" {
+  f.Prov.seq = []shpStep{shpSubmit("bad", files), shpSubmit("fixed", shpFiles())}
+ } else if mode == "exhaust" {
+  f.Prov.seq = []shpStep{shpSubmit("bad", files), shpSubmit("bad2", files), shpSubmit("bad3", files)}
+ } else { t.Fatalf("unknown mode %q", mode) }
+ exit, err := f.shape("Add calc.is_even(n).")
+ o := repairObservation{requests: len(f.Prov.requests())}
+ reqs := f.Prov.requests()
+ if len(reqs) > 1 {
+  text := shpOutputs(reqs[1])["bad"]
+  o.feedback = strings.Contains(text, "exit_code") && strings.Contains(text, "features/steps/is_even_steps.js") && strings.Contains(text, "go run") && strings.Contains(text, "go build")
+ }
+ o.published = len(shpNamed(f.events(), "intent_published")) > 0
+ if mode == "repair" {
+  o.published = err == nil && exit == 0 && f.read("features/steps/is_even_steps.js") == shpSteps
+ } else {
+  e := shpWantError(t, err, "intent", "not_ready", "the Intent is not ready to build", 1)
+  o.remaining = strings.Join(e.Lines, "\n")
+  if exit != 1 { t.Errorf("exit = %d", exit) }
+ }
+ checkRepair(t, o, mode)
+}
