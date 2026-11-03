@@ -1,0 +1,23 @@
+package main
+
+import (
+ "encoding/json"
+ "fmt"
+ "github.com/KogenAI/kogen-executor/agent"
+ "github.com/KogenAI/kogen-shaping/shape"
+)
+
+func main() {
+ names := []string{"read_file", "view_image", "list_files", "search_text", "probe", "documentation", "propose_files", "submit", "shape_batch", "worker_result"}
+ // The retained Shape-owned suffix is not part of agent.Prompt. Recover it
+ // from the public instructions using the pinned prefix length; equality below
+ // also checks that prefix, including the context paragraph and final newline.
+ pinned := agent.Prompt(agent.Shaper) + agent.Prompt(agent.ShaperContextGuidance) + "\n"
+ instructions := shape.ShaperInstructions()
+ suffix := ""
+ if len(instructions) >= len(pinned) { suffix = instructions[len(pinned):] }
+ expected, _ := json.Marshal(struct { Prompt string; Tools []map[string]any }{pinned + suffix, agent.Defs(names...)})
+ actual, _ := json.Marshal(struct { Prompt string; Tools []map[string]any }{instructions, shape.ShaperToolDefinitions(names...)})
+ out, _ := json.Marshal(map[string]string{"actual": string(actual), "expected": string(expected)})
+ fmt.Println(string(out))
+}

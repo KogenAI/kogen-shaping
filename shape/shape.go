@@ -614,10 +614,10 @@ func (sh *shaping) shape(ctx context.Context, st *state) (int, error) {
 	t0 := sh.started
 	role := sh.role
 
-	defs := agent.Defs(sh.mainTools()...)
-	defs = append(defs, agent.Defs(agent.ProposeFilesTool, agent.SubmitTool)...)
+	defs := ShaperToolDefinitions(sh.mainTools()...)
+	defs = append(defs, ShaperToolDefinitions(agent.ProposeFilesTool, agent.SubmitTool)...)
 	if sh.cfg.ShapeWorkers.Enabled {
-		defs = append(defs, agent.Defs(agent.ShapeBatchTool)...)
+		defs = append(defs, ShaperToolDefinitions(agent.ShapeBatchTool)...)
 	}
 	sh.toolDefs = agent.AsAny(defs)
 
@@ -946,7 +946,7 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 func (sh *shaping) converseExternal(ctx context.Context, blocks []any) (outcome, *extSession, error) {
 	stable := ShaperInstructions() + "\n\n" + externalNote + "\n\n" + blocksText(blocks)
 	x, err := startExternal(ctx, sh.ext, sh.extMax, sh.repo, sh.root, sh.s.Getenv("HOME"),
-		filepath.Join(sh.ev.Dir, "executor-shape"), sh.slug, sh.role, stable, "", schemaOf(agent.SubmitTool), sh.ev.Record,
+		filepath.Join(sh.ev.Dir, "executor-shape"), sh.slug, sh.role, stable, "", shaperSubmitSchema(), sh.ev.Record,
 		func(e map[string]any) {
 			if inspectedBy(e) {
 				sh.inspected = true

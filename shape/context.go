@@ -328,7 +328,7 @@ func ExcerptOf(e ContextEntry, bytes string, terms []string) string {
 }
 
 // contextGuidance is the closing paragraph of the shaper's instructions.
-func contextGuidance() string { return agent.Prompt(agent.ShaperContextGuidance) }
+func contextGuidance() string { return shaperPrompt("shaper-context-guidance") }
 
 // namedTestGuidance is what Shape tells a new Intent's step helpers about tests the acceptance
 // requires by name. It belongs to Shape alone: the builder's and reviewer's requests carry
@@ -346,7 +346,7 @@ const runnerObserverGuidance = "Test-runner observers: a step that runs a test r
 // ShaperInstructions is the shaper's policy: its instructions, the context guidance, the
 // named-test helper guidance, the unwritten-tests guidance and the test-runner observer guidance.
 func ShaperInstructions() string {
-	return agent.Prompt(agent.Shaper) + contextGuidance() + "\n" + namedTestGuidance + unwrittenTestGuidance + runnerObserverGuidance
+	return shaperPrompt("shaper") + contextGuidance() + "\n" + namedTestGuidance + unwrittenTestGuidance + runnerObserverGuidance
 }
 
 // selectionEvent is the context_selection event of one request: what the context carried,

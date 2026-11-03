@@ -796,7 +796,9 @@ func (r *refine) context() ([]any, error) {
 
 // refineInstructions is the correction conversation's policy: the discovery rules, the
 // feasibility guidance, the refinement rules and the context guidance.
-func refineInstructions() string { return agent.Prompt(agent.Refine) + contextGuidance() }
+func refineInstructions() string {
+	return agent.Prompt(agent.Refine) + agent.Prompt(agent.ShaperContextGuidance)
+}
 
 type refineKind int
 

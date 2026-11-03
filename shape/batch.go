@@ -366,8 +366,8 @@ func (sh *shaping) launch(ctx context.Context, i int, st *jobState, done chan wo
 	role := sh.cfg.ShapeWorkers.Roles[j.role]
 	sh.s.Progress(fmt.Sprintf("kogen: worker %s %s %s/%s", j.id, j.role, role.Model, role.Effort))
 	revision, _ := CurrentRevision(sh.repo)
-	defs := agent.Defs(workerNames(j.role)...)
-	defs = append(defs, agent.Defs(agent.WorkerResultTool)...)
+	defs := ShaperToolDefinitions(workerNames(j.role)...)
+	defs = append(defs, ShaperToolDefinitions(agent.WorkerResultTool)...)
 	if st.cacheID == "" {
 		st.cacheID = startConversation(sh.ev, "worker "+j.id)
 	}

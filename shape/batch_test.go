@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-executor/agent"
 	"kogen-loop/sys"
 )
 
@@ -154,6 +155,22 @@ func TestShapeBatchRunsWorkersAndReturnsTheirResults(t *testing.T) {
 	shpEq(t, "main requests", len(main), 2)
 	shpEq(t, "worker requests", len(workers), 3)
 	shpEq(t, "main tools", strings.Join(shpToolNames(main[0]), ", "), "read_file, view_image, list_files, search_text, probe, documentation, propose_files, submit, shape_batch")
+	checkPolicyTools := func(req map[string]any, names []string) {
+		t.Helper()
+		got, _ := json.Marshal(req["tools"])
+		want, _ := json.Marshal(ShaperToolDefinitions(names...))
+		if string(got) != string(want) {
+			t.Fatalf("captured tools differ from local policy: %s != %s", got, want)
+		}
+	}
+	checkPolicyTools(main[0], append(append((&shaping{}).mainTools(), agent.ProposeFilesTool, agent.SubmitTool), agent.ShapeBatchTool))
+	for _, w := range workers {
+		role := "draft"
+		if workerJobID(w) == "inspect" {
+			role = "probe"
+		}
+		checkPolicyTools(w, append(workerNames(role), agent.WorkerResultTool))
+	}
 
 	result := batchResult(t, main[1], "b1")
 	shpEq(t, "status", result["status"], any("completed"))

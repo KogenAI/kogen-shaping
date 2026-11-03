@@ -263,6 +263,11 @@ func schemaOf(tool string) json.RawMessage {
 	return b
 }
 
+func shaperSubmitSchema() json.RawMessage {
+	b, _ := json.Marshal(ShaperToolDefinitions(agent.SubmitTool)[0]["parameters"])
+	return b
+}
+
 // blocksText renders context blocks (text) as the task text.
 func blocksText(blocks []any) string {
 	var parts []string
