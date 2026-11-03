@@ -47,7 +47,10 @@ var contractReviewInstructions = strings.Join([]string{
 	"The readiness observations show how the unchanged tree behaved and which steps never ran. A scenario that fails only because the requested feature is missing is not a finding. Do not report style, coverage, weak tests, preferences or anything a correct implementation could satisfy.",
 	"Separately, report an environment finding for a scenario that failed in the readiness observations because Kogen's fresh copy was not prepared for the step, not because the requested behaviour is missing. Examples are a store, schema or other state that neither the steps nor the configured setup create, or Git history, ignored files or other state that only the shaping checkout has. An environment finding gives scenario (the scenario name exactly as in acceptance.feature), output (copied exactly from that scenario's failure in the readiness observations) and why.",
 	"When unsure, report nothing.",
-	`For each finding give scenario (the scenario name exactly as in acceptance.feature), expectation (its path and the exact text copied from that file), contract (the path of intent.md or of the unchanged repository file, and the exact text copied from it that the expectation contradicts) and why (what a correct implementation does instead). Answer {"findings":[],"environment":[]} when there is none.`,
+	`For each finding give scenario (the scenario name exactly as in acceptance.feature), expectation (its path and the exact text copied from that file), contract (the path of intent.md or of the unchanged repository file, and the exact text copied from it that the expectation contradicts) and why (what a correct implementation does instead). Answer {"findings":[],"environment":[],"properties":[]} when there is none.`,
+	"Separately, identify the properties the Request and the Questions and answers ask for: a quality, a bound, a comparison with the old behaviour, or a behaviour that must be kept. Take them from the Request and the answers themselves, not from what the candidate declares. A plain input/output request (a command, call or input with its expected output) asks for none: answer properties [].",
+	"For each property give property (a short name), request (the exact text copied from the Request or the Questions and answers that asks for it), kind (kept for a behaviour that must be kept, new otherwise), observable (false only when no automatic step can observe it, such as a subjective quality), scenarios (the names, exactly as in acceptance.feature, of the scenarios that exercise it; for a property that is not observable, the scenarios that claim it holds, also through a figure, log line or document sentence standing in for it), decision (for a property that is not observable, the exact text of the candidate intent.md Decisions line that records it as needing human evaluation; otherwise empty) and issues.",
+	"An issue is a scenario of the property whose evidence does not establish it, with problem, scenario, quote and why. Its problem is missing when a new property's scenario is red on the unchanged tree only because a file, module, function, command or test it needs does not exist yet (quote: that failure, copied exactly from the readiness observations), or test_count when the step's only evidence is that tests the Build writes exist or pass in some number and the step does not itself assert the property (quote: that code, copied exactly from the step file). A step that first gives the missing piece a do-nothing form and then fails on the property's behaviour has no issue.",
 }, "\n")
 
 var contractConfirmationInstructions = strings.Join([]string{
@@ -55,6 +58,7 @@ var contractConfirmationInstructions = strings.Join([]string{
 	"Read-only: use only read_file, list_files and search_text, then call " + SubmitContractConfirmationTool + " once.",
 	"For each numbered finding, inspect the cited expectation and contract yourself. Answer confirmed only when a correct implementation of the Intent cannot pass the expectation because of the cited contract; otherwise answer refuted. Give one verdict per finding with its number and a short why.",
 	"For an environment finding, answer confirmed only when the cited fresh-copy output shows that the step failed because the copy was not prepared for it, not because the requested behaviour is missing.",
+	"For a property problem, answer confirmed only when the Request or the Questions and answers ask for that property and the candidate has the stated problem; otherwise answer refuted.",
 }, "\n")
 
 // contractReadOnly are the inspection tools of both calls.
@@ -90,8 +94,8 @@ func contractReviewSchema() map[string]any {
 	}
 	return map[string]any{
 		"type":                 "object",
-		"properties":           map[string]any{"findings": map[string]any{"type": "array", "items": item}, "environment": map[string]any{"type": "array", "items": env}},
-		"required":             []any{"findings", "environment"},
+		"properties":           map[string]any{"findings": map[string]any{"type": "array", "items": item}, "environment": map[string]any{"type": "array", "items": env}, "properties": map[string]any{"type": "array", "items": propertySchema()}},
+		"required":             []any{"findings", "environment", "properties"},
 		"additionalProperties": false,
 	}
 }
@@ -175,18 +179,26 @@ func parseContractQuote(v any) (contractQuote, bool) {
 // parseContractReview is the findings and environment findings of exactly one valid
 // submit_contract_review payload, or why it is not one.
 func parseContractReview(args map[string]any) ([]contractFinding, []contractEnvFinding, string) {
-	if !exactKeys(args, "findings", "environment") {
-		return nil, nil, `the payload must have exactly the fields "findings" and "environment"`
+	findings, env, _, why := parseContractReviewProperties(args)
+	return findings, env, why
+}
+
+// parseContractReviewProperties is parseContractReview with the properties of a payload that has
+// the optional "properties" field.
+func parseContractReviewProperties(args map[string]any) ([]contractFinding, []contractEnvFinding, []propertyReport, string) {
+	withProps := exactKeys(args, "findings", "environment", "properties")
+	if !withProps && !exactKeys(args, "findings", "environment") {
+		return nil, nil, nil, `the payload must have exactly the fields "findings" and "environment", and optionally "properties"`
 	}
 	list, ok := args["findings"].([]any)
 	if !ok {
-		return nil, nil, "findings must be a list"
+		return nil, nil, nil, "findings must be a list"
 	}
 	out := make([]contractFinding, 0, len(list))
 	for _, raw := range list {
 		m, ok := raw.(map[string]any)
 		if !ok || !exactKeys(m, "scenario", "expectation", "contract", "why") {
-			return nil, nil, "a finding must be an object with exactly the fields scenario, expectation, contract, why"
+			return nil, nil, nil, "a finding must be an object with exactly the fields scenario, expectation, contract, why"
 		}
 		var f contractFinding
 		var ok1, ok2, ok3, ok4 bool
@@ -195,19 +207,19 @@ func parseContractReview(args map[string]any) ([]contractFinding, []contractEnvF
 		f.expectation, ok3 = parseContractQuote(m["expectation"])
 		f.contract, ok4 = parseContractQuote(m["contract"])
 		if !ok1 || !ok2 || !ok3 || !ok4 {
-			return nil, nil, "a finding has a field of the wrong type"
+			return nil, nil, nil, "a finding has a field of the wrong type"
 		}
 		out = append(out, f)
 	}
 	envList, ok := args["environment"].([]any)
 	if !ok {
-		return nil, nil, "environment must be a list"
+		return nil, nil, nil, "environment must be a list"
 	}
 	env := make([]contractEnvFinding, 0, len(envList))
 	for _, raw := range envList {
 		m, ok := raw.(map[string]any)
 		if !ok || !exactKeys(m, "scenario", "output", "why") {
-			return nil, nil, "an environment finding must be an object with exactly the fields scenario, output, why"
+			return nil, nil, nil, "an environment finding must be an object with exactly the fields scenario, output, why"
 		}
 		var f contractEnvFinding
 		var ok1, ok2, ok3 bool
@@ -215,11 +227,18 @@ func parseContractReview(args map[string]any) ([]contractFinding, []contractEnvF
 		f.output, ok2 = m["output"].(string)
 		f.why, ok3 = m["why"].(string)
 		if !ok1 || !ok2 || !ok3 {
-			return nil, nil, "an environment finding has a field of the wrong type"
+			return nil, nil, nil, "an environment finding has a field of the wrong type"
 		}
 		env = append(env, f)
 	}
-	return out, env, ""
+	var props []propertyReport
+	if withProps {
+		var why string
+		if props, why = parsePropertyReports(args["properties"]); why != "" {
+			return nil, nil, nil, why
+		}
+	}
+	return out, env, props, ""
 }
 
 // integerArg is a JSON integer as the argument decoders deliver it.
@@ -271,6 +290,7 @@ func parseContractConfirmation(args map[string]any) ([]contractVerdict, string) 
 // files an expectation may cite (as written on disk) and the files a contract may cite.
 type contractEvidence struct {
 	scenarios    []string          // the declared scenario and outline names, normalized
+	featurePath  string            // the path of acceptance.feature among expectations
 	expectations map[string]string // path to the content on disk: acceptance.feature and the listed step files
 	intentPath   string
 	intent       string
@@ -331,13 +351,16 @@ type contractEnvItem struct {
 type contractConfirmed struct {
 	contradictions []string
 	environment    []string
+	properties     []string
 }
 
-func (c contractConfirmed) empty() bool { return len(c.contradictions) == 0 && len(c.environment) == 0 }
+func (c contractConfirmed) empty() bool {
+	return len(c.contradictions) == 0 && len(c.environment) == 0 && len(c.properties) == 0
+}
 
 // all is every line, contradictions first, as the contradictions record keeps them.
 func (c contractConfirmed) all() []string {
-	return append(slices.Clone(c.contradictions), c.environment...)
+	return append(append(slices.Clone(c.contradictions), c.environment...), c.properties...)
 }
 
 // contractFindingLine is the confirmation input's line for finding n (from 1), values normalized.
@@ -387,7 +410,8 @@ func environmentHeadline(n int) string {
 }
 
 // contractFeedback is the refusal text: the contract headline and one line per confirmed
-// contradiction, then the environment headline and one line per confirmed environment finding.
+// contradiction, then the environment headline and one line per confirmed environment finding,
+// then the property headline and one line per confirmed property problem.
 func contractFeedback(c contractConfirmed) string {
 	var out []string
 	if len(c.contradictions) > 0 {
@@ -395,6 +419,9 @@ func contractFeedback(c contractConfirmed) string {
 	}
 	if len(c.environment) > 0 {
 		out = append(append(out, environmentHeadline(len(c.environment))), c.environment...)
+	}
+	if len(c.properties) > 0 {
+		out = append(append(out, propertyHeadline(len(c.properties))), c.properties...)
 	}
 	return strings.Join(out, "\n")
 }
@@ -549,8 +576,8 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 	feature := project.FeaturePath(sh.slug)
 	sections := [][2]string{{"Candidate intent.md", string(intentBytes)}, {"Candidate acceptance.feature", string(featureBytes)}}
 	ev := contractEvidence{
-		expectations: map[string]string{feature: string(featureBytes)},
-		intentPath:   project.IntentMDPath(sh.slug), intent: string(intentBytes),
+		expectations: map[string]string{feature: string(featureBytes)}, featurePath: feature,
+		intentPath: project.IntentMDPath(sh.slug), intent: string(intentBytes),
 	}
 	for _, p := range intent.StepFiles() {
 		text, err := os.ReadFile(filepath.Join(sh.root, p))
@@ -596,7 +623,13 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 	if observations == "" {
 		observations = "All scenarios pass now."
 	}
-	reviewInput := contractReviewInput(sh.slug, append(sections, [2]string{"Readiness observations", observations}))
+	questions := sh.earlier
+	answers := questions
+	if answers == "" {
+		answers = "none"
+	}
+	reviewInput := contractReviewInput(sh.slug, append(sections, [2]string{"Readiness observations", observations},
+		[2]string{"Request", sh.request}, [2]string{"Questions and answers", answers}))
 
 	incomplete := func(reason string, findings, evidenced int, items []contractItem, envItems []contractEnvItem) (contractConfirmed, error) {
 		sh.progress("kogen: contract check incomplete (" + reason + "); the candidate goes on")
@@ -610,8 +643,9 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 	}
 	var findings []contractFinding
 	var envFindings []contractEnvFinding
+	var props []propertyReport
 	if why == "" {
-		if findings, envFindings, why = parseContractReview(args); why != "" {
+		if findings, envFindings, props, why = parseContractReviewProperties(args); why != "" {
 			why = "invalid " + SubmitContractReviewTool + " payload: " + why
 		}
 	}
@@ -634,8 +668,23 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 		}
 	}
 	total := len(findings) + len(envFindings)
+	sent := len(evidenced)
+	counted := make([]bool, len(props))
+	for i, p := range props {
+		counted[i] = propertyCounts(p, sh.request, questions)
+	}
+	problems := ev.propertyProblems(props, sh.request, questions)
+	for _, pr := range problems {
+		evidenced = append(evidenced, propertyConfirmLine(len(evidenced)+1, props[pr.prop], pr))
+	}
+	recordProperties := func() {
+		if len(props) > 0 {
+			sh.ev.Record(propertyEvent(hash, props, counted, problems))
+		}
+	}
 	if len(evidenced) == 0 {
 		sh.ev.Record(contractEvent(hash, "clean", "", total, 0, 0, items, envItems))
+		recordProperties()
 		return contractConfirmed{}, nil
 	}
 	args, why, err = sh.contractCall(ctx, "confirmation", reviewInput+"\n\n# Findings to verify\n\n"+strings.Join(evidenced, "\n"))
@@ -649,15 +698,19 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 		}
 	}
 	if why != "" {
-		return incomplete(why, total, len(evidenced), items, envItems)
+		out, err := incomplete(why, total, sent, items, envItems)
+		recordProperties()
+		return out, err
 	}
 	lines := applyVerdicts(items, envItems, verdicts)
+	lines.properties = applyPropertyVerdicts(props, problems, sent+1, verdicts)
 	result := "clean"
 	confirmed := len(lines.contradictions) + len(lines.environment)
-	if confirmed > 0 {
+	if !lines.empty() {
 		result = "refused"
 	}
-	sh.ev.Record(contractEvent(hash, result, "", total, len(evidenced), confirmed, items, envItems))
+	sh.ev.Record(contractEvent(hash, result, "", total, sent, confirmed, items, envItems))
+	recordProperties()
 	return lines, nil
 }
 
