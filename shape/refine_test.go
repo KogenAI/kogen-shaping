@@ -854,7 +854,7 @@ func TestRefineNarrowRetryPreservesAllEarlierProposalsUntilMergedReadiness(t *te
 	reqs := f.Prov.requests()
 	shpEq(t, "requests", len(reqs), 3)
 	lint := shpOutputs(reqs[1])["c1"]
-	shpContains(t, "lint feedback", lint, "decisions: a decision has no source")
+	shpExpectUnsourcedDecisionLine(t, "lint feedback", lint, "- Non-integers raise TypeError.")
 	shpContains(t, "lint feedback", lint, "model: the Model: line must be")
 	shpContains(t, "lint feedback", lint, "Well-formed proposals are retained in this run; submit only corrections.")
 	refEqual(t, "package", f.pkg(), refWith(before, refIntentPath, corrected, refFeaturePath, refFeatured, refStepPath, step))
@@ -924,7 +924,7 @@ func TestRefineLaterProposalsReplaceAPathAndOriginalBytesRevertIt(t *testing.T) 
 	refEqual(t, "package", f.pkg(), refWith(before, refIntentPath, corrected, refFeaturePath, refFeatured))
 	shpEq(t, "requests", len(f.Prov.requests()), 3)
 	// the first submission was lint-red: nothing published, proposals retained in scratch
-	shpContains(t, "feedback", shpOutputs(f.Prov.requests()[1])["c1"], "decisions: a decision has no source")
+	shpExpectUnsourcedDecisionLine(t, "feedback", shpOutputs(f.Prov.requests()[1])["c1"], "- Non-integers raise TypeError. Retain the feature correction.")
 	result := f.result()
 	changed := strings.Join(refStrings(result["changed"]), ",")
 	shpEq(t, "changed", changed, refFeaturePath+","+refIntentPath+","+refStepPath)

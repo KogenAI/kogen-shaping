@@ -1,0 +1,25 @@
+=== RUN   TestShapeLintCorrectionsKeepEarlierArtifactsAndMalformedMixedPayloadsContributeNothing
+=== PAUSE TestShapeLintCorrectionsKeepEarlierArtifactsAndMalformedMixedPayloadsContributeNothing
+=== RUN   TestRefineNarrowRetryPreservesAllEarlierProposalsUntilMergedReadiness
+=== PAUSE TestRefineNarrowRetryPreservesAllEarlierProposalsUntilMergedReadiness
+=== RUN   TestRefineLaterProposalsReplaceAPathAndOriginalBytesRevertIt
+=== PAUSE TestRefineLaterProposalsReplaceAPathAndOriginalBytesRevertIt
+=== RUN   TestShapeInvalidSubmitIsRetriedWithFeedbackAndKeepsEarlierProposals
+=== PAUSE TestShapeInvalidSubmitIsRetriedWithFeedbackAndKeepsEarlierProposals
+=== CONT  TestShapeLintCorrectionsKeepEarlierArtifactsAndMalformedMixedPayloadsContributeNothing
+=== RUN   TestShapeLintCorrectionsKeepEarlierArtifactsAndMalformedMixedPayloadsContributeNothing/unsafe
+=== CONT  TestRefineLaterProposalsReplaceAPathAndOriginalBytesRevertIt
+=== CONT  TestShapeInvalidSubmitIsRetriedWithFeedbackAndKeepsEarlierProposals
+=== PAUSE TestShapeLintCorrectionsKeepEarlierArtifactsAndMalformedMixedPayloadsContributeNothing/unsafe
+=== RUN   TestShapeLintCorrectionsKeepEarlierArtifactsAndMalformedMixedPayloadsContributeNothing/duplicate
+=== CONT  TestRefineNarrowRetryPreservesAllEarlierProposalsUntilMergedReadiness
+=== PAUSE TestShapeLintCorrectionsKeepEarlierArtifactsAndMalformedMixedPayloadsContributeNothing/duplicate
+=== CONT  TestShapeLintCorrectionsKeepEarlierArtifactsAndMalformedMixedPayloadsContributeNothing/unsafe
+=== CONT  TestShapeLintCorrectionsKeepEarlierArtifactsAndMalformedMixedPayloadsContributeNothing/duplicate
+--- PASS: TestShapeInvalidSubmitIsRetriedWithFeedbackAndKeepsEarlierProposals (2.09s)
+--- PASS: TestRefineLaterProposalsReplaceAPathAndOriginalBytesRevertIt (2.72s)
+--- PASS: TestRefineNarrowRetryPreservesAllEarlierProposalsUntilMergedReadiness (2.75s)
+--- PASS: TestShapeLintCorrectionsKeepEarlierArtifactsAndMalformedMixedPayloadsContributeNothing (0.00s)
+    --- PASS: TestShapeLintCorrectionsKeepEarlierArtifactsAndMalformedMixedPayloadsContributeNothing/unsafe (1.53s)
+    --- PASS: TestShapeLintCorrectionsKeepEarlierArtifactsAndMalformedMixedPayloadsContributeNothing/duplicate (1.25s)
+PASS

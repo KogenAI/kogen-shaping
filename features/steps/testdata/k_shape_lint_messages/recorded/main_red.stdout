@@ -1,0 +1,49 @@
+=== RUN   TestShapeLintCorrectionsKeepEarlierArtifactsAndMalformedMixedPayloadsContributeNothing
+=== PAUSE TestShapeLintCorrectionsKeepEarlierArtifactsAndMalformedMixedPayloadsContributeNothing
+=== RUN   TestRefineNarrowRetryPreservesAllEarlierProposalsUntilMergedReadiness
+=== PAUSE TestRefineNarrowRetryPreservesAllEarlierProposalsUntilMergedReadiness
+=== RUN   TestRefineLaterProposalsReplaceAPathAndOriginalBytesRevertIt
+=== PAUSE TestRefineLaterProposalsReplaceAPathAndOriginalBytesRevertIt
+=== RUN   TestShapeInvalidSubmitIsRetriedWithFeedbackAndKeepsEarlierProposals
+=== PAUSE TestShapeInvalidSubmitIsRetriedWithFeedbackAndKeepsEarlierProposals
+=== CONT  TestShapeLintCorrectionsKeepEarlierArtifactsAndMalformedMixedPayloadsContributeNothing
+=== RUN   TestShapeLintCorrectionsKeepEarlierArtifactsAndMalformedMixedPayloadsContributeNothing/unsafe
+=== CONT  TestRefineLaterProposalsReplaceAPathAndOriginalBytesRevertIt
+=== PAUSE TestShapeLintCorrectionsKeepEarlierArtifactsAndMalformedMixedPayloadsContributeNothing/unsafe
+=== CONT  TestShapeInvalidSubmitIsRetriedWithFeedbackAndKeepsEarlierProposals
+=== CONT  TestRefineNarrowRetryPreservesAllEarlierProposalsUntilMergedReadiness
+=== RUN   TestShapeLintCorrectionsKeepEarlierArtifactsAndMalformedMixedPayloadsContributeNothing/duplicate
+=== PAUSE TestShapeLintCorrectionsKeepEarlierArtifactsAndMalformedMixedPayloadsContributeNothing/duplicate
+=== CONT  TestShapeLintCorrectionsKeepEarlierArtifactsAndMalformedMixedPayloadsContributeNothing/unsafe
+    contract_test.go:265: the lint correction was not returned to the shaper
+=== CONT  TestShapeLintCorrectionsKeepEarlierArtifactsAndMalformedMixedPayloadsContributeNothing/duplicate
+=== NAME  TestShapeInvalidSubmitIsRetriedWithFeedbackAndKeepsEarlierProposals
+    shape_test.go:504: feedback = invalid submission:
+        decisions: - Non-integers raise TypeError. must end with `(source: request)` or `(source: answer <n>)`
+        Earlier well-formed proposals are retained; submit only corrections., want invalid submission:
+        decisions: a decision has no source
+        Earlier well-formed proposals are retained; submit only corrections.
+--- FAIL: TestShapeInvalidSubmitIsRetriedWithFeedbackAndKeepsEarlierProposals (2.06s)
+=== NAME  TestRefineLaterProposalsReplaceAPathAndOriginalBytesRevertIt
+    refine_test.go:927: feedback does not contain "decisions: a decision has no source":
+        not ready:
+        intent/lint: the Intent needs changes
+          decisions: - Non-integers raise TypeError. Retain the feature correction. must end with `(source: request)` or `(source: answer <n>)`
+        
+        Well-formed proposals are retained in this run; submit only corrections. Omitted paths retain their previous proposal, or the original if never proposed.
+--- FAIL: TestRefineLaterProposalsReplaceAPathAndOriginalBytesRevertIt (2.68s)
+=== NAME  TestRefineNarrowRetryPreservesAllEarlierProposalsUntilMergedReadiness
+    refine_test.go:857: lint feedback does not contain "decisions: a decision has no source":
+        not ready:
+        intent/lint: the Intent needs changes
+          model: the Model: line must be `not applicable — <reason>` or `.kogen/intents/is-even/model.qnt invariants=<Name> seed=<n> samples=<n> steps=<n>`
+          decisions: - Non-integers raise TypeError. must end with `(source: request)` or `(source: answer <n>)`
+        
+        Well-formed proposals are retained in this run; submit only corrections. Omitted paths retain their previous proposal, or the original if never proposed.
+--- FAIL: TestRefineNarrowRetryPreservesAllEarlierProposalsUntilMergedReadiness (2.73s)
+=== NAME  TestShapeLintCorrectionsKeepEarlierArtifactsAndMalformedMixedPayloadsContributeNothing/duplicate
+    contract_test.go:265: the lint correction was not returned to the shaper
+--- FAIL: TestShapeLintCorrectionsKeepEarlierArtifactsAndMalformedMixedPayloadsContributeNothing (0.00s)
+    --- FAIL: TestShapeLintCorrectionsKeepEarlierArtifactsAndMalformedMixedPayloadsContributeNothing/unsafe (1.50s)
+    --- FAIL: TestShapeLintCorrectionsKeepEarlierArtifactsAndMalformedMixedPayloadsContributeNothing/duplicate (1.27s)
+FAIL

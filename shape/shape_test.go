@@ -501,7 +501,14 @@ func TestShapeInvalidSubmitIsRetriedWithFeedbackAndKeepsEarlierProposals(t *test
 	}
 	reqs := f.Prov.requests()
 	shpEq(t, "requests", len(reqs), 3)
-	shpEq(t, "feedback", shpOutputs(reqs[1])["c1"], "invalid submission:\ndecisions: a decision has no source\nEarlier well-formed proposals are retained; submit only corrections.")
+	feedback := shpOutputs(reqs[1])["c1"]
+	ok := false
+	for _, line := range shpUnsourcedDecisionLines("- Non-integers raise TypeError.") {
+		ok = ok || feedback == "invalid submission:\n"+line+"\nEarlier well-formed proposals are retained; submit only corrections."
+	}
+	if !ok {
+		t.Fatalf("feedback is not the invalid-submission correction with an unsourced-Decision line:\n%s", feedback)
+	}
 	// The corrected intent.md alone completed the package: the earlier feature and steps stayed.
 	shpContains(t, "manifest", shpBody(reqs[1]), "features/steps/is-even__steps.js")
 	shpEq(t, "feature", f.read(".kogen/intents/is-even/acceptance.feature"), shpFeature)

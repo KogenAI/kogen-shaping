@@ -261,7 +261,11 @@ func TestShapeLintCorrectionsKeepEarlierArtifactsAndMalformedMixedPayloadsContri
 			if _, err := os.Stat(filepath.Join(filepath.Dir(f.Root), "outside")); err == nil {
 				t.Fatal("an unsafe path leaked outside the project")
 			}
-			if !anyContains(f.allToolOutputs(), "decision has no source") {
+			returned := false
+			for _, out := range f.allToolOutputs() {
+				returned = returned || shpHasUnsourcedDecisionLine(out, "- Non-integers raise TypeError.")
+			}
+			if !returned {
 				t.Fatal("the lint correction was not returned to the shaper")
 			}
 			// The runner check plus the one readiness execution for the final package.
