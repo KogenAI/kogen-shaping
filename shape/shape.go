@@ -167,7 +167,7 @@ func shapeRun(ctx context.Context, s *sys.Session, in ShapeInput) (exit int, err
 	}
 	sh := &shaping{s: s, in: in, repo: repo, root: root, slug: slug, cfg: cfg, role: cfg.Models["shape"], ev: ev, ext: ext, extMax: extMax,
 		rd: rd, client: client, stateDir: stateDir, originals: map[string]original{}, proposed: map[string]string{},
-		contractSessions: map[string]int{}, contractChecked: map[string]bool{}, contractRefused: map[string][]string{}}
+		contractSessions: map[string]int{}, contractChecked: map[string]bool{}, contractRefused: map[string]contractConfirmed{}}
 	return sh.shape(ctx, st)
 }
 
@@ -553,14 +553,14 @@ type shaping struct {
 	probed              map[string]bool // the commands of the probe calls of this run
 	ranCommand          bool            // the external session completed a Bash call
 
-	contractUsage    provider.Usage      // the native contract review and confirmation calls' tokens
-	contractRounds   int                 // the external contract review and confirmation sessions' rounds
-	contractSessions map[string]int      // external sessions started per kind (review, confirmation)
-	contractChecked  map[string]bool     // package hashes checked without a refusal
-	contractRefused  map[string][]string // package hash to the item lines of its refusal
-	contractLines    []string            // the item lines of the last contract refusal
-	lastGate         string              // the gate of the last refused submission
-	lastRefusal      []string            // its problem lines as recorded in submission_refused
+	contractUsage    provider.Usage               // the native contract review and confirmation calls' tokens
+	contractRounds   int                          // the external contract review and confirmation sessions' rounds
+	contractSessions map[string]int               // external sessions started per kind (review, confirmation)
+	contractChecked  map[string]bool              // package hashes checked without a refusal
+	contractRefused  map[string]contractConfirmed // package hash to the item lines of its refusal
+	contractLines    []string                     // the item lines of the last contract refusal
+	lastGate         string                       // the gate of the last refused submission
+	lastRefusal      []string                     // its problem lines as recorded in submission_refused
 	// lastObservationsPath is the observations file of the last readiness check, relative to the root.
 	lastObservationsPath string
 	lastFresh            bool   // the last certify ran readiness
@@ -1455,17 +1455,18 @@ func (sh *shaping) checkSubmission(ctx context.Context, files []string) (string,
 		return "", outcome{}, err
 	}
 	if sh.lastFresh && !sh.contractChecked[hash] {
-		lines, err := sh.contractCheck(ctx, hash, sh.lastObservations)
+		confirmed, err := sh.contractCheck(ctx, hash, sh.lastObservations)
 		if err != nil {
 			return "", outcome{}, err
 		}
-		if lines != nil {
+		if !confirmed.empty() {
+			lines := confirmed.all()
 			// The refused candidate supplies no readiness evidence and is never acknowledged.
 			sh.ready = nil
-			sh.contractRefused[hash] = lines
+			sh.contractRefused[hash] = confirmed
 			sh.contractLines = lines
 			sh.refused(contractGate, lines)
-			return contractFeedback(lines), outcome{kind: outInvalid, problems: lines}, nil
+			return contractFeedback(confirmed), outcome{kind: outInvalid, problems: lines}, nil
 		}
 		sh.contractChecked[hash] = true
 	}

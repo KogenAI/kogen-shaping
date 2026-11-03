@@ -45,14 +45,16 @@ var contractReviewInstructions = strings.Join([]string{
 	"Read-only: use only read_file, list_files and search_text, then call " + SubmitContractReviewTool + " once.",
 	"An expectation is an assertion, an expected value or output, or a call with its arguments, in the candidate acceptance.feature or in a step file the Intent lists under Acceptance. Report a finding only when the expectation contradicts the candidate intent.md (a rule, table, example or boundary it states) or the behaviour of repository code or text that the candidate does not change and the Intent keeps unchanged (for example an output envelope, a required argument, or a file another command writes).",
 	"The readiness observations show how the unchanged tree behaved and which steps never ran. A scenario that fails only because the requested feature is missing is not a finding. Do not report style, coverage, weak tests, preferences or anything a correct implementation could satisfy.",
+	"Separately, report an environment finding for a scenario that failed in the readiness observations because Kogen's fresh copy was not prepared for the step, not because the requested behaviour is missing. Examples are a store, schema or other state that neither the steps nor the configured setup create, or Git history, ignored files or other state that only the shaping checkout has. An environment finding gives scenario (the scenario name exactly as in acceptance.feature), output (copied exactly from that scenario's failure in the readiness observations) and why.",
 	"When unsure, report nothing.",
-	`For each finding give scenario (the scenario name exactly as in acceptance.feature), expectation (its path and the exact text copied from that file), contract (the path of intent.md or of the unchanged repository file, and the exact text copied from it that the expectation contradicts) and why (what a correct implementation does instead). Answer {"findings":[]} when there is none.`,
+	`For each finding give scenario (the scenario name exactly as in acceptance.feature), expectation (its path and the exact text copied from that file), contract (the path of intent.md or of the unchanged repository file, and the exact text copied from it that the expectation contradicts) and why (what a correct implementation does instead). Answer {"findings":[],"environment":[]} when there is none.`,
 }, "\n")
 
 var contractConfirmationInstructions = strings.Join([]string{
 	"You independently verify reported contradictions in one candidate Intent before any Build is spent on it.",
 	"Read-only: use only read_file, list_files and search_text, then call " + SubmitContractConfirmationTool + " once.",
 	"For each numbered finding, inspect the cited expectation and contract yourself. Answer confirmed only when a correct implementation of the Intent cannot pass the expectation because of the cited contract; otherwise answer refuted. Give one verdict per finding with its number and a short why.",
+	"For an environment finding, answer confirmed only when the cited fresh-copy output shows that the step failed because the copy was not prepared for it, not because the requested behaviour is missing.",
 }, "\n")
 
 // contractReadOnly are the inspection tools of both calls.
@@ -80,10 +82,16 @@ func contractReviewSchema() map[string]any {
 		"required":             []any{"scenario", "expectation", "contract", "why"},
 		"additionalProperties": false,
 	}
+	env := map[string]any{
+		"type":                 "object",
+		"properties":           map[string]any{"scenario": s, "output": s, "why": s},
+		"required":             []any{"scenario", "output", "why"},
+		"additionalProperties": false,
+	}
 	return map[string]any{
 		"type":                 "object",
-		"properties":           map[string]any{"findings": map[string]any{"type": "array", "items": item}},
-		"required":             []any{"findings"},
+		"properties":           map[string]any{"findings": map[string]any{"type": "array", "items": item}, "environment": map[string]any{"type": "array", "items": env}},
+		"required":             []any{"findings", "environment"},
 		"additionalProperties": false,
 	}
 }
@@ -112,7 +120,7 @@ func contractToolDef(name, description string, schema map[string]any) map[string
 }
 
 func contractReviewToolDef() map[string]any {
-	return contractToolDef(SubmitContractReviewTool, "Submit the contract review: the acceptance expectations that contradict the Intent or the code it keeps unchanged, each with quotes.", contractReviewSchema())
+	return contractToolDef(SubmitContractReviewTool, "Submit the contract review: the acceptance expectations that contradict the Intent or the code it keeps unchanged, each with quotes, and the scenarios that failed because Kogen's fresh copy was not prepared for them.", contractReviewSchema())
 }
 
 func contractConfirmationToolDef() map[string]any {
@@ -128,6 +136,12 @@ type contractFinding struct {
 	expectation contractQuote
 	contract    contractQuote
 	why         string
+}
+
+// contractEnvFinding is a scenario the review reports as failing in Kogen's fresh copy because the
+// copy was not prepared for it.
+type contractEnvFinding struct {
+	scenario, output, why string
 }
 
 type contractVerdict struct {
@@ -158,21 +172,21 @@ func parseContractQuote(v any) (contractQuote, bool) {
 	return contractQuote{p, q}, ok1 && ok2
 }
 
-// parseContractReview is the findings of exactly one valid submit_contract_review payload, or
-// why it is not one.
-func parseContractReview(args map[string]any) ([]contractFinding, string) {
-	if !exactKeys(args, "findings") {
-		return nil, `the payload must have exactly the field "findings"`
+// parseContractReview is the findings and environment findings of exactly one valid
+// submit_contract_review payload, or why it is not one.
+func parseContractReview(args map[string]any) ([]contractFinding, []contractEnvFinding, string) {
+	if !exactKeys(args, "findings", "environment") {
+		return nil, nil, `the payload must have exactly the fields "findings" and "environment"`
 	}
 	list, ok := args["findings"].([]any)
 	if !ok {
-		return nil, "findings must be a list"
+		return nil, nil, "findings must be a list"
 	}
 	out := make([]contractFinding, 0, len(list))
 	for _, raw := range list {
 		m, ok := raw.(map[string]any)
 		if !ok || !exactKeys(m, "scenario", "expectation", "contract", "why") {
-			return nil, "a finding must be an object with exactly the fields scenario, expectation, contract, why"
+			return nil, nil, "a finding must be an object with exactly the fields scenario, expectation, contract, why"
 		}
 		var f contractFinding
 		var ok1, ok2, ok3, ok4 bool
@@ -181,11 +195,31 @@ func parseContractReview(args map[string]any) ([]contractFinding, string) {
 		f.expectation, ok3 = parseContractQuote(m["expectation"])
 		f.contract, ok4 = parseContractQuote(m["contract"])
 		if !ok1 || !ok2 || !ok3 || !ok4 {
-			return nil, "a finding has a field of the wrong type"
+			return nil, nil, "a finding has a field of the wrong type"
 		}
 		out = append(out, f)
 	}
-	return out, ""
+	envList, ok := args["environment"].([]any)
+	if !ok {
+		return nil, nil, "environment must be a list"
+	}
+	env := make([]contractEnvFinding, 0, len(envList))
+	for _, raw := range envList {
+		m, ok := raw.(map[string]any)
+		if !ok || !exactKeys(m, "scenario", "output", "why") {
+			return nil, nil, "an environment finding must be an object with exactly the fields scenario, output, why"
+		}
+		var f contractEnvFinding
+		var ok1, ok2, ok3 bool
+		f.scenario, ok1 = m["scenario"].(string)
+		f.output, ok2 = m["output"].(string)
+		f.why, ok3 = m["why"].(string)
+		if !ok1 || !ok2 || !ok3 {
+			return nil, nil, "an environment finding has a field of the wrong type"
+		}
+		env = append(env, f)
+	}
+	return out, env, ""
 }
 
 // integerArg is a JSON integer as the argument decoders deliver it.
@@ -240,6 +274,9 @@ type contractEvidence struct {
 	expectations map[string]string // path to the content on disk: acceptance.feature and the listed step files
 	intentPath   string
 	intent       string
+	// failures are the failure details of the scenarios that failed in this candidate's readiness
+	// result, by normalized scenario name.
+	failures map[string][]string
 	// tracked is the HEAD content of a file tracked at HEAD that is not a file of the candidate
 	// package; false for any other path.
 	tracked func(path string) (string, bool)
@@ -263,12 +300,44 @@ func (e contractEvidence) evidenced(f contractFinding) bool {
 	return ok && containsNormalized(head, f.contract.quote)
 }
 
+// evidencedEnv reports whether an environment finding names a scenario that failed in this
+// candidate's readiness run and cites output that run's failure detail for it contains.
+func (e contractEvidence) evidencedEnv(f contractEnvFinding) bool {
+	if strings.TrimSpace(f.why) == "" || normalizeWhitespace(f.output) == "" {
+		return false
+	}
+	return slices.ContainsFunc(e.failures[normalizeWhitespace(f.scenario)], func(detail string) bool {
+		return containsNormalized(detail, f.output)
+	})
+}
+
 // contractItem is one finding with what Kogen decided about it.
 type contractItem struct {
 	finding      contractFinding
 	evidenced    bool
 	verdict      string  // "", confirmed or refuted
 	confirmation *string // the counted verdict's why
+}
+
+// contractEnvItem is one environment finding with what Kogen decided about it.
+type contractEnvItem struct {
+	finding      contractEnvFinding
+	evidenced    bool
+	verdict      string
+	confirmation *string
+}
+
+// contractConfirmed are the item lines of the confirmed findings of a refused candidate.
+type contractConfirmed struct {
+	contradictions []string
+	environment    []string
+}
+
+func (c contractConfirmed) empty() bool { return len(c.contradictions) == 0 && len(c.environment) == 0 }
+
+// all is every line, contradictions first, as the contradictions record keeps them.
+func (c contractConfirmed) all() []string {
+	return append(slices.Clone(c.contradictions), c.environment...)
 }
 
 // contractFindingLine is the confirmation input's line for finding n (from 1), values normalized.
@@ -280,6 +349,21 @@ func contractBody(f contractFinding) string {
 	nw := normalizeWhitespace
 	return fmt.Sprintf("expectation: %s: %s | contract: %s: %s | why: %s",
 		nw(f.expectation.path), nw(f.expectation.quote), nw(f.contract.path), nw(f.contract.quote), nw(f.why))
+}
+
+// contractEnvFindingLine is the confirmation input's line for environment finding n (from 1).
+func contractEnvFindingLine(n int, f contractEnvFinding) string {
+	return fmt.Sprintf("%d. scenario: %s | %s", n, normalizeWhitespace(f.scenario), contractEnvBody(f))
+}
+
+func contractEnvBody(f contractEnvFinding) string {
+	nw := normalizeWhitespace
+	return fmt.Sprintf("fresh-copy output: %s | why: %s", nw(f.output), nw(f.why))
+}
+
+// contractEnvItemLine is the feedback line of a confirmed environment finding.
+func contractEnvItemLine(f contractEnvFinding, confirmation string) string {
+	return fmt.Sprintf("- %s | %s | confirmed: %s", normalizeWhitespace(f.scenario), contractEnvBody(f), normalizeWhitespace(confirmation))
 }
 
 // contractItemLine is the feedback line of a confirmed finding.
@@ -294,17 +378,38 @@ func contractHeadline(n int) string {
 		"Resubmitting this candidate unchanged is refused again.", n)
 }
 
-// contractFeedback is the refusal text: the headline and one line per confirmed finding.
-func contractFeedback(lines []string) string {
-	return strings.Join(append([]string{contractHeadline(len(lines))}, lines...), "\n")
+// environmentHeadline is the first line of the environment part of a refusal of n confirmed
+// environment findings.
+func environmentHeadline(n int) string {
+	return fmt.Sprintf("Environment check: %d acceptance step(s) fail on the unchanged tree because Kogen's fresh copy is not prepared for them, not because the requested behaviour is missing; nothing was published. "+
+		"Kogen runs acceptance in a fresh single-commit copy of the tree, without history or ignored files, after only the configured setup: make the step prepare the state it needs itself or in an earlier step of its scenario, or stop depending on state that copy lacks; do not delete or weaken a scenario to pass this check. "+
+		"Resubmitting this candidate unchanged is refused again.", n)
+}
+
+// contractFeedback is the refusal text: the contract headline and one line per confirmed
+// contradiction, then the environment headline and one line per confirmed environment finding.
+func contractFeedback(c contractConfirmed) string {
+	var out []string
+	if len(c.contradictions) > 0 {
+		out = append(append(out, contractHeadline(len(c.contradictions))), c.contradictions...)
+	}
+	if len(c.environment) > 0 {
+		out = append(append(out, environmentHeadline(len(c.environment))), c.environment...)
+	}
+	return strings.Join(out, "\n")
 }
 
 // applyVerdicts gives each evidenced item its counted verdict: the first verdict for n, n from
-// 1 to the number of findings sent. A finding without a counted verdict is refuted. It returns
-// the item lines of the confirmed findings.
-func applyVerdicts(items []contractItem, verdicts []contractVerdict) []string {
+// 1 to the number of findings sent (contradictions first, then environment findings). A finding
+// without a counted verdict is refuted. It returns the item lines of the confirmed findings.
+func applyVerdicts(items []contractItem, envItems []contractEnvItem, verdicts []contractVerdict) contractConfirmed {
 	sent := 0
 	for _, it := range items {
+		if it.evidenced {
+			sent++
+		}
+	}
+	for _, it := range envItems {
 		if it.evidenced {
 			sent++
 		}
@@ -315,31 +420,40 @@ func applyVerdicts(items []contractItem, verdicts []contractVerdict) []string {
 			counted[v.finding] = v
 		}
 	}
-	var lines []string
+	var lines contractConfirmed
 	n := 0
-	for i := range items {
-		it := &items[i]
-		if !it.evidenced {
-			continue
-		}
+	// decide counts the verdict of the next evidenced finding, if any.
+	decide := func(verdict *string, confirmation **string, line func(why string) string, confirmed *[]string) {
 		n++
 		v, ok := counted[n]
 		if !ok {
-			it.verdict = "refuted"
-			continue
+			*verdict = "refuted"
+			return
 		}
-		it.verdict = v.verdict
+		*verdict = v.verdict
 		why := v.why
-		it.confirmation = &why
+		*confirmation = &why
 		if v.verdict == "confirmed" {
-			lines = append(lines, contractItemLine(it.finding, v.why))
+			*confirmed = append(*confirmed, line(v.why))
+		}
+	}
+	for i := range items {
+		it := &items[i]
+		if it.evidenced {
+			decide(&it.verdict, &it.confirmation, func(why string) string { return contractItemLine(it.finding, why) }, &lines.contradictions)
+		}
+	}
+	for i := range envItems {
+		it := &envItems[i]
+		if it.evidenced {
+			decide(&it.verdict, &it.confirmation, func(why string) string { return contractEnvItemLine(it.finding, why) }, &lines.environment)
 		}
 	}
 	return lines
 }
 
 // contractEvent is the contract_review event of a review that ran.
-func contractEvent(hash, result, reason string, findings, evidenced, confirmed int, items []contractItem) map[string]any {
+func contractEvent(hash, result, reason string, findings, evidenced, confirmed int, items []contractItem, envItems []contractEnvItem) map[string]any {
 	list := make([]any, len(items))
 	quote := func(q contractQuote) map[string]any { return map[string]any{"path": q.path, "quote": q.quote} }
 	for i, it := range items {
@@ -355,8 +469,22 @@ func contractEvent(hash, result, reason string, findings, evidenced, confirmed i
 			"why": it.finding.why, "evidenced": it.evidenced, "verdict": verdict, "confirmation": confirmation,
 		}
 	}
+	envList := make([]any, len(envItems))
+	for i, it := range envItems {
+		var verdict, confirmation any
+		if it.verdict != "" {
+			verdict = it.verdict
+		}
+		if it.confirmation != nil {
+			confirmation = *it.confirmation
+		}
+		envList[i] = map[string]any{
+			"scenario": it.finding.scenario, "output": it.finding.output, "why": it.finding.why,
+			"evidenced": it.evidenced, "verdict": verdict, "confirmation": confirmation,
+		}
+	}
 	event := map[string]any{"event": "contract_review", "package": hash, "result": result,
-		"findings": findings, "evidenced": evidenced, "confirmed": confirmed, "items": list}
+		"findings": findings, "evidenced": evidenced, "confirmed": confirmed, "items": list, "environment": envList}
 	if reason != "" {
 		event["reason"] = reason
 	}
@@ -388,34 +516,35 @@ func (sh *shaping) packageHash() (string, error) {
 // contractRefusal is the refusal of a candidate already refused by the contract check in this
 // run, with the same feedback text; false for any other candidate.
 func (sh *shaping) contractRefusal(hash string) (string, outcome, bool) {
-	lines, ok := sh.contractRefused[hash]
+	confirmed, ok := sh.contractRefused[hash]
 	if !ok {
 		return "", outcome{}, false
 	}
+	lines := confirmed.all()
 	sh.contractLines = lines
 	sh.refused(contractGate, lines)
-	return contractFeedback(lines), outcome{kind: outInvalid, problems: lines}, true
+	return contractFeedback(confirmed), outcome{kind: outInvalid, problems: lines}, true
 }
 
 // contractCheck gives the candidate on disk to the review and, for the findings Kogen found
 // evidence for, to the confirmation. It returns the item lines of the confirmed findings, nil
 // when the candidate may go on.
-func (sh *shaping) contractCheck(ctx context.Context, hash, observations string) ([]string, error) {
+func (sh *shaping) contractCheck(ctx context.Context, hash, observations string) (contractConfirmed, error) {
 	intentBytes, err := os.ReadFile(filepath.Join(sh.root, project.IntentMDPath(sh.slug)))
 	if err != nil {
-		return nil, err
+		return contractConfirmed{}, err
 	}
 	featureBytes, err := os.ReadFile(filepath.Join(sh.root, project.FeaturePath(sh.slug)))
 	if err != nil {
-		return nil, err
+		return contractConfirmed{}, err
 	}
 	intent, err := project.ReadIntent(sh.root, sh.slug, nil)
 	if err != nil {
-		return nil, err
+		return contractConfirmed{}, err
 	}
 	scenarios, err := project.ParseGherkin(string(featureBytes))
 	if err != nil {
-		return nil, err
+		return contractConfirmed{}, err
 	}
 	feature := project.FeaturePath(sh.slug)
 	sections := [][2]string{{"Candidate intent.md", string(intentBytes)}, {"Candidate acceptance.feature", string(featureBytes)}}
@@ -439,6 +568,19 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 			ev.scenarios = append(ev.scenarios, normalizeWhitespace(sc.Outline.Name))
 		}
 	}
+	if sh.ready != nil {
+		ev.failures = map[string][]string{}
+		for _, sc := range sh.ready.Scenarios {
+			if sc.Status == "failed" {
+				name := normalizeWhitespace(sc.Name)
+				detail := ""
+				if sc.Detail != nil {
+					detail = *sc.Detail
+				}
+				ev.failures[name] = append(ev.failures[name], detail)
+			}
+		}
+	}
 	ev.tracked = func(path string) (string, bool) {
 		if !normalPath(path) || path == ev.intentPath || path == feature || path == project.ModelPath(sh.slug) {
 			return "", false
@@ -456,24 +598,25 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 	}
 	reviewInput := contractReviewInput(sh.slug, append(sections, [2]string{"Readiness observations", observations}))
 
-	incomplete := func(reason string, findings, evidenced int, items []contractItem) ([]string, error) {
+	incomplete := func(reason string, findings, evidenced int, items []contractItem, envItems []contractEnvItem) (contractConfirmed, error) {
 		sh.progress("kogen: contract check incomplete (" + reason + "); the candidate goes on")
-		sh.ev.Record(contractEvent(hash, "incomplete", reason, findings, evidenced, 0, items))
-		return nil, nil
+		sh.ev.Record(contractEvent(hash, "incomplete", reason, findings, evidenced, 0, items, envItems))
+		return contractConfirmed{}, nil
 	}
 
 	args, why, err := sh.contractCall(ctx, "review", reviewInput)
 	if err != nil {
-		return nil, err
+		return contractConfirmed{}, err
 	}
 	var findings []contractFinding
+	var envFindings []contractEnvFinding
 	if why == "" {
-		if findings, why = parseContractReview(args); why != "" {
+		if findings, envFindings, why = parseContractReview(args); why != "" {
 			why = "invalid " + SubmitContractReviewTool + " payload: " + why
 		}
 	}
 	if why != "" {
-		return incomplete(why, 0, 0, nil)
+		return incomplete(why, 0, 0, nil, nil)
 	}
 	items := make([]contractItem, len(findings))
 	var evidenced []string
@@ -483,13 +626,21 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 			evidenced = append(evidenced, contractFindingLine(len(evidenced)+1, f))
 		}
 	}
+	envItems := make([]contractEnvItem, len(envFindings))
+	for i, f := range envFindings {
+		envItems[i] = contractEnvItem{finding: f, evidenced: ev.evidencedEnv(f)}
+		if envItems[i].evidenced {
+			evidenced = append(evidenced, contractEnvFindingLine(len(evidenced)+1, f))
+		}
+	}
+	total := len(findings) + len(envFindings)
 	if len(evidenced) == 0 {
-		sh.ev.Record(contractEvent(hash, "clean", "", len(findings), 0, 0, items))
-		return nil, nil
+		sh.ev.Record(contractEvent(hash, "clean", "", total, 0, 0, items, envItems))
+		return contractConfirmed{}, nil
 	}
 	args, why, err = sh.contractCall(ctx, "confirmation", reviewInput+"\n\n# Findings to verify\n\n"+strings.Join(evidenced, "\n"))
 	if err != nil {
-		return nil, err
+		return contractConfirmed{}, err
 	}
 	var verdicts []contractVerdict
 	if why == "" {
@@ -498,14 +649,15 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 		}
 	}
 	if why != "" {
-		return incomplete(why, len(findings), len(evidenced), items)
+		return incomplete(why, total, len(evidenced), items, envItems)
 	}
-	lines := applyVerdicts(items, verdicts)
+	lines := applyVerdicts(items, envItems, verdicts)
 	result := "clean"
-	if len(lines) > 0 {
+	confirmed := len(lines.contradictions) + len(lines.environment)
+	if confirmed > 0 {
 		result = "refused"
 	}
-	sh.ev.Record(contractEvent(hash, result, "", len(findings), len(evidenced), len(lines), items))
+	sh.ev.Record(contractEvent(hash, result, "", total, len(evidenced), confirmed, items, envItems))
 	return lines, nil
 }
 

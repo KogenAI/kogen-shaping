@@ -93,7 +93,7 @@ func (p *shpProvider) serve(w http.ResponseWriter, r *http.Request) {
 				step = p.contract[p.contractNext]
 				p.contractNext++
 			} else {
-				call := shpCall("contract-review", SubmitContractReviewTool, map[string]any{"findings": []any{}})
+				call := shpCall("contract-review", SubmitContractReviewTool, map[string]any{"findings": []any{}, "environment": []any{}})
 				if kind == SubmitContractConfirmationTool {
 					call = shpCall("contract-confirmation", SubmitContractConfirmationTool, map[string]any{"verdicts": []any{}})
 				}

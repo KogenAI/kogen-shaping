@@ -81,7 +81,7 @@ func (s *shapeSession) Round(_ context.Context, in executor.Input) (executor.Rou
 	if isContractTask(s.task) {
 		s.x.mu.Lock()
 		s.x.contractCalls++
-		fn := result(map[string]any{"findings": []any{}})
+		fn := result(map[string]any{"findings": []any{}, "environment": []any{}})
 		if strings.Contains(string(s.task.Schema), `"verdicts"`) {
 			fn = result(map[string]any{"verdicts": []any{}})
 		}

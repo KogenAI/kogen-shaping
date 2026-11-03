@@ -28,6 +28,10 @@ func ccEvidence() contractEvidence {
 		scenarios:    []string{"Even numbers", "Outline name"},
 		expectations: map[string]string{ccFeaturePath: shpFeature, ccStepsPath: shpSteps},
 		intentPath:   ccIntentPath, intent: shpIntentMD,
+		failures: map[string][]string{
+			"Even numbers": {"AssertionError: missing  accounts\nschema"},
+			"Other":        {"a different failure"},
+		},
 		tracked: func(path string) (string, bool) {
 			text, ok := map[string]string{"cli/code.go": "func Code() {\n\treturn 1\n}\n"}[path]
 			return text, ok
@@ -76,6 +80,31 @@ func TestContractEvidenceRule(t *testing.T) {
 	}
 }
 
+func TestContractEnvironmentEvidenceRule(t *testing.T) {
+	parallel(t)
+	base := contractEnvFinding{scenario: "Even numbers", output: "missing accounts schema", why: "the copy lacks the store"}
+	cases := []struct {
+		name   string
+		change func(f *contractEnvFinding)
+		want   bool
+	}{
+		{"output in the failed scenario's detail", func(*contractEnvFinding) {}, true},
+		{"scenario and output spaces are normalized", func(f *contractEnvFinding) { f.scenario, f.output = " Even\n numbers ", "missing\taccounts   schema" }, true},
+		{"a scenario that passed or is unknown", func(f *contractEnvFinding) { f.scenario = "Passing" }, false},
+		{"output only in another scenario's detail", func(f *contractEnvFinding) { f.output = "a different failure" }, false},
+		{"output in no detail", func(f *contractEnvFinding) { f.output = "missing store" }, false},
+		{"blank output", func(f *contractEnvFinding) { f.output = " \n" }, false},
+		{"blank why", func(f *contractEnvFinding) { f.why = " " }, false},
+	}
+	for _, c := range cases {
+		f := base
+		c.change(&f)
+		if got := ccEvidence().evidencedEnv(f); got != c.want {
+			t.Errorf("%s: evidenced = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
 func TestContractVerdictCounting(t *testing.T) {
 	parallel(t)
 	mk := func(scenario string, evidenced bool) contractItem {
@@ -84,11 +113,29 @@ func TestContractVerdictCounting(t *testing.T) {
 		return contractItem{finding: f, evidenced: evidenced}
 	}
 	items := []contractItem{mk("a", true), mk("unevidenced", false), mk("b", true), mk("c", true), mk("d", true)}
-	lines := applyVerdicts(items, []contractVerdict{
+	mkEnv := func(scenario string, evidenced bool) contractEnvItem {
+		return contractEnvItem{finding: contractEnvFinding{scenario, "no  table\n", "unprepared"}, evidenced: evidenced}
+	}
+	envItems := []contractEnvItem{mkEnv("e1", true), mkEnv("unevidenced", false), mkEnv("e2", true), mkEnv("e3", true)}
+	confirmed := applyVerdicts(items, envItems, []contractVerdict{
 		{1, "confirmed", "one  is\nconfirmed"}, {1, "refuted", "ignored second verdict"},
 		{2, "refuted", "two refuted"}, {3, "confirmed", "three"}, {9, "confirmed", "out of range"}, {0, "confirmed", "zero"},
+		{5, "confirmed", "five\nenv"}, {6, "refuted", "six"},
 	})
-	// Evidenced findings are numbered 1..4: a, b, c, d. Finding 4 has no counted verdict.
+	// Evidenced findings are numbered 1..7: contradictions a, b, c, d, then environment e1, e2, e3.
+	// Finding 4 and 7 have no counted verdict.
+	wantEnv := []string{"- e1 | fresh-copy output: no table | why: unprepared | confirmed: five env"}
+	if !reflect.DeepEqual(confirmed.environment, wantEnv) {
+		t.Fatalf("environment lines\n%q\nwant\n%q", confirmed.environment, wantEnv)
+	}
+	envVerdicts := []string{envItems[0].verdict, envItems[1].verdict, envItems[2].verdict, envItems[3].verdict}
+	if !reflect.DeepEqual(envVerdicts, []string{"confirmed", "", "refuted", "refuted"}) {
+		t.Fatalf("environment verdicts %q", envVerdicts)
+	}
+	if envItems[0].confirmation == nil || *envItems[0].confirmation != "five\nenv" || envItems[3].confirmation != nil {
+		t.Fatalf("environment confirmations %v %v", envItems[0].confirmation, envItems[3].confirmation)
+	}
+	lines := confirmed.contradictions
 	want := []string{
 		"- a | expectation: " + ccFeaturePath + ": Given the number 4 | contract: " + ccIntentPath + ": returns True for even integers | why: because | confirmed: one is confirmed",
 		"- c | expectation: " + ccFeaturePath + ": Given the number 4 | contract: " + ccIntentPath + ": returns True for even integers | why: because | confirmed: three",
@@ -119,20 +166,39 @@ func TestContractFormats(t *testing.T) {
 	if got := contractHeadline(2); got != wantHead {
 		t.Errorf("headline %q", got)
 	}
-	if got := contractFeedback([]string{"- x", "- y"}); got != wantHead+"\n- x\n- y" {
+	if got := contractFeedback(contractConfirmed{contradictions: []string{"- x", "- y"}}); got != wantHead+"\n- x\n- y" {
 		t.Errorf("feedback %q", got)
 	}
+	wantEnvHead := "Environment check: 2 acceptance step(s) fail on the unchanged tree because Kogen's fresh copy is not prepared for them, not because the requested behaviour is missing; nothing was published. " +
+		"Kogen runs acceptance in a fresh single-commit copy of the tree, without history or ignored files, after only the configured setup: make the step prepare the state it needs itself or in an earlier step of its scenario, or stop depending on state that copy lacks; do not delete or weaken a scenario to pass this check. " +
+		"Resubmitting this candidate unchanged is refused again."
+	if got := environmentHeadline(2); got != wantEnvHead {
+		t.Errorf("environment headline %q", got)
+	}
+	if got := contractFeedback(contractConfirmed{environment: []string{"- e"}}); got != wantEnvHead[:len("Environment check: 2")-1]+"1"+wantEnvHead[len("Environment check: 2"):]+"\n- e" {
+		t.Errorf("environment-only feedback %q", got)
+	}
+	if got := contractFeedback(contractConfirmed{contradictions: []string{"- x"}, environment: []string{"- e1", "- e2"}}); got != contractHeadline(1)+"\n- x\n"+wantEnvHead+"\n- e1\n- e2" {
+		t.Errorf("combined feedback %q", got)
+	}
+	ef := contractEnvFinding{scenario: " Even\nnumbers ", output: "no  table\n", why: "unprepared"}
+	if got, want := contractEnvFindingLine(3, ef), "3. scenario: Even numbers | fresh-copy output: no table | why: unprepared"; got != want {
+		t.Errorf("environment finding line %q", got)
+	}
+	if got, want := contractEnvItemLine(ef, "copy  is\nbare"), "- Even numbers | fresh-copy output: no table | why: unprepared | confirmed: copy is bare"; got != want {
+		t.Errorf("environment item line %q", got)
+	}
 	why := "yes"
-	event := contractEvent("abc", "refused", "", 2, 1, 1, []contractItem{
+	event := contractEvent("abc", "refused", "", 3, 2, 2, []contractItem{
 		{finding: f, evidenced: true, verdict: "confirmed", confirmation: &why},
 		{finding: f},
-	})
+	}, []contractEnvItem{{finding: ef, evidenced: true, verdict: "confirmed", confirmation: &why}})
 	b, _ := json.Marshal(event)
 	var got map[string]any
 	json.Unmarshal(b, &got)
 	items := got["items"].([]any)
 	first, second := items[0].(map[string]any), items[1].(map[string]any)
-	if got["event"] != "contract_review" || got["package"] != "abc" || got["result"] != "refused" || got["findings"] != float64(2) || got["evidenced"] != float64(1) || got["confirmed"] != float64(1) {
+	if got["event"] != "contract_review" || got["package"] != "abc" || got["result"] != "refused" || got["findings"] != float64(3) || got["evidenced"] != float64(2) || got["confirmed"] != float64(2) {
 		t.Errorf("event %v", got)
 	}
 	if _, has := got["reason"]; has {
@@ -141,7 +207,11 @@ func TestContractFormats(t *testing.T) {
 	if first["evidenced"] != true || first["verdict"] != "confirmed" || first["confirmation"] != "yes" || second["evidenced"] != false || second["verdict"] != nil || second["confirmation"] != nil {
 		t.Errorf("items %v", items)
 	}
-	if got := contractEvent("abc", "incomplete", "why", 0, 0, 0, nil); got["reason"] != "why" {
+	env := got["environment"].([]any)[0].(map[string]any)
+	if len(got["environment"].([]any)) != 1 || env["scenario"] != ef.scenario || env["output"] != ef.output || env["why"] != "unprepared" || env["evidenced"] != true || env["verdict"] != "confirmed" || env["confirmation"] != "yes" {
+		t.Errorf("environment items %v", got["environment"])
+	}
+	if got := contractEvent("abc", "incomplete", "why", 0, 0, 0, nil, nil); got["reason"] != "why" {
 		t.Errorf("incomplete event %v", got)
 	}
 }
@@ -158,20 +228,29 @@ func TestContractPayloadValidation(t *testing.T) {
 		return m
 	}
 	const finding = `{"scenario":"s","expectation":{"path":"p","quote":"q"},"contract":{"path":"p2","quote":"q2"},"why":"w"}`
+	const env = `{"scenario":"s","output":"o","why":"w"}`
 	for payload, valid := range map[string]bool{
-		`{"findings":[]}`:                 true,
-		`{"findings":[` + finding + `]}`:  true,
-		`{}`:                              false,
-		`{"findings":[],"extra":1}`:       false,
-		`{"findings":{}}`:                 false,
-		`{"findings":[{"scenario":"s"}]}`: false,
-		`{"findings":["x"]}`:              false,
-		`{"findings":[{"scenario":"s","expectation":{"path":"p"},"contract":{"path":"p","quote":"q"},"why":"w"}]}`:                   false,
-		`{"findings":[{"scenario":"s","expectation":{"path":"p","quote":"q","x":1},"contract":{"path":"p","quote":"q"},"why":"w"}]}`: false,
-		`{"findings":[{"scenario":1,"expectation":{"path":"p","quote":"q"},"contract":{"path":"p","quote":"q"},"why":"w"}]}`:         false,
-		`{"findings":[{"scenario":"s","expectation":{"path":"p","quote":"q"},"contract":{"path":"p","quote":"q"},"why":"w","x":1}]}`: false,
+		`{"findings":[],"environment":[]}`:                true,
+		`{"findings":[` + finding + `],"environment":[]}`: true,
+		`{"findings":[],"environment":[` + env + `]}`:     true,
+		`{}`:                 false,
+		`{"findings":[]}`:    false,
+		`{"environment":[]}`: false,
+		`{"findings":[],"environment":[],"extra":1}`:       false,
+		`{"findings":{},"environment":[]}`:                 false,
+		`{"findings":[],"environment":{}}`:                 false,
+		`{"findings":[{"scenario":"s"}],"environment":[]}`: false,
+		`{"findings":["x"],"environment":[]}`:              false,
+		`{"findings":[{"scenario":"s","expectation":{"path":"p"},"contract":{"path":"p","quote":"q"},"why":"w"}],"environment":[]}`:                   false,
+		`{"findings":[{"scenario":"s","expectation":{"path":"p","quote":"q","x":1},"contract":{"path":"p","quote":"q"},"why":"w"}],"environment":[]}`: false,
+		`{"findings":[{"scenario":1,"expectation":{"path":"p","quote":"q"},"contract":{"path":"p","quote":"q"},"why":"w"}],"environment":[]}`:         false,
+		`{"findings":[{"scenario":"s","expectation":{"path":"p","quote":"q"},"contract":{"path":"p","quote":"q"},"why":"w","x":1}],"environment":[]}`: false,
+		`{"findings":[],"environment":["x"]}`:                                           false,
+		`{"findings":[],"environment":[{"scenario":"s","output":"o"}]}`:                 false,
+		`{"findings":[],"environment":[{"scenario":"s","output":"o","why":"w","x":1}]}`: false,
+		`{"findings":[],"environment":[{"scenario":"s","output":1,"why":"w"}]}`:         false,
 	} {
-		if _, why := parseContractReview(decode(payload)); (why == "") != valid {
+		if _, _, why := parseContractReview(decode(payload)); (why == "") != valid {
 			t.Errorf("review %s: reason %q, want valid=%v", payload, why, valid)
 		}
 	}
@@ -209,7 +288,7 @@ func ccReview(id string, findings ...any) shpStep {
 	if findings == nil {
 		findings = []any{}
 	}
-	return shpAnswer(shpCall(id, SubmitContractReviewTool, map[string]any{"findings": findings}))
+	return shpAnswer(shpCall(id, SubmitContractReviewTool, map[string]any{"findings": findings, "environment": []any{}}))
 }
 
 func ccConfirm(id string, verdicts ...any) shpStep {
@@ -222,6 +301,23 @@ func ccConfirm(id string, verdicts ...any) shpStep {
 func ccVerdict(n int, verdict, why string) map[string]any {
 	return map[string]any{"finding": n, "verdict": verdict, "why": why}
 }
+
+func ccEnvFindingArgs(scenario, output string) map[string]any {
+	return map[string]any{"scenario": scenario, "output": output, "why": "the fresh copy lacks the state the step reads"}
+}
+
+// ccEnvReview is a review that reports environment findings only.
+func ccEnvReview(id string, env ...any) shpStep {
+	return shpAnswer(shpCall(id, SubmitContractReviewTool, map[string]any{"findings": []any{}, "environment": env}))
+}
+
+// ccEnvOutput is the failure detail of the failing scenario in the scripted readiness report.
+const ccEnvOutput = "assertion failed in scenario Even numbers"
+
+const ccEnvRefusal = "Environment check: 1 acceptance step(s) fail on the unchanged tree because Kogen's fresh copy is not prepared for them, not because the requested behaviour is missing; nothing was published. " +
+	"Kogen runs acceptance in a fresh single-commit copy of the tree, without history or ignored files, after only the configured setup: make the step prepare the state it needs itself or in an earlier step of its scenario, or stop depending on state that copy lacks; do not delete or weaken a scenario to pass this check. " +
+	"Resubmitting this candidate unchanged is refused again.\n" +
+	"- Even numbers | fresh-copy output: " + ccEnvOutput + " | why: the fresh copy lacks the state the step reads | confirmed: the copy was not prepared"
 
 func ccIntentOnly(id string) shpStep {
 	return shpSubmit(id, map[string]any{"files": []any{map[string]any{"path": ccIntentPath, "content": shpIntentMD}}})
@@ -413,6 +509,120 @@ func TestContractCheckUnevidencedAndRefutedFindingsNeverRefuse(t *testing.T) {
 	})
 }
 
+func TestContractCheckEnvironmentFindings(t *testing.T) {
+	parallel(t)
+	t.Run("a confirmed environment finding refuses and its correction is published", func(t *testing.T) {
+		parallel(t)
+		f := newShpFx(t, shpSubmit("c1", shpFiles()), ccCorrected("c2"), ccIntentOnly("c3"))
+		f.setFeatureReport("corrected-report", ccCorrectedFeature, "FAILED", 1)
+		f.Prov.contract = []shpStep{
+			ccEnvReview("r1", ccEnvFindingArgs(" Even\nnumbers ", ccEnvOutput)),
+			ccConfirm("v1", ccVerdict(1, "confirmed", "the copy was not prepared")),
+		}
+		exit, err := f.shape("Add calc.is_even(n).")
+		if err != nil || exit != 0 {
+			t.Fatalf("exit %d, err %v\n%s", exit, err, f.Stderr)
+		}
+		if got := strings.Join(ccKinds(f), ","); got != "shaper,review,confirmation,shaper,review,shaper" {
+			t.Fatalf("requests %s", got)
+		}
+		shaper := f.Prov.requests()
+		shpEq(t, "feedback to submission 1", shpOutputs(shaper[1])["c1"], ccEnvRefusal)
+		if strings.Contains(shpOutputs(shaper[1])["c1"], "legitimate missing-feature red") {
+			t.Fatal("the environment failure was offered for acknowledgment")
+		}
+		shpEq(t, "feature", f.read(ccFeaturePath), ccCorrectedFeature)
+		shpContains(t, "confirmation", ccInput(f.Prov.contractRequests()[1]), "\n\n# Findings to verify\n\n1. scenario: Even numbers | fresh-copy output: "+ccEnvOutput+" | why: the fresh copy lacks the state the step reads")
+		reviews := ccReviews(f)
+		if len(reviews) != 2 || reviews[0]["result"] != "refused" || reviews[1]["result"] != "clean" ||
+			reviews[0]["findings"] != float64(1) || reviews[0]["evidenced"] != float64(1) || reviews[0]["confirmed"] != float64(1) {
+			t.Fatalf("contract_review events %v", reviews)
+		}
+		env := reviews[0]["environment"].([]any)
+		if len(env) != 1 || env[0].(map[string]any)["evidenced"] != true || env[0].(map[string]any)["verdict"] != "confirmed" || env[0].(map[string]any)["confirmation"] != "the copy was not prepared" || env[0].(map[string]any)["output"] != ccEnvOutput {
+			t.Fatalf("environment items %v", env)
+		}
+		if refused := ccRefused(f); len(refused) != 1 || refused[0]["problems"].([]any)[0] != strings.Split(ccEnvRefusal, "\n")[1] {
+			t.Fatalf("submission_refused events %v", refused)
+		}
+	})
+	t.Run("environment findings are numbered after contradictions and both headlines are shown", func(t *testing.T) {
+		parallel(t)
+		f := newShpFx(t, shpSubmit("c1", shpFiles()), ccIntentOnly("c2"), ccIntentOnly("c3"))
+		f.Prov.contract = []shpStep{
+			shpAnswer(shpCall("r1", SubmitContractReviewTool, map[string]any{"findings": []any{ccContradiction()}, "environment": []any{ccEnvFindingArgs("Even numbers", ccEnvOutput)}})),
+			ccConfirm("v1", ccVerdict(1, "confirmed", "four is even"), ccVerdict(2, "confirmed", "the copy was not prepared")),
+		}
+		exit, err := f.shape("Add calc.is_even(n).")
+		if exit != 1 || err == nil {
+			t.Fatalf("exit %d, err %v", exit, err)
+		}
+		shpContains(t, "confirmation", ccInput(f.Prov.contractRequests()[1]), "\n2. scenario: Even numbers | fresh-copy output: "+ccEnvOutput)
+		shpEq(t, "feedback", shpOutputs(f.Prov.requests()[1])["c1"], ccRefusal+"\n"+ccEnvRefusal)
+		reviews := ccReviews(f)
+		if len(reviews) != 1 || reviews[0]["findings"] != float64(2) || reviews[0]["evidenced"] != float64(2) || reviews[0]["confirmed"] != float64(2) {
+			t.Fatalf("events %v", reviews)
+		}
+	})
+	t.Run("unevidenced, refuted and uncounted environment findings do not refuse", func(t *testing.T) {
+		parallel(t)
+		f := newShpFx(t, shpSubmit("c1", shpFiles()), ccIntentOnly("c2"))
+		f.Prov.contract = []shpStep{
+			ccEnvReview("r1",
+				ccEnvFindingArgs("Even numbers", "output of an earlier run"),
+				ccEnvFindingArgs("No such scenario", ccEnvOutput),
+				ccEnvFindingArgs("Even numbers", ccEnvOutput),
+				ccEnvFindingArgs("Even numbers", "scenario Even")),
+			ccConfirm("v1", ccVerdict(1, "refuted", "the behaviour is missing")),
+		}
+		exit, err := f.shape("Add calc.is_even(n).")
+		if err != nil || exit != 0 {
+			t.Fatalf("exit %d, err %v\n%s", exit, err, f.Stderr)
+		}
+		if got := strings.Join(ccKinds(f), ","); got != "shaper,review,confirmation,shaper" {
+			t.Fatalf("requests %s", got)
+		}
+		shpContains(t, "confirmation", ccInput(f.Prov.contractRequests()[1]), "\n\n# Findings to verify\n\n1. scenario: Even numbers | fresh-copy output: "+ccEnvOutput)
+		shpContains(t, "confirmation", ccInput(f.Prov.contractRequests()[1]), "\n2. scenario: Even numbers | fresh-copy output: scenario Even")
+		reviews := ccReviews(f)
+		if len(reviews) != 1 || reviews[0]["result"] != "clean" || reviews[0]["findings"] != float64(4) || reviews[0]["evidenced"] != float64(2) || reviews[0]["confirmed"] != float64(0) {
+			t.Fatalf("events %v", reviews)
+		}
+		if len(ccRefused(f)) != 0 {
+			t.Fatal("a refuted or unevidenced environment finding refused the candidate")
+		}
+	})
+	t.Run("a not-ready end writes the record and approval refuses the hash", func(t *testing.T) {
+		parallel(t)
+		f := newShpFx(t, shpSubmit("c1", shpFiles()), ccIntentOnly("c2"), ccIntentOnly("c3"))
+		f.Prov.contract = []shpStep{ccEnvReview("r1", ccEnvFindingArgs("Even numbers", ccEnvOutput)), ccConfirm("v1", ccVerdict(1, "confirmed", "the copy was not prepared"))}
+		exit, err := f.shape("Add calc.is_even(n).")
+		e := shpWantError(t, err, "intent", "not_ready", "the Intent is not ready to build", 1)
+		item := strings.Split(ccEnvRefusal, "\n")[1]
+		if exit != 1 || !reflect.DeepEqual(e.Lines, []string{item}) {
+			t.Fatalf("exit %d lines %q", exit, e.Lines)
+		}
+		// The unchanged resubmission is refused again with the same text and no new review.
+		if got := strings.Join(ccKinds(f), ","); got != "shaper,review,confirmation,shaper,shaper" {
+			t.Fatalf("requests %s", got)
+		}
+		shpEq(t, "feedback to submission 2", shpOutputs(f.Prov.requests()[2])["c2"], ccEnvRefusal)
+		var rec contractContradictions
+		b, _ := os.ReadFile(filepath.Join(f.Root, ".kogen/local/shaping/is-even", contractContradictionsFile))
+		if err := json.Unmarshal(b, &rec); err != nil || rec.SHA256 != ccHash(t, f) || !reflect.DeepEqual(rec.Lines, []string{item}) {
+			t.Fatalf("record %q (%v)", b, err)
+		}
+		s := sys.NewWith(f.Env, f.Root)
+		var out strings.Builder
+		s.Stdout, s.Stderr = &out, &out
+		exit, err = Approve(context.Background(), s, ApproveInput{Project: f.Root, Slug: shpSlug, Hash: rec.SHA256})
+		e = shpWantError(t, err, "intent", "contract_contradicts", "", 1)
+		if exit != 1 || !reflect.DeepEqual(e.Lines, []string{item}) {
+			t.Fatalf("approve: exit %d lines %q", exit, e.Lines)
+		}
+	})
+}
+
 func TestContractCheckReadOnlyToolRoundsAndIncompleteReviews(t *testing.T) {
 	parallel(t)
 	read := func(id string) map[string]any { return shpCall(id, "read_file", map[string]any{"path": "README.md"}) }
@@ -438,9 +648,9 @@ func TestContractCheckReadOnlyToolRoundsAndIncompleteReviews(t *testing.T) {
 		requests int // contract requests made
 	}{
 		{"a text-only answer", []shpStep{text}, "the answer called no tool", 1},
-		{"an invalid payload", []shpStep{shpAnswer(shpCall("r1", SubmitContractReviewTool, map[string]any{"findings": []any{map[string]any{"scenario": "x"}}}))}, "invalid " + SubmitContractReviewTool + " payload", 1},
-		{"an extra payload field", []shpStep{shpAnswer(shpCall("r1", SubmitContractReviewTool, map[string]any{"findings": []any{}, "note": "x"}))}, "invalid " + SubmitContractReviewTool + " payload", 1},
-		{"the submit call beside another call", []shpStep{shpAnswer(read("a"), shpCall("r1", SubmitContractReviewTool, map[string]any{"findings": []any{}}))}, "the answer called other tools besides " + SubmitContractReviewTool, 1},
+		{"an invalid payload", []shpStep{shpAnswer(shpCall("r1", SubmitContractReviewTool, map[string]any{"findings": []any{map[string]any{"scenario": "x"}}, "environment": []any{}}))}, "invalid " + SubmitContractReviewTool + " payload", 1},
+		{"an extra payload field", []shpStep{shpAnswer(shpCall("r1", SubmitContractReviewTool, map[string]any{"findings": []any{}, "environment": []any{}, "note": "x"}))}, "invalid " + SubmitContractReviewTool + " payload", 1},
+		{"the submit call beside another call", []shpStep{shpAnswer(read("a"), shpCall("r1", SubmitContractReviewTool, map[string]any{"findings": []any{}, "environment": []any{}}))}, "the answer called other tools besides " + SubmitContractReviewTool, 1},
 		{"the request bound", eight, "the 8 request bound was reached", 8},
 		{"the tool call bound", thirtyTwo, "the 32 read-only tool call bound was reached", 7},
 		{"an invalid confirmation", []shpStep{ccReview("r1", ccContradiction()), shpAnswer(shpCall("v1", SubmitContractConfirmationTool, map[string]any{"verdicts": []any{ccVerdict(1, "maybe", "x")}}))}, "invalid " + SubmitContractConfirmationTool + " payload", 2},
@@ -660,9 +870,9 @@ func ccHash(t *testing.T, f *shpFx) string {
 
 func TestContractCheckExternalShape(t *testing.T) {
 	parallel(t)
-	review := result(map[string]any{"findings": []any{ccContradiction()}})
+	review := result(map[string]any{"findings": []any{ccContradiction()}, "environment": []any{}})
 	confirm := result(map[string]any{"verdicts": []any{ccVerdict(1, "confirmed", "four is even")}})
-	clean := result(map[string]any{"findings": []any{}})
+	clean := result(map[string]any{"findings": []any{}, "environment": []any{}})
 	correction := map[string]any{"files": []any{map[string]any{"path": ccFeaturePath, "content": ccCorrectedFeature}}}
 	ack := map[string]any{"files": []any{map[string]any{"path": ccIntentPath, "content": shpIntentMD}}}
 

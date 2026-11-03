@@ -1,0 +1,242 @@
+package shape
+
+import (
+	"os"
+	"os/exec"
+	"strings"
+	"testing"
+)
+
+// The acceptance of k-shape-accept-env-prepare: a shaped acceptance step that fails on the
+// unchanged tree only because Kogen's fresh single-commit copy is not prepared for it (a store
+// the checkout has but the copy lacks, Git history the copy lacks) goes back to the shaper with
+// that fresh-copy output instead of being offered as missing-feature red.
+
+const kenvRun = `NODE_PATH="$KOGEN_CUCUMBER" "$KOGEN_NODE" "$KOGEN_CUCUMBER/@cucumber/cucumber/bin/cucumber.js" --strict --require 'features/steps/*.js' --format "message:$KOGEN_ACCEPTANCE_REPORT" "$KOGEN_ACCEPTANCE_FEATURES"`
+
+var kenvConfig = "version: 1\ncommands:\n  setup: []\n  checks: [{name: unit, run: 'true'}]\n  acceptance:\n    run: " + quoteYAML(kenvRun) + "\n    steps_dir: features/steps\n"
+
+const kenvApp = `const fs = require('node:fs');
+if (!fs.existsSync('store/schema.json')) { console.error('missing accounts schema'); process.exit(1); }
+const args = process.argv.slice(2);
+if (args.length > 0) { console.error('unknown option ' + args[0]); process.exit(2); }
+console.log(JSON.parse(fs.readFileSync('store/schema.json', 'utf8')).accounts.join('\n'));
+`
+
+const kenvStore = "{\"accounts\":[\"alice\",\"bob\"],\"active\":[\"alice\"]}\n"
+
+const (
+	kenvFeaturePath = ".kogen/intents/is-even/acceptance.feature"
+	kenvStepsPath   = "features/steps/is_even_steps.js"
+	kenvGuidance    = "After inspecting legitimate missing-feature red"
+	kenvHeadline    = "Environment check: 1 acceptance step(s) fail on the unchanged tree"
+)
+
+const kenvStoreFeature = "Feature: Active accounts\n  Scenario: List active accounts\n    When I list the active accounts\n    Then the output is \"alice\"\n"
+
+// kenvUnpreparedSteps read the store the checkout has prepared and the fresh copy lacks.
+const kenvUnpreparedSteps = `const { When, Then } = require('@cucumber/cucumber');
+const { spawnSync } = require('node:child_process');
+const assert = require('node:assert');
+When('I list the active accounts', function () {
+  const r = spawnSync(process.execPath, ['accounts.js', '--active'], { encoding: 'utf8' });
+  this.out = r.stdout + r.stderr;
+});
+Then('the output is {string}', function (want) {
+  assert.strictEqual(this.out, want + '\n');
+});
+`
+
+// kenvPreparedSteps prepare the store in the step itself.
+const kenvPreparedSteps = `const { When, Then } = require('@cucumber/cucumber');
+const { spawnSync } = require('node:child_process');
+const assert = require('node:assert');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+When('I list the active accounts', function () {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'accounts-'));
+  try {
+    fs.mkdirSync(path.join(dir, 'store'));
+    fs.writeFileSync(path.join(dir, 'store', 'schema.json'), JSON.stringify({ accounts: ['alice', 'bob'], active: ['alice'] }));
+    const r = spawnSync(process.execPath, [path.resolve('accounts.js'), '--active'], { cwd: dir, encoding: 'utf8' });
+    this.out = r.stdout + r.stderr;
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+Then('the output is {string}', function (want) {
+  assert.strictEqual(this.out, want + '\n');
+});
+`
+
+const kenvHistorySteps = `const { Then } = require('@cucumber/cucumber');
+const { spawnSync } = require('node:child_process');
+const assert = require('node:assert');
+Then('the commit {word} is in the history', function (sha) {
+  const r = spawnSync('git', ['cat-file', '-e', sha], { encoding: 'utf8' });
+  assert.strictEqual(r.status, 0, 'git cat-file -e ' + sha + ' exited ' + r.status);
+});
+`
+
+func kenvHistoryFeature(rev string) string {
+	return "Feature: Seed history\n  Scenario: The seed commit stays in history\n    Then the commit " + rev + " is in the history\n"
+}
+
+func kenvPackage(feature, steps string) map[string]any {
+	return map[string]any{"files": []any{
+		map[string]any{"path": ".kogen/intents/is-even/intent.md", "content": shpIntentMD},
+		map[string]any{"path": kenvFeaturePath, "content": feature},
+		map[string]any{"path": kenvStepsPath, "content": steps},
+	}}
+}
+
+func kenvReview(id string, environment ...any) shpStep {
+	if environment == nil {
+		environment = []any{}
+	}
+	return shpAnswer(shpCall(id, SubmitContractReviewTool, map[string]any{"findings": []any{}, "environment": environment}))
+}
+
+func kenvConfirm(id, why string) shpStep {
+	return shpAnswer(shpCall(id, SubmitContractConfirmationTool, map[string]any{"verdicts": []any{
+		map[string]any{"finding": 1, "verdict": "confirmed", "why": why},
+	}}))
+}
+
+func kenvFinding(scenario, output, why string) any {
+	return map[string]any{"scenario": scenario, "output": output, "why": why}
+}
+
+// kenvObservation is what one journey observed.
+type kenvObservation struct {
+	exit                 int
+	err                  string
+	refusal, correction  string // the shaper's feedback to submissions 1 and 2
+	reviews              []string
+	published, untouched bool
+}
+
+// kenvCheck judges a journey: submission 1 comes back as an environment refusal with the
+// fresh-copy output, never as acknowledgment; the corrected package is accepted and published.
+func kenvCheck(t *testing.T, mode, scenario, output string, o kenvObservation) {
+	t.Helper()
+	if o.exit != 0 || o.err != "" {
+		t.Errorf("%s: shape exit %d, err %q, want exit 0 and no error", mode, o.exit, o.err)
+	}
+	if !strings.Contains(o.refusal, kenvHeadline) {
+		t.Errorf("%s: feedback to submission 1 is not the environment refusal %q:\n%s", mode, kenvHeadline, o.refusal)
+	}
+	if !strings.Contains(o.refusal, output) || !strings.Contains(o.refusal, scenario) {
+		t.Errorf("%s: feedback to submission 1 lacks the scenario %q or its fresh-copy output %q:\n%s", mode, scenario, output, o.refusal)
+	}
+	if strings.Contains(o.refusal, kenvGuidance) {
+		t.Errorf("%s: the environment failure was offered as missing-feature red for acknowledgment:\n%s", mode, o.refusal)
+	}
+	if mode == "store" {
+		if !strings.Contains(o.correction, "Readiness observations") || !strings.Contains(o.correction, "unknown option --active") {
+			t.Errorf("store: the corrected step's behaviour red was not returned for acknowledgment:\n%s", o.correction)
+		}
+		if strings.Contains(o.correction, "Environment check:") {
+			t.Errorf("store: an environment finding whose output the fresh copy did not print refused the correction:\n%s", o.correction)
+		}
+	}
+	if strings.Join(o.reviews, ",") != "refused,clean" {
+		t.Errorf("%s: contract_review results %v, want [refused clean]", mode, o.reviews)
+	}
+	if !o.published {
+		t.Errorf("%s: the corrected package was not published", mode)
+	}
+	if !o.untouched {
+		t.Errorf("%s: the shaping checkout's own prepared state changed", mode)
+	}
+}
+
+func TestKAcceptEnvPrepareAcceptance(t *testing.T) {
+	mode := os.Getenv("KENV_MODE")
+	if mode == "good" || mode == "bad" {
+		good := kenvObservation{
+			refusal:    kenvHeadline + " because Kogen's fresh copy is not prepared for them\n- List active accounts | fresh-copy output: missing accounts schema",
+			correction: "Readiness observations\nunknown option --active",
+			reviews:    []string{"refused", "clean"}, published: true, untouched: true,
+		}
+		if mode == "bad" {
+			good.refusal = "Inspect whether fixtures... " + kenvGuidance + "\nReadiness observations\nmissing accounts schema"
+		}
+		kenvCheck(t, "store", "List active accounts", "missing accounts schema", good)
+		return
+	}
+
+	f := newShpFxRun(t, "'true'")
+	seed := f.head()
+	f.write(".gitignore", ".kogen/local/\nstore/\n")
+	f.write(".kogen/project.yaml", kenvConfig)
+	f.write("accounts.js", kenvApp)
+	f.write("features/steps/calc_steps.js", "'use strict';\n")
+	f.git("add", "-A")
+	f.git("commit", "-qm", "accounts")
+	f.write("store/schema.json", kenvStore)
+
+	var scenario, output string
+	var corrected map[string]any
+	switch mode {
+	case "store":
+		scenario, output = "List active accounts", "missing accounts schema"
+		corrected = kenvPackage(kenvStoreFeature, kenvPreparedSteps)
+		f.Prov.seq = []shpStep{
+			shpSubmit("c1", kenvPackage(kenvStoreFeature, kenvUnpreparedSteps)),
+			shpSubmit("c2", corrected),
+			shpSubmit("c3", map[string]any{"files": []any{map[string]any{"path": kenvFeaturePath, "content": kenvStoreFeature}}}),
+		}
+		f.Prov.contract = []shpStep{
+			kenvReview("r1", kenvFinding(scenario, output, "the store is prepared only in the shaping checkout")),
+			kenvConfirm("v1", "the fresh copy has no prepared store"),
+			kenvReview("r2", kenvFinding(scenario, output, "the store is still unprepared")),
+		}
+	case "history":
+		cmd := exec.Command("git", "cat-file", "-e", seed)
+		cmd.Dir, cmd.Env = f.Root, f.Env
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("history: fixture: the shaping checkout lacks its seed commit %s: %v", seed, err)
+		}
+		scenario, output = "The seed commit stays in history", "git cat-file -e "+seed+" exited 1"
+		corrected = kenvPackage(kenvHistoryFeature("HEAD"), kenvHistorySteps)
+		f.Prov.seq = []shpStep{
+			shpSubmit("c1", kenvPackage(kenvHistoryFeature(seed), kenvHistorySteps)),
+			shpSubmit("c2", corrected),
+		}
+		f.Prov.contract = []shpStep{
+			kenvReview("r1", kenvFinding(scenario, output, "the fresh single-commit copy has no earlier commits")),
+			kenvConfirm("v1", "Kogen's copy holds one commit"),
+			kenvReview("r2"),
+		}
+	default:
+		t.Fatalf("unknown KENV_MODE %q", mode)
+	}
+
+	exit, err := f.shape("Add accounts.js --active to list only the active accounts.")
+	o := kenvObservation{exit: exit}
+	if err != nil {
+		o.err = err.Error()
+	}
+	reqs := f.Prov.requests()
+	if len(reqs) > 1 {
+		o.refusal = shpOutputs(reqs[1])["c1"]
+	}
+	if len(reqs) > 2 {
+		o.correction = shpOutputs(reqs[2])["c2"]
+	}
+	for _, e := range shpNamed(f.events(), "contract_review") {
+		r, _ := e["result"].(string)
+		o.reviews = append(o.reviews, r)
+	}
+	o.published = err == nil && exit == 0
+	for _, raw := range corrected["files"].([]any) {
+		m := raw.(map[string]any)
+		if !f.exists(m["path"].(string)) || f.read(m["path"].(string)) != m["content"].(string) {
+			o.published = false
+		}
+	}
+	o.untouched = f.read("store/schema.json") == kenvStore
+	kenvCheck(t, mode, scenario, output, o)
+}
