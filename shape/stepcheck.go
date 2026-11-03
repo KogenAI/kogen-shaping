@@ -18,21 +18,46 @@ import (
 const selfcheckHeadline = "Step self-check failed; nothing was published. Fix the step files and resubmit."
 
 // selfcheckScenarioFeedback identifies unbound steps at their feature locations, so the
-// shaper receives the same actionable diagnostics as readiness.
-func selfcheckScenarioFeedback(items []verify.StepItem, scenarios []project.Scenario) string {
+// shaper receives the same actionable diagnostics as readiness. matches holds, for each
+// ambiguous step text, the definitions Cucumber's matcher matches for it in load order; an
+// ambiguous step without them keeps the location-less line. A step of an expanded Outline
+// example names its Examples row line and is reported once per example; a plain step once.
+func selfcheckScenarioFeedback(items []verify.StepItem, scenarios []project.Scenario, matches map[string][]verify.StepDef) string {
+	type instance struct {
+		step project.Step
+		row  int
+	}
 	var lines []string
-	seen := map[project.Step]bool{}
+	seen := map[instance]bool{}
 	for _, it := range items {
 		if it.OK {
 			continue
 		}
-		if it.Check == "steps" && it.Detail == "undefined step" {
+		ambiguous := it.Check == "steps" && strings.HasPrefix(it.Detail, "ambiguous step") && len(matches[it.Target]) > 0
+		if it.Check == "steps" && (it.Detail == "undefined step" || ambiguous) {
 			for _, sc := range scenarios {
 				for _, st := range sc.Steps {
-					if st.Text == it.Target && !seen[st] {
-						lines = append(lines, fmt.Sprintf("acceptance.feature line %d: undefined step: %s%s", st.Line, st.Keyword, st.Text))
-						seen[st] = true
+					if st.Text != it.Target {
+						continue
 					}
+					in, row := instance{step: st}, ""
+					if sc.Outline != nil {
+						in.row, row = sc.Line, fmt.Sprintf(" (Examples row line %d)", sc.Line)
+					}
+					if seen[in] {
+						continue
+					}
+					seen[in] = true
+					if !ambiguous {
+						lines = append(lines, fmt.Sprintf("acceptance.feature line %d: undefined step: %s%s%s", st.Line, st.Keyword, st.Text, row))
+						continue
+					}
+					defs := make([]string, len(matches[st.Text]))
+					for i, d := range matches[st.Text] {
+						defs[i] = d.Pattern + " in " + d.File
+					}
+					lines = append(lines, fmt.Sprintf("acceptance.feature line %d: ambiguous step: %s%s%s matches %d definitions: %s",
+						st.Line, st.Keyword, st.Text, row, len(defs), strings.Join(defs, "; ")))
 				}
 			}
 		} else {
@@ -57,13 +82,30 @@ func (sh *shaping) stepSelfcheck(ctx context.Context) (string, error) {
 	own, files, texts := verify.StepAnalysis(sh.root, intent, scenarios)
 
 	var items []verify.StepItem
+	matches := map[string][]verify.StepDef{}
 	if len(own) > 0 {
-		raw, _, err := verify.RunStepScript(ctx, sh.stepTool(sh.rd.Tools.Node, "KOGEN_NODE"), sh.stepTool(sh.rd.Tools.Cucumber, "KOGEN_CUCUMBER"),
-			sh.root, sh.s.Env, files, texts)
+		node, cucumber := sh.stepTool(sh.rd.Tools.Node, "KOGEN_NODE"), sh.stepTool(sh.rd.Tools.Cucumber, "KOGEN_CUCUMBER")
+		raw, _, err := verify.RunStepScript(ctx, node, cucumber, sh.root, sh.s.Env, files, texts)
 		if err != nil {
 			return "", err
 		}
 		items = verify.StepItems(own, raw)
+		// Cucumber's own matcher names the definitions of an ambiguous step: run it again for
+		// that one text; the definitions it marks used are exactly those that match.
+		for _, it := range items {
+			if it.Check != "steps" || it.OK || !strings.HasPrefix(it.Detail, "ambiguous step") {
+				continue
+			}
+			one, _, err := verify.RunStepScript(ctx, node, cucumber, sh.root, sh.s.Env, files, []string{it.Target})
+			if err != nil {
+				return "", err
+			}
+			for _, d := range one.Defs {
+				if d.Used {
+					matches[it.Target] = append(matches[it.Target], d)
+				}
+			}
+		}
 		for _, sc := range scenarios {
 			for _, st := range sc.Steps {
 				if !strings.HasPrefix(st.Text, sh.slug+": ") {
@@ -107,7 +149,7 @@ func (sh *shaping) stepSelfcheck(ctx context.Context) (string, error) {
 		event["warnings"] = list
 	}
 	sh.ev.Record(event)
-	return selfcheckScenarioFeedback(items, scenarios), nil
+	return selfcheckScenarioFeedback(items, scenarios, matches), nil
 }
 
 // stepTool is a tool path of the readiness tools, else the environment variable.

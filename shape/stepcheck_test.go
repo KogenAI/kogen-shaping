@@ -24,13 +24,15 @@ func TestSelfcheckFeedbackNamesDefectsNotWarnings(t *testing.T) {
 	}
 	items := verify.StepItems([]string{own}, raw)
 	scenarios := []project.Scenario{{Steps: []project.Step{{Keyword: "Then ", Text: "y", Line: 3}}}}
-	want := selfcheckHeadline + "\nacceptance.feature line 3: undefined step: Then y\n- steps z: ambiguous step (2 definitions)"
-	if got := selfcheckScenarioFeedback(items, scenarios); got != want {
+	scenarios = append(scenarios, project.Scenario{Steps: []project.Step{{Keyword: "Then ", Text: "z", Line: 5}}})
+	matches := map[string][]verify.StepDef{"z": {{File: own, Pattern: "^z$"}, {File: "features/steps/other.js", Pattern: "z {int}"}}}
+	want := selfcheckHeadline + "\nacceptance.feature line 3: undefined step: Then y\nacceptance.feature line 5: ambiguous step: Then z matches 2 definitions: ^z$ in " + own + "; z {int} in features/steps/other.js"
+	if got := selfcheckScenarioFeedback(items, scenarios, matches); got != want {
 		t.Errorf("feedback %q, want %q", got, want)
 	}
 	raw.Loads[0].Error = "SyntaxError: boom"
 	items = verify.StepItems([]string{own}, raw)
-	if f := selfcheckScenarioFeedback(items, scenarios); f != selfcheckHeadline+"\n- load "+own+": SyntaxError: boom" {
+	if f := selfcheckScenarioFeedback(items, scenarios, nil); f != selfcheckHeadline+"\n- load "+own+": SyntaxError: boom" {
 		t.Errorf("feedback %q", f)
 	}
 }
@@ -48,16 +50,24 @@ func TestSelfcheckUndefinedLocations(t *testing.T) {
 	items := []verify.StepItem{{Check: "steps", Target: "the caller doubles 4", Detail: "undefined step"}}
 	scenarios := []project.Scenario{{Steps: []project.Step{{Keyword: "When ", Text: "the caller doubles 4", Line: 14}}}, {Steps: []project.Step{{Keyword: "When ", Text: "the caller doubles 4", Line: 14}}}}
 	want := selfcheckHeadline + "\nacceptance.feature line 14: undefined step: When the caller doubles 4"
-	if got := selfcheckScenarioFeedback(items, scenarios); got != want {
+	if got := selfcheckScenarioFeedback(items, scenarios, nil); got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 }
 
 func TestSelfcheckUndefinedOutlineRows(t *testing.T) {
-	items := []verify.StepItem{{Check: "steps", Target: "value 1", Detail: "undefined step"}, {Check: "steps", Target: "value 2", Detail: "undefined step"}}
-	scenarios := []project.Scenario{{Steps: []project.Step{{Keyword: "When ", Text: "value 1", Line: 4}}}, {Steps: []project.Step{{Keyword: "When ", Text: "value 2", Line: 4}}}}
-	want := selfcheckHeadline + "\nacceptance.feature line 4: undefined step: When value 1\nacceptance.feature line 4: undefined step: When value 2"
-	if got := selfcheckScenarioFeedback(items, scenarios); got != want {
+	items := []verify.StepItem{{Check: "steps", Target: "value 1", Detail: "undefined step"}, {Check: "steps", Target: "value 2", Detail: "ambiguous step (2 definitions)"}}
+	outline := &project.Outline{Name: "o", Line: 3, Examples: 2}
+	scenarios := []project.Scenario{
+		{Line: 6, Outline: outline, Steps: []project.Step{{Keyword: "When ", Text: "value 1", Line: 4}, {Keyword: "Then ", Text: "value 2", Line: 5}}},
+		{Line: 7, Outline: outline, Steps: []project.Step{{Keyword: "When ", Text: "value 1", Line: 4}, {Keyword: "Then ", Text: "value 2", Line: 5}}},
+	}
+	matches := map[string][]verify.StepDef{"value 2": {{File: "a.js", Pattern: "^value 2$"}, {File: "b.js", Pattern: "value {int}"}}}
+	want := selfcheckHeadline + "\nacceptance.feature line 4: undefined step: When value 1 (Examples row line 6)" +
+		"\nacceptance.feature line 4: undefined step: When value 1 (Examples row line 7)" +
+		"\nacceptance.feature line 5: ambiguous step: Then value 2 (Examples row line 6) matches 2 definitions: ^value 2$ in a.js; value {int} in b.js" +
+		"\nacceptance.feature line 5: ambiguous step: Then value 2 (Examples row line 7) matches 2 definitions: ^value 2$ in a.js; value {int} in b.js"
+	if got := selfcheckScenarioFeedback(items, scenarios, matches); got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 }
