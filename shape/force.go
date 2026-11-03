@@ -47,6 +47,10 @@ func (t *turnCounter) answered(calls int) bool {
 	return t.forced
 }
 
+// recover makes the next inference a recovery inference: it keeps the route's automatic tool
+// choice instead of requiring the terminal tool.
+func (t *turnCounter) recover() { t.forced = false }
+
 // exhausted reports whether the no-tool ceiling is reached.
 func (t *turnCounter) exhausted() bool { return t.noTool >= noToolLimit }
 
@@ -105,6 +109,36 @@ type lastSubmission struct {
 	gate     string   // refusal: the gate
 	problems []string // refusal: its problem lines as recorded
 	path     string   // observations: the file relative to the project root
+	// unchanged: the refusal of a package identical to an earlier refused one.
+	unchanged bool
+	// earliest: the lines naming the earliest unresolved refusal when it differs; else nil.
+	earliest []string
+}
+
+// repairable reports whether a recovery inference may follow the submission's first tool-free
+// answer: readiness failures, or a refusal of a package that is not an unchanged one.
+func (l lastSubmission) repairable() bool {
+	return l.kind == outObservations || (l.kind == outInvalid && !l.unchanged)
+}
+
+// recoveryEvent is the recovery_turn event of the recovery inference with the given request number.
+func (l lastSubmission) recoveryEvent(request int) map[string]any {
+	e := map[string]any{"event": "recovery_turn", "owner": "shape", "request": request, "attempt": l.attempt, "cause": "readiness_failures"}
+	if l.kind == outInvalid {
+		e["cause"], e["gate"] = "refused", l.gate
+	}
+	return e
+}
+
+// recoveryMessage is the user message of a recovery inference.
+func (l lastSubmission) recoveryMessage() string {
+	const rest = "This inference does not require submit: investigate with read_file, list_files, search_text, probe or documentation, add or correct files with propose_files, then call submit with the repaired package"
+	if l.kind == outInvalid {
+		return fmt.Sprintf("Recovery before submitting again: submission attempt %d was refused at gate %s and nothing was published. Your accumulated proposals are kept, as the cumulative proposal manifest lists. %s. An unchanged package is refused again. The refusal:\n%s",
+			l.attempt, l.gate, rest, strings.Join(l.problems, "\n"))
+	}
+	return fmt.Sprintf("Recovery before submitting again: submission attempt %d returned readiness failures for acknowledgment (see %s) and nothing was published. Your accumulated proposals are kept, as the cumulative proposal manifest lists. %s, or acknowledge legitimate missing-feature red as the readiness feedback describes.",
+		l.attempt, l.path, rest)
 }
 
 // noToolStop is the outcome of reaching the no-tool limit: it names the last submission the
@@ -117,6 +151,7 @@ func noToolStop(last lastSubmission, answer string) outcome {
 		detail = fmt.Sprintf("the shaper answered without calling any tool %d times since its last submission (no-tool limit); that submission (attempt %d) was refused at gate %s", noToolLimit, last.attempt, last.gate)
 		lines = append(lines, fmt.Sprintf("last refusal (attempt %d, gate %s):", last.attempt, last.gate))
 		lines = append(lines, last.problems...)
+		lines = append(lines, last.earliest...)
 	case outObservations:
 		detail = fmt.Sprintf("the shaper answered without calling any tool %d times since its last submission (no-tool limit); that submission (attempt %d) returned readiness failures that were not acknowledged", noToolLimit, last.attempt)
 		lines = append(lines, fmt.Sprintf("last submission (attempt %d): readiness failures returned for acknowledgment, see %s", last.attempt, last.path))

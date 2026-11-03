@@ -608,7 +608,7 @@ func TestContractCheckEnvironmentFindings(t *testing.T) {
 		if got := strings.Join(ccKinds(f), ","); got != "shaper,review,confirmation,shaper,shaper" {
 			t.Fatalf("requests %s", got)
 		}
-		shpEq(t, "feedback to submission 2", shpOutputs(f.Prov.requests()[2])["c2"], ccEnvRefusal)
+		shpEq(t, "feedback to submission 2", shpOutputs(f.Prov.requests()[2])["c2"], ccEnvRefusal+unchangedLine(1))
 		var rec contractContradictions
 		b, _ := os.ReadFile(filepath.Join(f.Root, ".kogen/local/shaping/is-even", contractContradictionsFile))
 		if err := json.Unmarshal(b, &rec); err != nil || rec.SHA256 != ccHash(t, f) || !reflect.DeepEqual(rec.Lines, []string{item}) {
@@ -756,7 +756,7 @@ func TestContractCheckKeptContradictionEndsNotReadyAndApprovalRefusesIt(t *testi
 	}
 	shaper := f.Prov.requests()
 	shpEq(t, "feedback to submission 1", shpOutputs(shaper[1])["c1"], ccRefusal)
-	shpEq(t, "feedback to submission 2", shpOutputs(shaper[2])["c2"], ccRefusal)
+	shpEq(t, "feedback to submission 2", shpOutputs(shaper[2])["c2"], ccRefusal+unchangedLine(1))
 	if n := len(ccReviews(f)); n != 1 {
 		t.Fatalf("%d contract_review events", n)
 	}

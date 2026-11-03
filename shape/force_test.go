@@ -2,6 +2,7 @@ package shape
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -269,7 +270,8 @@ func TestShapeForceNoToolBound(t *testing.T) {
 		refEqual(t, "preserved", f.pkg(), before)
 	})
 	// Discovery without a submission is not a no-tool answer, and a submission starts a new
-	// no-tool count: read, prose, refusal, prose, prose, then the forced submit is accepted.
+	// no-tool count: read, prose, refusal, prose (answered by the recovery inference), prose, then
+	// the forced submit is accepted.
 	t.Run("a submission starts a new count", func(t *testing.T) {
 		parallel(t)
 		both := map[string]any{"questions": []any{shpQuestion("Q?")}, "files": shpFiles()["files"]}
@@ -282,7 +284,7 @@ func TestShapeForceNoToolBound(t *testing.T) {
 		shpEq(t, "published", f.read(refIntentPath), shpScopedIntentMD)
 		reqs := f.Prov.requests()
 		shpEq(t, "requests", len(reqs), 6)
-		forceVerify(t, w, "shape", f.events(), reqs, true, []int{2, 4, 5}, [][2]int{{1, 0}, {2, 1}, {3, 1}}, [2]int{3, 1})
+		forceVerify(t, w, "shape", f.events(), reqs, true, []int{2, 5}, [][2]int{{1, 0}, {3, 1}}, [2]int{3, 1})
 	})
 	// Prose answers between refused submissions still end: at most 7 tool-free answers and 9
 	// requests at the default limit.
@@ -353,10 +355,11 @@ func TestShapeForceNoToolBound(t *testing.T) {
 }
 
 // forceResetRoute scripts a conversation whose complete request reaches the input budget exactly
-// at the inference after its first tool-free answer: padding reads grow it, then one long prose
-// answer pushes the next request over, so the working-window reset falls between a no-tool
-// answer and the request that must be forced.
-func forceResetRoute(w *forceWire, refuse shpStep, pad string) func(map[string]any) *shpStep {
+// at the inference after its tool-free answers: lead short prose answers follow the refusal (the
+// first of them is answered by a recovery inference where the owner has one), padding reads grow
+// it, then one long prose answer pushes the next request over, so the working-window reset falls
+// between a no-tool answer and the request that must be forced.
+func forceResetRoute(w *forceWire, refuse shpStep, pad string, lead int) func(map[string]any) *shpStep {
 	const budget, prose = 524288, 100_000
 	phase := 0
 	return func(req map[string]any) *shpStep {
@@ -365,6 +368,9 @@ func forceResetRoute(w *forceWire, refuse shpStep, pad string) func(map[string]a
 		switch {
 		case phase == 0:
 			phase, step = 1, refuse
+		case phase == 1 && lead > 0:
+			lead--
+			step = w.prose("lead prose")
 		case phase == 1 && len(raw) < budget-prose+30_000:
 			step = w.calls(shpCall("pad", "read_file", map[string]any{"path": pad}))
 		case phase == 1:
@@ -376,7 +382,7 @@ func forceResetRoute(w *forceWire, refuse shpStep, pad string) func(map[string]a
 	}
 }
 
-func forceCheckReset(t *testing.T, events, reqs []map[string]any, raws []shpRaw, owner string) {
+func forceCheckReset(t *testing.T, events, reqs []map[string]any, raws []shpRaw, owner string, noTool int) {
 	t.Helper()
 	resets := shpNamed(events, "working_context_reset")
 	if len(resets) == 0 {
@@ -397,7 +403,7 @@ func forceCheckReset(t *testing.T, events, reqs []map[string]any, raws []shpRaw,
 		t.Fatalf("the reset request is %d bytes", len(raws[first].body))
 	}
 	text := string(raws[first].body)
-	for _, want := range []string{`\"no_tool_turns\":1`, `\"forced_submit_pending\":\"` + forceTargetOf(owner) + `\"`, `\"invalid_submissions\":1`} {
+	for _, want := range []string{fmt.Sprintf(`\"no_tool_turns\":%d`, noTool), `\"forced_submit_pending\":\"` + forceTargetOf(owner) + `\"`, `\"invalid_submissions\":1`} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("handoff of request %d lacks %s", first+1, want)
 		}
@@ -412,26 +418,28 @@ func forceResets(t *testing.T, w *forceWire) {
 		both := map[string]any{"questions": []any{shpQuestion("Q?")}, "files": shpFiles()["files"]}
 		f := w.newShape(t)
 		seedPadding(f)
-		f.Prov.route = forceResetRoute(w, w.shapeSubmit("c0", both), "padding.txt")
+		f.Prov.route = forceResetRoute(w, w.shapeSubmit("c0", both), "padding.txt", 1)
 		_, err := f.shape("Add calc.is_even(n).")
 		shpWantError(t, err, "shape", "invalid_output", "the shaper answered without calling any tool 3 times since its last submission (no-tool limit); that submission (attempt 1) was refused at gate validation", 1)
 		reqs := f.Prov.requests()
-		forced := len(reqs) - 2
-		forceVerify(t, w, "shape", f.events(), reqs, true, []int{forced, forced + 1}, [][2]int{{1, 1}, {2, 1}}, [2]int{3, 1})
-		forceCheckReset(t, f.events(), reqs, f.Prov.rawRequests(), "shape")
+		// The first prose answer after the refusal is followed by a recovery inference; the long
+		// prose answer is the second, so the reset request is forced and the next answer ends the run.
+		forced := len(reqs) - 1
+		forceVerify(t, w, "shape", f.events(), reqs, true, []int{forced}, [][2]int{{2, 1}}, [2]int{3, 1})
+		forceCheckReset(t, f.events(), reqs, f.Prov.rawRequests(), "shape", 2)
 	})
 	t.Run("reset/refine", func(t *testing.T) {
 		parallel(t)
 		f := w.newRefine(t)
 		seedPadding(f.shpFx)
-		f.Prov.route = forceResetRoute(w, w.calls(shpCall("c0", "submit_refinement", map[string]any{"files": []any{}})), "padding.txt")
+		f.Prov.route = forceResetRoute(w, w.calls(shpCall("c0", "submit_refinement", map[string]any{"files": []any{}})), "padding.txt", 0)
 		before := f.pkg()
 		_, err := f.refine(f.hash0)
 		shpWantError(t, err, "shape", "refinement_invalid", "the refiner answered without calling any tool 3 times (no-tool limit); no correction was submitted and the original draft is preserved", 1)
 		reqs := f.Prov.requests()
 		forced := len(reqs) - 2
 		forceVerify(t, w, "refine", f.evidenceEvents(), reqs, true, []int{forced, forced + 1}, [][2]int{{1, 1}, {2, 1}}, [2]int{3, 1})
-		forceCheckReset(t, f.evidenceEvents(), reqs, f.Prov.rawRequests(), "refine")
+		forceCheckReset(t, f.evidenceEvents(), reqs, f.Prov.rawRequests(), "refine", 1)
 		refEqual(t, "preserved", f.pkg(), before)
 	})
 }

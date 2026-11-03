@@ -559,6 +559,16 @@ type shaping struct {
 	contractLines    []string                     // the item lines of the last contract refusal
 	lastGate         string                       // the gate of the last refused submission
 	lastRefusal      []string                     // its problem lines as recorded in submission_refused
+	// unresolved are the refusals since the last submission answered with readiness failures.
+	unresolved []shapeRefusal
+	// refusedPackages maps the package of every refused files submission to the attempt that
+	// first submitted it; packageKey and unchangedOf are the current submission's package and,
+	// when an equal one was refused before, that attempt; unchanged is whether the current
+	// submission was refused as an unchanged package.
+	refusedPackages map[string]int
+	packageKey      string
+	unchangedOf     int
+	unchanged       bool
 	// lastObservationsPath is the observations file of the last readiness check, relative to the root.
 	lastObservationsPath string
 	lastFresh            bool   // the last certify ran readiness
@@ -682,11 +692,11 @@ func (sh *shaping) shape(ctx context.Context, st *state) (int, error) {
 				}
 			}
 			e := sys.Fail("intent", "not_ready", "the Intent is not ready to build", 1)
-			e.Lines = res.problems
+			e.Lines = append(slices.Clone(res.problems), sh.earliestLines()...)
 			return 0, e
 		}
 		e := sys.Fail("shape", "invalid_output", fmt.Sprintf("the shaper's output was not a valid Intent after %d attempts", submissionRetryLimit(sh.in.SubmissionRetryLimit)), 1)
-		e.Lines = res.problems
+		e.Lines = append(slices.Clone(res.problems), sh.earliestLines()...)
 		return 0, e
 	case outNoTool:
 		e := sys.Fail("shape", "invalid_output", res.detail, 1)
@@ -911,7 +921,8 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 				return result, usage, nil
 			}
 			sinceSubmit = 0
-			last = lastSubmission{kind: outInvalid, attempt: sh.submissions, gate: sh.lastGate, problems: sh.lastRefusal}
+			last = lastSubmission{kind: outInvalid, attempt: sh.submissions, gate: sh.lastGate, problems: sh.lastRefusal,
+				unchanged: sh.unchanged, earliest: sh.earliestLines()}
 			sh.ev.NextAttempt()
 		case result.kind == outObservations:
 			sinceSubmit = 0
@@ -924,6 +935,12 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 				return noToolStop(last, lastAnswer), usage, nil
 			}
 			sh.ev.NextAttempt()
+			if sinceSubmit == 1 && last.repairable() {
+				turns.recover()
+				sh.ev.Record(last.recoveryEvent(sh.requests + 1))
+				input = append(input, map[string]any{"role": "user", "content": last.recoveryMessage()})
+				continue
+			}
 			input = append(input, map[string]any{"role": "user", "content": turns.reminder})
 		}
 	}
@@ -1223,9 +1240,43 @@ func formatWall(w float64) string {
 // or writes submission files. The text goes back to the shaper.
 func (sh *shaping) submit(ctx context.Context, args map[string]any) (string, outcome, error) {
 	sh.submissions++
+	sh.packageKey, sh.unchangedOf, sh.unchanged = "", 0, false
 	t := sh.ev.Millis()
 	defer func() { sh.ev.CheckSpan(t, sh.ev.Millis()) }()
-	return sh.submitOne(ctx, args)
+	text, out, err := sh.submitOne(ctx, args)
+	if err == nil && out.kind == outObservations {
+		sh.unresolved = nil
+	}
+	return text, out, err
+}
+
+// shapeRefusal is one refused submission as submission_refused recorded it.
+type shapeRefusal struct {
+	attempt  int
+	gate     string
+	problems []string
+}
+
+// earliestLines are the lines that name the earliest unresolved refusal, nil unless there are at
+// least two unresolved refusals and the earliest differs from the last in its gate or problems.
+func (sh *shaping) earliestLines() []string {
+	if len(sh.unresolved) < 2 {
+		return nil
+	}
+	first, last := sh.unresolved[0], sh.unresolved[len(sh.unresolved)-1]
+	if first.gate == last.gate && slices.Equal(first.problems, last.problems) {
+		return nil
+	}
+	return append([]string{fmt.Sprintf("earliest unresolved refusal (attempt %d, gate %s):", first.attempt, first.gate)}, first.problems...)
+}
+
+// mergedPackage is the key of the complete accumulated proposals: their paths and exact contents.
+func (sh *shaping) mergedPackage() string {
+	var b strings.Builder
+	for _, p := range sortedKeys(sh.proposed) {
+		fmt.Fprintf(&b, "%d:%s%d:%s", len(p), p, len(sh.proposed[p]), sh.proposed[p])
+	}
+	return ContentHash([]byte(b.String()))
 }
 
 // refused records one submission_refused event with its problem lines bounded.
@@ -1242,6 +1293,7 @@ func (sh *shaping) refused(gate string, problems []string) {
 		cut[i] = p
 	}
 	sh.lastRefusal = cut
+	sh.unresolved = append(sh.unresolved, shapeRefusal{attempt: sh.submissions, gate: gate, problems: cut})
 	sh.ev.Record(map[string]any{"event": "submission_refused", "attempt": sh.submissions, "gate": gate, "problems": cut})
 }
 
@@ -1282,6 +1334,17 @@ func (sh *shaping) submitOne(ctx context.Context, args map[string]any) (string, 
 			return "", outcome{}, werr
 		}
 	}
+	if err == nil && out.kind == outInvalid && sh.packageKey != "" {
+		if sh.unchangedOf > 0 {
+			sh.unchanged = true
+			text += fmt.Sprintf("\nUnchanged: this package is identical to the one refused at attempt %d; repair it before submitting again.", sh.unchangedOf)
+		} else {
+			if sh.refusedPackages == nil {
+				sh.refusedPackages = map[string]int{}
+			}
+			sh.refusedPackages[sh.packageKey] = sh.submissions
+		}
+	}
 	return text, out, err
 }
 
@@ -1291,6 +1354,8 @@ func (sh *shaping) acceptFiles(ctx context.Context, submitted []proposedFile) (s
 	for _, f := range submitted {
 		sh.proposed[f.path] = f.content
 	}
+	sh.packageKey = sh.mergedPackage()
+	sh.unchangedOf = sh.refusedPackages[sh.packageKey]
 	files := sortedKeys(sh.proposed)
 	if _, ok := sh.proposed[project.IntentMDPath(sh.slug)]; ok {
 		if intent, err := project.ReadIntent(sh.root, sh.slug, sh.overlay()); err == nil {

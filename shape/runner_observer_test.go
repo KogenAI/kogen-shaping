@@ -74,7 +74,7 @@ func TestRunnerObserversAreRefusedAlsoUnchangedAndACorrectedPackageIsPublished(t
 	reqs := f.Prov.requests()
 	shpEq(t, "requests", len(reqs), 4)
 	shpEq(t, "feedback 1", unwrittenOutput(t, reqs[1], "c1"), runnerObserverFeed)
-	shpEq(t, "feedback 2", unwrittenOutput(t, reqs[2], "c2"), runnerObserverFeed)
+	shpEq(t, "feedback 2", unwrittenOutput(t, reqs[2], "c2"), runnerObserverFeed+unchangedLine(1))
 	shpContains(t, "feedback 3", unwrittenOutput(t, reqs[3], "c3"), "Readiness observations")
 	var refused int
 	for _, e := range shpNamed(f.events(), "submission_refused") {
@@ -112,8 +112,12 @@ func TestExternalShapeReceivesTheRunnerObserverRefusalAsFeedback(t *testing.T) {
 	shpWantError(t, err, "intent", "not_ready", "the Intent is not ready to build", 1)
 	shpEq(t, "exit", exit, 1)
 	shpEq(t, "rounds", x.calls, 3)
-	for _, in := range x.inputs[1:] {
-		if !strings.HasPrefix(in.Feedback, runnerObserverFeed+"\n\nCumulative proposal manifest: ") {
+	for i, in := range x.inputs[1:] {
+		want := runnerObserverFeed
+		if i > 0 {
+			want += unchangedLine(1)
+		}
+		if !strings.HasPrefix(in.Feedback, want+"\n\nCumulative proposal manifest: ") {
 			t.Fatalf("feedback = %q", in.Feedback)
 		}
 	}

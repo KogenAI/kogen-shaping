@@ -425,7 +425,7 @@ func TestShapeDecisionEvidenceNative(t *testing.T) {
 	reqs := f.Prov.requests()
 	out := shpOutputs(reqs[len(reqs)-2])
 	shpEq(t, "first refusal", out["c1"], want)
-	shpEq(t, "unchanged resubmission", out["c2"], want)
+	shpEq(t, "unchanged resubmission", out["c2"], want+unchangedLine(1))
 	refused := shpNamed(f.events(), "submission_refused")
 	shpEq(t, "refusals", len(refused), 2)
 	shpEq(t, "gate", refused[0]["gate"].(string), "decision_evidence")

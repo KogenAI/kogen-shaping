@@ -689,3 +689,9 @@ func shpNamed(events []map[string]any, name string) []map[string]any {
 	}
 	return out
 }
+
+// unchangedLine is the final feedback line of a refused package identical to the one refused at
+// attempt m.
+func unchangedLine(m int) string {
+	return fmt.Sprintf("\nUnchanged: this package is identical to the one refused at attempt %d; repair it before submitting again.", m)
+}

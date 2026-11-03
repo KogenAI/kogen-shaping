@@ -79,7 +79,7 @@ func TestUnwrittenTestsAreRefusedAlsoUnchangedAndABehaviouralPackageIsPublished(
 	reqs := f.Prov.requests()
 	shpEq(t, "requests", len(reqs), 4)
 	shpEq(t, "feedback 1", unwrittenOutput(t, reqs[1], "c1"), unwrittenFeedback)
-	shpEq(t, "feedback 2", unwrittenOutput(t, reqs[2], "c2"), unwrittenFeedback)
+	shpEq(t, "feedback 2", unwrittenOutput(t, reqs[2], "c2"), unwrittenFeedback+unchangedLine(1))
 	shpContains(t, "feedback 3", unwrittenOutput(t, reqs[3], "c3"), "Readiness observations")
 	if strings.Contains(unwrittenOutput(t, reqs[3], "c3"), "Acceptance depends on tests") {
 		t.Fatal("the behavioural package was refused")
@@ -123,8 +123,12 @@ func TestExternalShapeReceivesTheUnwrittenTestsRefusalAsFeedback(t *testing.T) {
 	shpWantError(t, err, "intent", "not_ready", "the Intent is not ready to build", 1)
 	shpEq(t, "exit", exit, 1)
 	shpEq(t, "rounds", x.calls, 3)
-	for _, in := range x.inputs[1:] {
-		if !strings.HasPrefix(in.Feedback, unwrittenFeedback+"\n\nCumulative proposal manifest: ") {
+	for i, in := range x.inputs[1:] {
+		want := unwrittenFeedback
+		if i > 0 {
+			want += unchangedLine(1)
+		}
+		if !strings.HasPrefix(in.Feedback, want+"\n\nCumulative proposal manifest: ") {
 			t.Fatalf("feedback = %q", in.Feedback)
 		}
 	}
