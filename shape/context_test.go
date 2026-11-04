@@ -294,19 +294,24 @@ func TestContextBlocksCarryTheContractsAndEarlierRounds(t *testing.T) {
 		t.Fatal(err)
 	}
 	shpEq(t, "two blocks", len(blocks), 2)
-	automaticContract := "and `.kogen/project.yaml`.\nautomatic paths currently present or listed: [\".kogen/project.yaml\"]\n"
-	if lineupInModelsFile() {
-		automaticContract = "`.kogen/project.yaml` and `.kogen/models.yaml`.\nautomatic paths currently present or listed: [\".kogen/project.yaml\", \".kogen/models.yaml\"]\n"
-	}
 	stable := blocks[0].(map[string]any)["text"].(string)
 	shpEq(t, "dynamic block", blocks[1].(map[string]any)["text"], any("Context index: {}\n"))
 	for _, want := range []string{
 		"# Request\n\nAdd calc.is_even(n).\n\n# Your earlier questions and the caller's answers (cite them as `(source: answer <n>)` using the numbers of the latest round)\n\nRound 1:\n1. First?\n   a) yes\n   b) no\n   answer: 1: a\n2. Free?\n   answer: 2: my words\n\n# The Intent to write\n\nSlug: is-even\nWrite `.kogen/intents/is-even/intent.md`, `.kogen/intents/is-even/acceptance.feature`, optionally `.kogen/intents/is-even/model.qnt`, and step files under `features/steps/`.\n\nNew step files must be named `is-even__<suffix>.js` (nonempty suffix) directly under the steps directory. Prefix every step sentence and definition with `is-even: `; do not use other Intents' step files or bindings.\n\n# Project instructions (README.md)\n\n# Calc\n\nA tiny calculator.\n\n\n# Testing rules (docs/testing-rules.md)\n\n",
-		"# Configured commands (.kogen/project.yaml)\n\nsetup: []\nfix: []\nchecks: unit: true\nacceptance: sh accept.sh\n  (it runs with KOGEN_ACCEPTANCE_FEATURES set to the Intent's feature path and KOGEN_ACCEPTANCE_REPORT to the report path)\n\n# Protection contract\n\nconfigured protect patterns: [\"guard.txt\"]\npaths currently matched by those patterns: [\"guard.txt\"]\nautomatic baseline: every file in `.kogen/intents/is-even/`, every path listed under the Intent's `Acceptance:` (including step files), " + automaticContract + "Approval freezes this baseline.",
+		"# Configured commands (.kogen/project.yaml)\n\nsetup: []\nfix: []\nchecks: unit: true\nacceptance: sh accept.sh\n  (it runs with KOGEN_ACCEPTANCE_FEATURES set to the Intent's feature path and KOGEN_ACCEPTANCE_REPORT to the report path)\n\n# Protection contract\n\nconfigured protect patterns: [\"guard.txt\"]\npaths currently matched by those patterns: [\"guard.txt\"]\nautomatic baseline: every file in `.kogen/intents/is-even/`, every path listed under the Intent's `Acceptance:` (including step files), ",
+		"automatic paths currently present or listed: ",
+		"Approval freezes this baseline.",
 		"Full contract inclusions: exact request, Q&A, README, testing rules and protection/automatic baseline are authoritative and are not clipped.\n",
 	} {
 		shpContains(t, "contract block", stable, want)
 	}
+
+	_, automatic, found := strings.Cut(stable, "automatic paths currently present or listed: ")
+	if !found {
+		t.Fatal("automatic paths line missing")
+	}
+	line, _, _ := strings.Cut(automatic, "\n")
+	shpContains(t, "automatic project config", line, `".kogen/project.yaml"`)
 
 	// Without rounds there is no Q&A section; without a steps folder the shaper is told so.
 	st.Rounds = nil

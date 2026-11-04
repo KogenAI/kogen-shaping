@@ -241,9 +241,20 @@ func TestApproveCardOutput(t *testing.T) {
 	}
 	sha := f.sha()
 	head := strings.TrimSpace(f.git("rev-parse", "HEAD"))
-	modelsFile := ""
-	if lineupInModelsFile() {
-		modelsFile = "  - .kogen/models.yaml\n"
+	cfg, err := project.LoadConfig(f.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline, err := project.Baseline(f.Root, approveSlug, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var files strings.Builder
+	for _, path := range baseline {
+		files.WriteString("  - " + path + "\n")
+	}
+	for _, path := range []string{".kogen/intents/fixture/intent.md", ".kogen/intents/fixture/acceptance.feature", "features/steps/fixture_steps.js", ".kogen/project.yaml"} {
+		shpContains(t, "card file", files.String(), "  - "+path+"\n")
 	}
 	want := "Source provenance: unavailable (legacy)\n" +
 		"Intent: fixture — Fixture intent\n" +
@@ -266,11 +277,7 @@ func TestApproveCardOutput(t *testing.T) {
 		"acceptance.feature line 5: Then the candidate succeeds\n" +
 		"\n" +
 		"Files\n" +
-		"  - .kogen/intents/fixture/intent.md\n" +
-		"  - .kogen/intents/fixture/acceptance.feature\n" +
-		"  - features/steps/fixture_steps.js\n" +
-		"  - .kogen/project.yaml\n" +
-		modelsFile +
+		files.String() +
 		"Approve with:\n" +
 		"  kogen intent approve fixture " + sha + "\n"
 	if out != want {

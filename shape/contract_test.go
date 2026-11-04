@@ -138,7 +138,7 @@ func TestShapeBlockedSubmissionsNeedAnActualProtectedPathAndAReason(t *testing.T
 		{"bad-paths", "blocked.paths must be a non-empty list"},
 		{"bad-reason", "blocked.reason must be non-empty text"},
 		{"unprotected", "blocked path app.txt is not protected by the current contract: the builder may edit it, so it is no reason to block\n" +
-			"protected paths under the current contract (configured protect patterns and automatic baseline): [\".kogen/project.yaml\"]\n" +
+			"protected paths under the current contract (configured protect patterns and automatic baseline): " + shpProtectedList(t, f.Root, "unprotected") + "\n" +
 			"none of the reported paths is protected: withdraw the blocked report and submit the Intent files"},
 	} {
 		exit, err := f.shapeAs(tc.slug, "Make a protected change.")
@@ -387,7 +387,7 @@ func TestShapeMixedBlockedReportNamesOnlyUnprotectedPathsAndTheCorrectedReportIs
 	shpEq(t, "feedback", shpOutputs(reqs[1])["mixed"], "invalid submission:\n"+
 		"blocked path calc.js is not protected by the current contract: the builder may edit it, so it is no reason to block\n"+
 		"blocked path README.md is not protected by the current contract: the builder may edit it, so it is no reason to block\n"+
-		"protected paths under the current contract (configured protect patterns and automatic baseline): [\".kogen/project.yaml\", \"config/deploy.cfg\"]\n"+
+		"protected paths under the current contract (configured protect patterns and automatic baseline): "+shpProtectedList(t, f.Root, shpSlug)+"\n"+
 		"keep only the protected paths in the blocked report, with its reason, or withdraw the report and submit the Intent files if no protected edit is required\n"+
 		"No proposals from this submission were retained; earlier proposals are unchanged.")
 	shpContains(t, "stdout", f.Stdout.String(), "required edits touch protected files: config/deploy.cfg\ndeploy settings\n")

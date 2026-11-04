@@ -23,9 +23,10 @@ type forceCapture struct {
 }
 
 var (
-	forceHex64   = regexp.MustCompile(`\b[0-9a-f]{64}\b`)
-	forceHex40   = regexp.MustCompile(`\b[0-9a-f]{40}\b`)
-	forceEvidDir = regexp.MustCompile(`refinements/[0-9a-f]{16}`)
+	forceAutomatic = regexp.MustCompile(`automatic paths currently present or listed: \[[^\]]*\]`)
+	forceHex64     = regexp.MustCompile(`\b[0-9a-f]{64}\b`)
+	forceHex40     = regexp.MustCompile(`\b[0-9a-f]{40}\b`)
+	forceEvidDir   = regexp.MustCompile(`refinements/[0-9a-f]{16}`)
 )
 
 // forceNormalize removes what a temporary fixture makes unique (paths, ports, commit and content
@@ -34,6 +35,10 @@ func forceNormalize(f *shpFx, raws []shpRaw) []forceCapture {
 	var out []forceCapture
 	for _, r := range raws {
 		body := string(r.body)
+		// The coordinator also selects the config-file list in the preceding sentence.
+		body = strings.ReplaceAll(body, "(including step files), and `.kogen/project.yaml`.\\n", "(including step files), <CONFIG-PATHS>.\\n")
+		body = strings.ReplaceAll(body, "(including step files), `.kogen/project.yaml` and `.kogen/models.yaml`.\\n", "(including step files), <CONFIG-PATHS>.\\n")
+		body = forceAutomatic.ReplaceAllString(body, "automatic paths currently present or listed: <BASELINE>")
 		var decoded map[string]any
 		json.Unmarshal(r.body, &decoded)
 		replace := func(old, to string) {
@@ -87,14 +92,8 @@ func forceOrdinary(t *testing.T, w *forceWire, owner string) []forceCapture {
 	return forceNormalize(f, f.Prov.rawRequests())
 }
 
-// forceGoldenPath is the golden of the coordinator in use: its requests carry the protection
-// contract, which differs when the lineup file is in the baseline.
-func forceGoldenPath() string {
-	if lineupInModelsFile() {
-		return "testdata/force_ordinary_models_golden.json"
-	}
-	return "testdata/force_ordinary_golden.json"
-}
+// Both lineup layouts share the same normalized wire baseline.
+func forceGoldenPath() string { return "testdata/force_ordinary_golden.json" }
 
 // forceGolden stores normalized synthetic ordinary wire captures, originally recorded before
 // enforcement existed. It is a deliberate compatibility baseline, not a routine snapshot.

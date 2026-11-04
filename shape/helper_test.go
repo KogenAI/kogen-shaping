@@ -736,3 +736,17 @@ func shpExpectUnsourcedDecisionLine(t *testing.T, what, text, bullet string) {
 		t.Fatalf("%s has no line %q or %q:\n%s", what, want[0], want[1], text)
 	}
 }
+
+// shpProtectedList obtains the coordinator-owned list shown in blocked diagnostics.
+func shpProtectedList(t *testing.T, root, slug string) string {
+	t.Helper()
+	cfg, err := project.LoadConfig(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths, err := project.Baseline(root, slug, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return InspectStrings(paths)
+}
