@@ -542,7 +542,7 @@ func TestShapeSubmissionEnvelopeProblems(t *testing.T) {
 		want string
 	}{
 		{"a file outside the Intent and the steps folder", map[string]any{"files": []any{file("calc.js", "x")}},
-			"calc.js: shaping may write only .kogen/intents/is-even/{intent.md,acceptance.feature,model.qnt} and step files under features/steps/"},
+			"calc.js: shaping may write only .kogen/intents/is-even/{intent.md,acceptance.feature,model.qnt,controls.json} and step files under features/steps/"},
 		{"a path that is not normal", map[string]any{"files": []any{file("features/steps/../steps/a.js", "x")}}, "features/steps/../steps/a.js: paths must be relative and normal"},
 		{"an absolute path", map[string]any{"files": []any{file("/etc/passwd", "x")}}, "/etc/passwd: paths must be relative and normal"},
 		{"a missing content", map[string]any{"files": []any{map[string]any{"path": "features/steps/a.js"}}}, "every file needs a path and a content string"},

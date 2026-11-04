@@ -275,7 +275,9 @@ type reportMessage struct {
 			Status    string `json:"status"`
 			Message   string `json:"message"`
 			Exception *struct {
-				Message string `json:"message"`
+				Type       string `json:"type"`
+				Message    string `json:"message"`
+				StackTrace string `json:"stackTrace"`
 			} `json:"exception"`
 		} `json:"testStepResult"`
 	} `json:"testStepFinished"`

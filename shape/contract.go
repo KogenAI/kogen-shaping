@@ -353,15 +353,18 @@ type contractConfirmed struct {
 	contradictions []string
 	environment    []string
 	properties     []string
+	// wrong are the lines of the wrong-implementation check, with their headline.
+	wrong         []string
+	wrongHeadline string
 }
 
 func (c contractConfirmed) empty() bool {
-	return len(c.contradictions) == 0 && len(c.environment) == 0 && len(c.properties) == 0
+	return len(c.contradictions) == 0 && len(c.environment) == 0 && len(c.properties) == 0 && len(c.wrong) == 0
 }
 
 // all is every line, contradictions first, as the contradictions record keeps them.
 func (c contractConfirmed) all() []string {
-	return append(append(slices.Clone(c.contradictions), c.environment...), c.properties...)
+	return slices.Concat(c.contradictions, c.environment, c.properties, c.wrong)
 }
 
 // contractFindingLine is the confirmation input's line for finding n (from 1), values normalized.
@@ -423,6 +426,9 @@ func contractFeedback(c contractConfirmed) string {
 	}
 	if len(c.properties) > 0 {
 		out = append(append(out, propertyHeadline(len(c.properties))), c.properties...)
+	}
+	if len(c.wrong) > 0 {
+		out = append(append(out, c.wrongHeadline), c.wrong...)
 	}
 	return strings.Join(out, "\n")
 }
@@ -645,6 +651,7 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 	var findings []contractFinding
 	var envFindings []contractEnvFinding
 	var props []propertyReport
+	sh.reviewProps = nil
 	if why == "" {
 		if findings, envFindings, props, why = parseContractReviewProperties(args); why != "" {
 			why = "invalid " + SubmitContractReviewTool + " payload: " + why
@@ -653,6 +660,7 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 	if why != "" {
 		return incomplete(why, 0, 0, nil, nil)
 	}
+	sh.reviewProps = props
 	// Kept assertions must agree with the unchanged tree. Repeat the entire existing
 	// readiness observation once, only when a counted kept scenario is assertion-red.
 	kept := map[string]bool{}

@@ -177,7 +177,7 @@ func TestProposeFilesStagesPackage(t *testing.T) {
 
 func TestProposeFilesRefusals(t *testing.T) {
 	parallel(t)
-	const unsafe = "calc.js: shaping may write only .kogen/intents/is-even/{intent.md,acceptance.feature,model.qnt} and step files under features/steps/"
+	const unsafe = "calc.js: shaping may write only .kogen/intents/is-even/{intent.md,acceptance.feature,model.qnt,controls.json} and step files under features/steps/"
 	f := newShpFx(t,
 		pfInspectAnd(shpAnswer(shpCall("e1", "propose_files", map[string]any{"files": []any{}}))),
 		pfPropose("v1", pfFile(pfIntentPath, shpScopedIntentMD)),

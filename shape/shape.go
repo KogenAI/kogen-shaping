@@ -34,6 +34,9 @@ import (
 // questions a former run left pending, already read by the caller.
 type ShapeInput struct {
 	SubmissionRetryLimit int // internal invalid-submission budget; nonpositive means 3
+	// WrongImplementationTimeCap is the internal total-time cap of the wrong-implementation runs
+	// per candidate; nonpositive means 300 seconds.
+	WrongImplementationTimeCap time.Duration
 
 	Project     string // a directory inside the project's repository; empty: the session's directory
 	Slug        string // valid by the caller (3 to 48 lowercase letters, digits and dashes)
@@ -565,6 +568,7 @@ type shaping struct {
 	contractChecked  map[string]bool              // package hashes checked without a refusal
 	contractRefused  map[string]contractConfirmed // package hash to the item lines of its refusal
 	contractLines    []string                     // the item lines of the last contract refusal
+	reviewProps      []propertyReport             // the properties of the last contract review that was complete; nil otherwise
 	lastGate         string                       // the gate of the last refused submission
 	lastRefusal      []string                     // its problem lines as recorded in submission_refused
 	// unresolved are the refusals since the last submission answered with readiness failures.
@@ -1563,6 +1567,11 @@ func (sh *shaping) checkSubmission(ctx context.Context, files []string) (string,
 		if err != nil {
 			return "", outcome{}, err
 		}
+		if confirmed.empty() {
+			if confirmed, err = sh.wrongImplementationCheck(ctx, hash); err != nil {
+				return "", outcome{}, err
+			}
+		}
 		if !confirmed.empty() {
 			lines := confirmed.all()
 			// The refused candidate supplies no readiness evidence and is never acknowledged.
@@ -1939,7 +1948,7 @@ func validOptions(q map[string]any) bool {
 
 func (sh *shaping) validateFiles(list []any) (submission, []string, error) {
 	slug := sh.slug
-	own := []string{project.IntentMDPath(slug), project.FeaturePath(slug), project.ModelPath(slug)}
+	own := []string{project.IntentMDPath(slug), project.FeaturePath(slug), project.ModelPath(slug), project.IntentDir(slug) + "/controls.json"}
 	steps := ""
 	if sh.cfg.Acceptance != nil {
 		steps = sh.cfg.Acceptance.StepsDir
@@ -1968,7 +1977,7 @@ func (sh *shaping) validateFiles(list []any) (submission, []string, error) {
 			if steps == "" {
 				where = "commands.acceptance.steps_dir (unset)"
 			}
-			problems = append(problems, p+": shaping may write only "+project.IntentDir(slug)+"/{intent.md,acceptance.feature,model.qnt} and step files under "+where+"/")
+			problems = append(problems, p+": shaping may write only "+project.IntentDir(slug)+"/{intent.md,acceptance.feature,model.qnt,controls.json} and step files under "+where+"/")
 		}
 		seen[p] = true
 		files = append(files, proposedFile{p, c})
