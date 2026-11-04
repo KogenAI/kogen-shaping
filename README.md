@@ -24,6 +24,7 @@ that workflow before building the approved work.
 
 - `shape`: shaping, refinement, approval cards, context windows and Intent contracts, and the Shaper's and Refine's model-facing policy: their prompts (`shape/prompts`) and tool definitions.
 - `consumes`: one test suite per Kogen dependency (`consumes/<producer>/`) stating exactly what this repository relies on from it, each with a README inventory.
+- `contract`: a test suite pinning exactly what Kogen, this component's consumer, uses of it: the exported API it calls, the behaviours it relies on and the formats it reads (see `contract/README.md`).
 
 ## Standalone Shape (developer entry point)
 
