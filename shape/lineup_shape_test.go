@@ -266,7 +266,7 @@ func TestClaudeLineupShapeSubmission(t *testing.T) {
 		parallel(t)
 		f := newShpFx(t)
 		f.useExternalShape()
-		x := &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){result(map[string]any{"files": "not a list"})}}
+		x := &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){result(map[string]any{"files": []any{map[string]any{"path": "calc.js", "content": "x"}}})}}
 		_, err := f.shapeWith(x, "Add calc.is_even(n).")
 		shpWantError(t, err, "shape", "invalid_output", "the shaper's output was not a valid Intent after 3 attempts", 1)
 		if len(x.starts) != 1 || len(x.inputs) != 3 {

@@ -519,15 +519,16 @@ func TestShapeInvalidSubmitIsRetriedWithFeedbackAndKeepsEarlierProposals(t *test
 
 func TestShapeThreeInvalidSubmissionsStopShapingAndWriteNothing(t *testing.T) {
 	parallel(t)
-	both := map[string]any{"questions": []any{shpQuestion("Q?")}, "files": shpFiles()["files"]}
-	f := newShpFx(t, shpSubmit("c1", both), shpSubmit("c2", both), shpSubmit("c3", both))
+	outside := map[string]any{"files": []any{map[string]any{"path": "calc.js", "content": "x"}}}
+	const problem = "calc.js: shaping may write only .kogen/intents/is-even/{intent.md,acceptance.feature,model.qnt,controls.json} and step files under features/steps/"
+	f := newShpFx(t, shpSubmit("c1", outside), shpSubmit("c2", outside), shpSubmit("c3", outside))
 	exit, err := f.shape("Add calc.is_even(n).")
 	e := shpWantError(t, err, "shape", "invalid_output", "the shaper's output was not a valid Intent after 3 attempts", 1)
 	shpEq(t, "exit", exit, 1)
-	shpEq(t, "lines", strings.Join(e.Lines, "\n"), "submit takes exactly one of a non-empty questions list, a non-empty files list, or a blocked report")
+	shpEq(t, "lines", strings.Join(e.Lines, "\n"), problem)
 	shpEq(t, "requests", len(f.Prov.requests()), 3)
 	shpEq(t, "feedback", shpOutputs(f.Prov.requests()[1])["c1"],
-		"invalid submission:\nsubmit takes exactly one of a non-empty questions list, a non-empty files list, or a blocked report\nNo proposals from this submission were retained; earlier proposals are unchanged.")
+		"invalid submission:\n"+problem+"\nNo proposals from this submission were retained; earlier proposals are unchanged.")
 	if f.exists(".kogen/intents/is-even") || f.exists("features/steps/is-even__steps.js") {
 		t.Fatal("nothing is written before a valid submission")
 	}
@@ -547,7 +548,9 @@ func TestShapeSubmissionEnvelopeProblems(t *testing.T) {
 		{"an absolute path", map[string]any{"files": []any{file("/etc/passwd", "x")}}, "/etc/passwd: paths must be relative and normal"},
 		{"a missing content", map[string]any{"files": []any{map[string]any{"path": "features/steps/a.js"}}}, "every file needs a path and a content string"},
 		{"duplicate paths", map[string]any{"files": []any{file("features/steps/is-even__a.js", "x"), file("features/steps/is-even__a.js", "y")}}, "file paths must be unique; no proposals from this submission were retained"},
-		{"empty questions", map[string]any{"questions": []any{}}, "submit takes exactly one of a non-empty questions list, a non-empty files list, or a blocked report"},
+		{"empty questions", map[string]any{"questions": []any{}}, "submit takes exactly one of a non-empty questions list, a non-empty files list, or a blocked report\nreceived: questions (list of 0)"},
+		{"files as text", map[string]any{"files": "x"}, "submit takes exactly one of a non-empty questions list, a non-empty files list, or a blocked report\nreceived: files (text)"},
+		{"none of the three", map[string]any{"note": "x"}, "submit takes exactly one of a non-empty questions list, a non-empty files list, or a blocked report\nreceived: none of questions, files or blocked"},
 		{"a question without text", map[string]any{"questions": []any{map[string]any{"question": " "}}}, "every question needs question text and optional options with string labels and boolean recommended values"},
 		{"an option without a label", map[string]any{"questions": []any{map[string]any{"question": "Q?", "options": []any{map[string]any{"recommended": true}}}}}, "every question needs question text and optional options with string labels and boolean recommended values"},
 		{"a recommended that is not boolean", map[string]any{"questions": []any{map[string]any{"question": "Q?", "options": []any{map[string]any{"label": "a", "recommended": "yes"}}}}}, "every question needs question text and optional options with string labels and boolean recommended values"},
@@ -555,13 +558,21 @@ func TestShapeSubmissionEnvelopeProblems(t *testing.T) {
 		{"blocked without reason", map[string]any{"blocked": map[string]any{"paths": []any{".kogen/project.yaml"}}}, "blocked.reason must be non-empty text"},
 		{"blocked without paths", map[string]any{"blocked": map[string]any{"paths": []any{}, "reason": "x"}}, "blocked.paths must be a non-empty list"},
 		{"blocked with a blank path", map[string]any{"blocked": map[string]any{"paths": []any{" "}, "reason": "x"}}, "blocked.paths must contain non-empty paths"},
-		{"blocked beside files", map[string]any{"blocked": map[string]any{"paths": []any{".kogen/project.yaml"}, "reason": "x"}, "files": []any{file("features/steps/a.js", "x")}}, "submit takes exactly one of"},
+		{"blocked beside files", map[string]any{"blocked": map[string]any{"paths": []any{".kogen/project.yaml"}, "reason": "x"}, "files": []any{file("features/steps/a.js", "x")}}, "submit takes exactly one of a non-empty questions list, a non-empty files list, or a blocked report\nreceived: files (list of 1), blocked (object)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			parallel(t)
-			f := newShpFx(t, shpSubmit("c1", tc.args), shpSubmit("c2", tc.args), shpSubmit("c3", tc.args))
+			// A broken envelope is a completeness refusal: every second call is pre-checked and
+			// not counted, so three counted refusals take five calls and end with the blocked report.
+			steps := []shpStep{shpSubmit("c1", tc.args), shpSubmit("c2", tc.args), shpSubmit("c3", tc.args)}
+			class := "invalid_output"
+			if strings.HasPrefix(tc.want, envelopeRule) {
+				steps = append(steps, shpSubmit("c4", tc.args), shpSubmit("c5", tc.args))
+				class = "incomplete_package"
+			}
+			f := newShpFx(t, steps...)
 			_, err := f.shape("Add calc.is_even(n).")
-			e := shpWantError(t, err, "shape", "invalid_output", "", 1)
+			e := shpWantError(t, err, "shape", class, "", 1)
 			shpContains(t, "problems", strings.Join(e.Lines, "\n"), tc.want)
 			if tc.name == "blocked paths that are not protected" {
 				shpContains(t, "protected list", strings.Join(e.Lines, "\n"), "protected paths under the current contract (configured protect patterns and automatic baseline): "+shpProtectedList(t, f.Root, shpSlug))
@@ -953,6 +964,7 @@ func shpRefused(f *shpFx) []string {
 func TestShapeRecordsEachRefusedSubmissionWithItsGate(t *testing.T) {
 	parallel(t)
 	both := map[string]any{"questions": []any{shpQuestion("Q?")}, "files": shpFiles()["files"]}
+	outside := map[string]any{"files": []any{map[string]any{"path": "calc.js", "content": "x"}}}
 	unsourced := shpFilesWithDecisions("- Non-integers raise TypeError.")
 	noSteps := strings.Replace(shpScopedIntentMD, "- features/steps/is-even__steps.js\n", "", 1)
 	dropped := map[string]any{"files": []any{map[string]any{"path": ".kogen/intents/is-even/intent.md", "content": noSteps}}}
@@ -962,7 +974,8 @@ func TestShapeRecordsEachRefusedSubmissionWithItsGate(t *testing.T) {
 		report string
 		want   string
 	}{
-		{"validation", []shpStep{shpSubmit("c1", both), shpSubmit("c2", both), shpSubmit("c3", both)}, "FAILED", "1:validation 2:validation 3:validation"},
+		{"validation", []shpStep{shpSubmit("c1", outside), shpSubmit("c2", outside), shpSubmit("c3", outside)}, "FAILED", "1:validation 2:validation 3:validation"},
+		{"envelope then a complete package", []shpStep{shpSubmit("c1", both), shpSubmit("c2", shpFiles())}, "PASSED", "1:validation"},
 		{"publication", []shpStep{shpAnswer(shpCall("c1", "submit", shpFiles())), shpSubmit("c2", shpFiles()), shpAck("c3")}, "PASSED", "1:publication"},
 		{"intent", []shpStep{shpSubmit("c1", unsourced), shpSubmit("c2", shpFiles())}, "PASSED", "1:intent"},
 		{"retained", []shpStep{shpSubmit("c1", shpFiles()), shpSubmit("c2", dropped), shpAck("c3")}, "FAILED", "2:retained 3:retained"},

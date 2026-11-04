@@ -1,0 +1,14 @@
+{
+  "None": false,
+  "Path": ".kogen/models/k-shape-recovery-completes-package/model.qnt",
+  "Invariants": [
+    "InterceptsFollowRefusals",
+    "BudgetUnchanged",
+    "PendingOnlyAfterCompleteness",
+    "IncompleteBudgetEndsBlocked",
+    "TurnsBounded"
+  ],
+  "Seed": "7",
+  "Samples": "5000",
+  "Steps": "16"
+}

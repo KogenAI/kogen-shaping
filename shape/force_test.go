@@ -215,8 +215,8 @@ func TestShapeForceInvalidBudget(t *testing.T) {
 	w := responsesWire
 	t.Run("shape", func(t *testing.T) {
 		parallel(t)
-		both := map[string]any{"questions": []any{shpQuestion("Q?")}, "files": shpFiles()["files"]}
-		f := w.newShape(t, w.prose("Done."), w.shapeSubmit("c1", both), w.shapeSubmit("c2", both), w.shapeSubmit("c3", both), w.shapeSubmit("c4", shpFiles()))
+		outside := map[string]any{"files": []any{map[string]any{"path": "calc.js", "content": "x"}}}
+		f := w.newShape(t, w.prose("Done."), w.shapeSubmit("c1", outside), w.shapeSubmit("c2", outside), w.shapeSubmit("c3", outside), w.shapeSubmit("c4", shpFiles()))
 		exit, err := f.shape("Add calc.is_even(n).")
 		shpWantError(t, err, "shape", "invalid_output", "the shaper's output was not a valid Intent after 3 attempts", 1)
 		shpEq(t, "exit", exit, 1)
@@ -290,15 +290,15 @@ func TestShapeForceNoToolBound(t *testing.T) {
 	// requests at the default limit.
 	t.Run("finite bound with refusals", func(t *testing.T) {
 		parallel(t)
-		both := map[string]any{"questions": []any{shpQuestion("Q?")}, "files": shpFiles()["files"]}
-		refusal := func(id string) shpStep { return w.shapeSubmit(id, both) }
+		outside := map[string]any{"files": []any{map[string]any{"path": "calc.js", "content": "x"}}}
+		refusal := func(id string) shpStep { return w.shapeSubmit(id, outside) }
 		f := w.newShape(t, w.prose("a"), w.prose("b"), refusal("c1"), w.prose("c"), w.prose("d"), refusal("c2"), w.prose("e"), w.prose("f"), w.prose("Last words.\nmore"))
 		exit, err := f.shape("Add calc.is_even(n).")
 		e := shpWantError(t, err, "shape", "invalid_output", "the shaper answered without calling any tool 3 times since its last submission (no-tool limit); that submission (attempt 2) was refused at gate validation", 1)
 		shpEq(t, "exit", exit, 1)
 		shpEq(t, "requests", len(f.Prov.requests()), 9)
 		shpEq(t, "lines", strings.Join(e.Lines, "|"), "the shaper ended without calling submit|last refusal (attempt 2, gate validation):|"+
-			"submit takes exactly one of a non-empty questions list, a non-empty files list, or a blocked report|last tool-free answer: Last words.")
+			"calc.js: shaping may write only .kogen/intents/is-even/{intent.md,acceptance.feature,model.qnt,controls.json} and step files under features/steps/|last tool-free answer: Last words.")
 		shapeAbsent(t, f)
 	})
 	// The stop after readiness failures names the unacknowledged submission and its file.

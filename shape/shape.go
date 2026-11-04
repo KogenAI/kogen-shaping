@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -581,6 +582,15 @@ type shaping struct {
 	packageKey      string
 	unchangedOf     int
 	unchanged       bool
+	// lastCounted is the refusal of the last counted submission, nil when it was not refused;
+	// priorRefusal is the one before the current submission. sameOf is the attempt whose refusal
+	// the current one repeats; incomplete is whether the current refusal is a completeness
+	// refusal; pending is the pre-check the next submit call consumes.
+	lastCounted  *shapeRefusal
+	priorRefusal *shapeRefusal
+	sameOf       int
+	incomplete   bool
+	pending      *shapeRefusal
 	// lastObservationsPath is the observations file of the last readiness check, relative to the root.
 	lastObservationsPath string
 	lastFresh            bool   // the last certify ran readiness
@@ -604,9 +614,11 @@ func (sh *shaping) progress(line string) {
 	sh.s.Progress(fmt.Sprintf("%s (%d s)", line, sh.elapsed()))
 }
 
-func (sh *shaping) overlay() map[string][]byte {
-	m := make(map[string][]byte, len(sh.proposed))
-	for p, c := range sh.proposed {
+func (sh *shaping) overlay() map[string][]byte { return overlayOf(sh.proposed) }
+
+func overlayOf(proposed map[string]string) map[string][]byte {
+	m := make(map[string][]byte, len(proposed))
+	for p, c := range proposed {
 		m[p] = []byte(c)
 	}
 	return m
@@ -627,6 +639,7 @@ const (
 	outBlocked
 	outReady
 	outNoTool
+	outPrecheck // a submit call that was pre-checked and not counted
 )
 
 type outcome struct {
@@ -700,6 +713,12 @@ func (sh *shaping) shape(ctx context.Context, st *state) (int, error) {
 
 	switch res.kind {
 	case outInvalid:
+		if sh.incomplete {
+			e := sys.Fail("shape", "incomplete_package", fmt.Sprintf("blocked: the shaper could not complete the package within %d attempts", submissionRetryLimit(sh.in.SubmissionRetryLimit)), 1)
+			e.Lines = append([]string{fmt.Sprintf("unresolved gap (attempt %d, gate %s):", sh.submissions, sh.lastGate)}, sh.lastRefusal...)
+			e.Lines = append(append(e.Lines, sh.earliestLines()...), sh.refusalCountsLines()...)
+			return 0, e
+		}
 		if len(sh.originals) > 0 {
 			if sh.lastGate == contractGate {
 				if err := sh.writeContractContradictions(sh.contractLines); err != nil {
@@ -1007,7 +1026,7 @@ func (sh *shaping) converseExternal(ctx context.Context, blocks []any) (outcome,
 			if invalid >= submissionRetryLimit(sh.in.SubmissionRetryLimit) {
 				return out, x, nil
 			}
-		case outObservations:
+		case outObservations, outPrecheck:
 		case outBlocked, outQuestions, outReady:
 			return out, x, nil
 		}
@@ -1266,10 +1285,14 @@ func formatWall(w float64) string {
 // truthful protected-conflict report. Blocked is a report only; it never authorizes an edit
 // or writes submission files. The text goes back to the shaper.
 func (sh *shaping) submit(ctx context.Context, args map[string]any) (string, outcome, error) {
-	sh.submissions++
-	sh.packageKey, sh.unchangedOf, sh.unchanged = "", 0, false
 	t := sh.ev.Millis()
 	defer func() { sh.ev.CheckSpan(t, sh.ev.Millis()) }()
+	if text, checked, err := sh.precheck(args); err != nil || checked {
+		return text, outcome{kind: outPrecheck}, err
+	}
+	sh.submissions++
+	sh.packageKey, sh.unchangedOf, sh.unchanged = "", 0, false
+	sh.priorRefusal, sh.lastCounted, sh.sameOf, sh.incomplete = sh.lastCounted, nil, 0, false
 	text, out, err := sh.submitOne(ctx, args)
 	if err == nil && out.kind == outObservations {
 		sh.unresolved = nil
@@ -1320,8 +1343,117 @@ func (sh *shaping) refused(gate string, problems []string) {
 		cut[i] = p
 	}
 	sh.lastRefusal = cut
-	sh.unresolved = append(sh.unresolved, shapeRefusal{attempt: sh.submissions, gate: gate, problems: cut})
+	refusal := shapeRefusal{attempt: sh.submissions, gate: gate, problems: cut}
+	sh.unresolved = append(sh.unresolved, refusal)
+	sh.lastCounted = &refusal
 	sh.ev.Record(map[string]any{"event": "submission_refused", "attempt": sh.submissions, "gate": gate, "problems": cut})
+}
+
+// envelopeRule is the first problem line of a submission that is not exactly one of questions,
+// files or a blocked report.
+const envelopeRule = "submit takes exactly one of a non-empty questions list, a non-empty files list, or a blocked report"
+
+// refusedIncomplete records a completeness refusal: the next submit call is pre-checked, and a
+// refusal equal to the immediately preceding counted one says so.
+func (sh *shaping) refusedIncomplete(gate string, problems []string) {
+	sh.refused(gate, problems)
+	if p := sh.priorRefusal; p != nil && p.gate == gate && slices.Equal(p.problems, sh.lastRefusal) {
+		sh.sameOf = p.attempt
+	}
+	sh.incomplete = true
+	sh.pending = sh.lastCounted
+}
+
+// invalidHead is the first line of a refusal's feedback, with the line that names an unchanged
+// completeness refusal.
+func (sh *shaping) invalidHead() string {
+	if sh.sameOf > 0 {
+		return fmt.Sprintf("invalid submission:\nThis is the same refusal as attempt %d; these items are unchanged:\n", sh.sameOf)
+	}
+	return "invalid submission:\n"
+}
+
+// declaredGaps are the declared files that are neither in proposed nor regular files of the
+// checkout, as the lines that name them; nil when none is missing.
+func (sh *shaping) declaredGaps(proposed map[string]string) []string {
+	absent := func(p string) bool {
+		if _, ok := proposed[p]; ok {
+			return false
+		}
+		fi, err := os.Stat(filepath.Join(sh.root, p))
+		return err != nil || !fi.Mode().IsRegular()
+	}
+	if absent(project.IntentMDPath(sh.slug)) {
+		return []string{"intent.md does not exist"}
+	}
+	intent, err := project.ReadIntent(sh.root, sh.slug, overlayOf(proposed))
+	if err != nil {
+		return nil
+	}
+	var gaps []string
+	feature := project.FeaturePath(sh.slug)
+	if absent(feature) {
+		gaps = append(gaps, "acceptance.feature does not exist")
+	}
+	seen := map[string]bool{feature: true}
+	for _, p := range intent.Acceptance {
+		if !seen[p] && absent(p) {
+			gaps = append(gaps, "acceptance: "+p+" does not exist")
+		}
+		seen[p] = true
+	}
+	if m := intent.Model; m != nil && !m.None && absent(m.Path) {
+		gaps = append(gaps, "model: "+m.Path+" does not exist")
+	}
+	return gaps
+}
+
+// precheck consumes the pending pre-check of the previous completeness refusal. When the call
+// still leaves the refused gaps, it is no submission: Shape records the gaps and answers with
+// them. The well-formed files of such a call join the proposals.
+func (sh *shaping) precheck(args map[string]any) (string, bool, error) {
+	pc := sh.pending
+	if pc == nil {
+		return "", false, nil
+	}
+	sh.pending = nil
+	sub, problems, err := sh.validate(args)
+	if err != nil {
+		return "", false, err
+	}
+	var gaps []string
+	files := false
+	switch {
+	case problems != nil:
+		if problems[0] == envelopeRule {
+			gaps = problems
+		}
+	case sub.files != nil:
+		merged := maps.Clone(sh.proposed)
+		for _, f := range sub.files {
+			merged[f.path] = f.content
+		}
+		if gaps = sh.declaredGaps(merged); len(gaps) > 0 {
+			files = true
+			sh.proposed = merged
+			if err := sh.keepProposals(); err != nil {
+				return "", false, err
+			}
+		}
+	}
+	if len(gaps) == 0 {
+		return "", false, nil
+	}
+	sh.ev.Record(map[string]any{"event": "submission_precheck", "owner": "shape", "attempt": pc.attempt, "gaps": gaps})
+	first := "not submitted: the package still has these gaps, and this call was not counted as a submission attempt:"
+	if slices.Equal(gaps, pc.problems) {
+		first = fmt.Sprintf("not submitted: this is the same refusal as attempt %d; these items are unchanged, and this call was not counted as a submission attempt:", pc.attempt)
+	}
+	last := "No proposals from this call were retained; earlier proposals are unchanged. The next submission counts as an attempt."
+	if files {
+		last = "The files of this call were retained with your earlier proposals. Add what is missing with propose_files; the next submission counts as an attempt."
+	}
+	return first + "\n" + strings.Join(gaps, "\n") + "\n" + last, true, nil
 }
 
 func (sh *shaping) submitOne(ctx context.Context, args map[string]any) (string, outcome, error) {
@@ -1330,8 +1462,12 @@ func (sh *shaping) submitOne(ctx context.Context, args map[string]any) (string, 
 		return "", outcome{}, err
 	}
 	if problems != nil {
-		sh.refused("validation", problems)
-		return "invalid submission:\n" + strings.Join(problems, "\n") +
+		if problems[0] == envelopeRule {
+			sh.refusedIncomplete("validation", problems)
+		} else {
+			sh.refused("validation", problems)
+		}
+		return sh.invalidHead() + strings.Join(problems, "\n") +
 				"\nNo proposals from this submission were retained; earlier proposals are unchanged.",
 			outcome{kind: outInvalid, problems: problems}, nil
 	}
@@ -1420,10 +1556,19 @@ func (sh *shaping) acceptFiles(ctx context.Context, submitted []proposedFile) (s
 		if !ok {
 			return "", outcome{}, err
 		}
-		sh.refused("intent", e.Lines)
-		return "invalid submission:\n" + strings.Join(e.Lines, "\n") +
+		lines := e.Lines
+		gaps := sh.declaredGaps(sh.proposed)
+		if len(gaps) > 0 && slices.Equal(lines, []string{"acceptance.feature does not exist"}) {
+			lines = gaps
+		}
+		if len(gaps) > 0 {
+			sh.refusedIncomplete("intent", lines)
+		} else {
+			sh.refused("intent", lines)
+		}
+		return sh.invalidHead() + strings.Join(lines, "\n") +
 				"\nEarlier well-formed proposals are retained; submit only corrections.",
-			outcome{kind: outInvalid, problems: e.Lines}, nil
+			outcome{kind: outInvalid, problems: lines}, nil
 	}
 	var ownership []string
 	stepsDir := ""
@@ -1824,7 +1969,37 @@ func (sh *shaping) validate(args map[string]any) (submission, []string, error) {
 	case len(fs) > 0 && !hasQ && !hasB:
 		return sh.validateFiles(fs)
 	}
-	return submission{}, []string{"submit takes exactly one of a non-empty questions list, a non-empty files list, or a blocked report"}, nil
+	return submission{}, []string{envelopeRule, "received: " + receivedShape(args)}, nil
+}
+
+// receivedShape names what the arguments hold under questions, files and blocked.
+func receivedShape(args map[string]any) string {
+	var parts []string
+	for _, key := range []string{"questions", "files", "blocked"} {
+		v, ok := args[key]
+		if !ok {
+			continue
+		}
+		kind := "object"
+		switch v := v.(type) {
+		case []any:
+			kind = fmt.Sprintf("list of %d", len(v))
+		case string:
+			kind = "text"
+		case bool:
+			kind = "boolean"
+		case nil:
+			kind = "null"
+		case map[string]any:
+		default:
+			kind = "number"
+		}
+		parts = append(parts, key+" ("+kind+")")
+	}
+	if len(parts) == 0 {
+		return "none of questions, files or blocked"
+	}
+	return strings.Join(parts, ", ")
 }
 
 func (sh *shaping) validateBlocked(blocked any) (submission, []string, error) {

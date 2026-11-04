@@ -9,10 +9,10 @@ import (
 
 func retryShape(t *testing.T, limit, invalid int, success bool) {
 	t.Helper()
-	both := map[string]any{"questions": []any{shpQuestion("Q?")}, "files": shpFiles()["files"]}
+	outside := map[string]any{"files": []any{map[string]any{"path": "calc.js", "content": "x"}}}
 	var steps []shpStep
 	for i := 0; i < invalid; i++ {
-		steps = append(steps, shpSubmit(fmt.Sprint(i), both))
+		steps = append(steps, shpSubmit(fmt.Sprint(i), outside))
 	}
 	if success {
 		steps = append(steps, shpSubmit("valid", shpFiles()), shpAck("ack"))
@@ -131,12 +131,12 @@ func boolInt(v bool) int {
 }
 func TestSubmissionRetryExternal(t *testing.T) {
 	parallel(t)
-	both := map[string]any{"questions": []any{shpQuestion("Q?")}, "files": shpFiles()["files"]}
+	outside := map[string]any{"files": []any{map[string]any{"path": "calc.js", "content": "x"}}}
 	t.Run("shape", func(t *testing.T) {
 		parallel(t)
 		f := newShpFx(t)
 		f.useExternalShape()
-		x := &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){result(both)}}
+		x := &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){result(outside)}}
 		f.newSession()
 		_, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Slug: shpSlug, Request: "x", External: x.external(), SubmissionRetryLimit: 1})
 		shpWantError(t, err, "shape", "invalid_output", "after 1 attempts", 1)
