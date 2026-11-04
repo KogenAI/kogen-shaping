@@ -36,11 +36,22 @@ type shapeExec struct {
 	contract       []func(n int, root string) (executor.RoundResult, error)
 	contractCalls  int // contract review and confirmation rounds
 	contractStarts []executor.Task
+	// decision, when set, answers the decision check sessions in order (the last repeats); they
+	// do not count in rounds or calls, and starts holds only the other sessions. Without it every
+	// check has no item.
+	decision       []func(n int, root string) (executor.RoundResult, error)
+	decisionCalls  int // decision check rounds
+	decisionStarts []executor.Task
 }
 
 // isContractTask is whether a session is a contract review or confirmation.
 func isContractTask(t executor.Task) bool {
 	return strings.Contains(string(t.Schema), `"findings"`) || strings.Contains(string(t.Schema), `"verdicts"`)
+}
+
+// isDecisionTask is whether a session is a decision check.
+func isDecisionTask(t executor.Task) bool {
+	return strings.Contains(string(t.Schema), `"request_quotes"`)
 }
 
 func (x *shapeExec) Describe() executor.Descriptor {
@@ -58,6 +69,8 @@ func (x *shapeExec) Start(_ context.Context, t executor.Task, emit executor.Sink
 	}
 	if isContractTask(t) {
 		x.contractStarts = append(x.contractStarts, t)
+	} else if isDecisionTask(t) {
+		x.decisionStarts = append(x.decisionStarts, t)
 	} else {
 		x.starts = append(x.starts, t)
 	}
@@ -80,6 +93,21 @@ func (s *shapeSession) Handle() executor.Handle {
 func (s *shapeSession) Close() error { return nil }
 func (s *shapeSession) Round(_ context.Context, in executor.Input) (executor.RoundResult, error) {
 	s.n++
+	if isDecisionTask(s.task) {
+		s.x.mu.Lock()
+		s.x.decisionCalls++
+		fn := result(map[string]any{"items": []any{}})
+		if len(s.x.decision) > 0 {
+			fn = s.x.decision[min(s.x.decisionCalls-1, len(s.x.decision)-1)]
+		}
+		s.x.mu.Unlock()
+		res, err := fn(s.n, s.task.Root)
+		if err != nil {
+			return executor.RoundResult{}, err
+		}
+		res.Ending, res.Handle = executor.EndFinish, s.Handle()
+		return res, nil
+	}
 	if isContractTask(s.task) {
 		s.x.mu.Lock()
 		s.x.contractCalls++
@@ -192,7 +220,7 @@ func TestClaudeLineupShapeSubmission(t *testing.T) {
 		lines := strings.Split(strings.TrimSuffix(f.Stdout.String(), "\n"), "\n")
 		shpEq(t, "line count", len(lines), 7)
 		shpEq(t, "scenarios line", lines[4], "Scenarios: 2 (2 fail now, 0 pass now)")
-		shpMatch(t, "usage line", lines[5], `^shape claude-opus-5-5/xhigh claude-code 3 round\(s\) wall_ms=\d+$`)
+		shpMatch(t, "usage line", lines[5], `^shape claude-opus-5-5/xhigh claude-code 5 round\(s\) wall_ms=\d+$`)
 		shpEq(t, "feature", f.read(".kogen/intents/is-even/acceptance.feature"), shpFeature)
 		shpEq(t, "steps", f.read("features/steps/is-even__steps.js"), shpSteps)
 		shpEq(t, "intent", f.read(".kogen/intents/is-even/intent.md"), shpScopedIntentMD)
@@ -708,7 +736,7 @@ func TestExecutorRoundTiming(t *testing.T) {
 			}
 			events := f.events()
 			rounds := shpNamed(events, "executor_round")
-			var main, review int
+			var main, review, decision int
 			for _, e := range rounds {
 				if _, ok := e["model_ms"]; !ok {
 					t.Fatalf("no model_ms key: %v", e)
@@ -725,12 +753,16 @@ func TestExecutorRoundTiming(t *testing.T) {
 				case "executor-contract-review-1":
 					review++
 					shpEq(t, "review model_ms", e["model_ms"], nil)
+				case "executor-decision-1", "executor-decision-2":
+					decision++
+					shpEq(t, "decision model_ms", e["model_ms"], nil)
 				default:
 					t.Fatalf("session %v", e["session"])
 				}
 			}
 			shpEq(t, "main rounds", main, 2)
 			shpEq(t, "review rounds", review, 1)
+			shpEq(t, "decision rounds", decision, 2)
 			accounts := shpNamed(events, "shape_time")
 			if len(accounts) != 1 {
 				t.Fatalf("accounts %v", accounts)

@@ -541,7 +541,10 @@ type shaping struct {
 	submissions  int // submissions made in this run
 	priorInvalid int // invalid submissions before the current attempt
 
-	request string // the request text of this shaping
+	request        string         // the request text of this shaping
+	decisionChecks int            // decision check calls made
+	decisionUsage  provider.Usage // the native decision checks' tokens
+	decisionRounds int            // the external decision check sessions' rounds
 
 	earlier             string          // the earlier questions and answers, as the shaper reads them
 	questionChecks      int             // question check calls made
@@ -671,7 +674,7 @@ func (sh *shaping) shape(ctx context.Context, st *state) (int, error) {
 		var x *extSession
 		res, x, err = sh.converseExternal(ctx, blocks)
 		if x != nil {
-			usageLine = fmt.Sprintf("shape %s/%s %s %d round(s) wall_ms=%d", role.Model, role.Effort, executor.ClaudeCode, x.rounds+sh.contractRounds+sh.questionRounds, time.Since(t0).Milliseconds())
+			usageLine = fmt.Sprintf("shape %s/%s %s %d round(s) wall_ms=%d", role.Model, role.Effort, executor.ClaudeCode, x.rounds+sh.decisionRounds+sh.contractRounds+sh.questionRounds, time.Since(t0).Milliseconds())
 		}
 		if err != nil {
 			return 0, err
@@ -685,7 +688,7 @@ func (sh *shaping) shape(ctx context.Context, st *state) (int, error) {
 			}
 			return 0, err
 		}
-		usageLine = fmt.Sprintf("shape %s/%s %s wall_ms=%d", role.Model, role.Effort, sh.contractUsage.Add(sh.questionUsage).Add(usage).Line(), time.Since(t0).Milliseconds())
+		usageLine = fmt.Sprintf("shape %s/%s %s wall_ms=%d", role.Model, role.Effort, sh.decisionUsage.Add(sh.contractUsage).Add(sh.questionUsage).Add(usage).Line(), time.Since(t0).Milliseconds())
 	}
 
 	switch res.kind {
@@ -1483,6 +1486,14 @@ func (sh *shaping) checkSubmission(ctx context.Context, files []string) (string,
 		return "", outcome{}, err
 	} else if refused {
 		return text, out, nil
+	}
+	lines, err := sh.decisionCheck(ctx, string(written))
+	if err != nil {
+		return "", outcome{}, err
+	}
+	if lines != nil {
+		sh.refused("decision_check", lines[1:])
+		return strings.Join(lines, "\n"), outcome{kind: outInvalid, problems: lines[1:]}, nil
 	}
 	sh.progress("kogen: checking step code")
 	feedback, err := sh.stepSelfcheck(ctx)

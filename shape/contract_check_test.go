@@ -358,6 +358,9 @@ func ccInput(req map[string]any) string {
 func ccKinds(f *shpFx) []string {
 	var kinds []string
 	for _, r := range f.Prov.allRequests() {
+		if decisionRequest(r) {
+			continue
+		}
 		switch contractKind(r) {
 		case SubmitContractReviewTool:
 			kinds = append(kinds, "review")
@@ -447,7 +450,7 @@ func TestContractCheckRefusesAConfirmedContradictionAndPublishesItsCorrection(t 
 		t.Fatalf("second review input %q", ccInput(reqs[2])[:200])
 	}
 	// Their tokens join the usage total Shape prints.
-	shpContains(t, "usage line", f.Stdout.String(), "shape gpt-6.1-sol/high input=615 cached=240 output=180 reasoning=60 wall_ms=")
+	shpContains(t, "usage line", f.Stdout.String(), "shape gpt-6.1-sol/high input=936 cached=360 output=270 reasoning=90 wall_ms=")
 }
 
 func TestContractCheckUnevidencedAndRefutedFindingsNeverRefuse(t *testing.T) {
@@ -911,7 +914,7 @@ func TestContractCheckExternalShape(t *testing.T) {
 			t.Fatalf("events %v", reviews)
 		}
 		// The sessions' rounds count in the usage line.
-		shpMatch(t, "usage line", f.Stdout.String(), `shape claude-opus-5-5/xhigh claude-code 6 round\(s\) wall_ms=\d+`)
+		shpMatch(t, "usage line", f.Stdout.String(), `shape claude-opus-5-5/xhigh claude-code 9 round\(s\) wall_ms=\d+`)
 	})
 
 	t.Run("a session that ends without a result is incomplete and the candidate goes on", func(t *testing.T) {

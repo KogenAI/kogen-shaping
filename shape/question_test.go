@@ -351,7 +351,7 @@ func TestExternalShapeQuestionCheck(t *testing.T) {
 			t.Fatalf("schema %s", task.Schema)
 		}
 		shpContains(t, "feedback", x.inputs[2].Feedback, "Question check: 1 of 1 question(s) are not UI/UX choices left to the user; nothing was asked.")
-		shpMatch(t, "usage line", f.Stdout.String(), `shape claude-opus-5-5/xhigh claude-code 5 round\(s\) wall_ms=\d+`)
+		shpMatch(t, "usage line", f.Stdout.String(), `shape claude-opus-5-5/xhigh claude-code 7 round\(s\) wall_ms=\d+`)
 		noNativeRequests(t, f)
 	})
 	t.Run("a UI/UX question reaches the user", func(t *testing.T) {

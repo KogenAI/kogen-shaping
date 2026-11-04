@@ -51,8 +51,8 @@ type shpProvider struct {
 	// confirmation no verdict.
 	contract     []shpStep
 	contractNext int
-	// contractWire renders the default contract answer (a call) on the provider's wire; nil: the
-	// Responses wire.
+	// contractWire renders the default contract and decision check answer (a call) on the
+	// provider's wire; nil: the Responses wire.
 	contractWire func(call map[string]any) shpStep
 }
 
@@ -88,7 +88,13 @@ func (p *shpProvider) serve(w http.ResponseWriter, r *http.Request) {
 		p.mu.Lock()
 	}
 	if !routed {
-		if kind := contractKind(req); kind != "" {
+		if decisionRequest(req) {
+			call := shpCall("decision-check", SubmitDecisionCheckTool, map[string]any{"items": []any{}})
+			step = shpAnswer(call)
+			if p.contractWire != nil {
+				step = p.contractWire(call)
+			}
+		} else if kind := contractKind(req); kind != "" {
 			if p.contractNext < len(p.contract) {
 				step = p.contract[p.contractNext]
 				p.contractNext++
@@ -164,12 +170,38 @@ func contractKind(req map[string]any) string {
 	return ""
 }
 
+// decisionRequest is whether the request offers submit_decision_check: a decision check request.
+func decisionRequest(req map[string]any) bool {
+	list, _ := req["tools"].([]any)
+	for _, t := range list {
+		m, _ := t.(map[string]any)
+		if fn, ok := m["function"].(map[string]any); ok {
+			m = fn
+		}
+		if m["name"] == SubmitDecisionCheckTool {
+			return true
+		}
+	}
+	return false
+}
+
+// decisionRequests are the decision check requests in order.
+func (p *shpProvider) decisionRequests() []map[string]any {
+	var out []map[string]any
+	for _, r := range p.allRequests() {
+		if decisionRequest(r) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // requests are the shaper's requests in order, without the contract review and confirmation
-// requests.
+// and the decision check requests.
 func (p *shpProvider) requests() []map[string]any {
 	var out []map[string]any
 	for _, r := range p.allRequests() {
-		if contractKind(r) == "" {
+		if contractKind(r) == "" && !decisionRequest(r) {
 			out = append(out, r)
 		}
 	}
@@ -187,21 +219,21 @@ func (p *shpProvider) contractRequests() []map[string]any {
 	return out
 }
 
-// allRequests are every request in order, the contract requests included.
+// allRequests are every request in order, the contract and decision check requests included.
 func (p *shpProvider) allRequests() []map[string]any {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return append([]map[string]any(nil), p.reqs...)
 }
 
-// rawRequests are the exact bodies and headers received, in order, without the contract
-// requests.
+// rawRequests are the exact bodies and headers received, in order, without the contract and
+// decision check requests.
 func (p *shpProvider) rawRequests() []shpRaw {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	var out []shpRaw
 	for i, r := range p.raws {
-		if contractKind(p.reqs[i]) == "" {
+		if contractKind(p.reqs[i]) == "" && !decisionRequest(p.reqs[i]) {
 			out = append(out, r)
 		}
 	}
