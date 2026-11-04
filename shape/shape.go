@@ -1478,6 +1478,9 @@ func (sh *shaping) checkSubmission(ctx context.Context, files []string) (string,
 	if text, out, refused := sh.contractRefusal(hash); refused {
 		return text, out, nil
 	}
+	if text, out, refused := sh.scopeRefusal(); refused {
+		return text, out, nil
+	}
 	written, err := os.ReadFile(filepath.Join(sh.root, project.IntentMDPath(sh.slug)))
 	if err != nil {
 		return "", outcome{}, err
