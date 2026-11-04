@@ -23,6 +23,7 @@ that workflow before building the approved work.
 ## Packages
 
 - `shape`: shaping, refinement, approval cards, context windows and Intent contracts, and the Shaper's and Refine's model-facing policy: their prompts (`shape/prompts`) and tool definitions.
+- `consumes`: one test suite per Kogen dependency (`consumes/<producer>/`) stating exactly what this repository relies on from it, each with a README inventory.
 
 ## Standalone Shape (developer entry point)
 
