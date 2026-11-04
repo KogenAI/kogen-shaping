@@ -546,15 +546,18 @@ type shaping struct {
 	decisionUsage  provider.Usage // the native decision checks' tokens
 	decisionRounds int            // the external decision check sessions' rounds
 
-	earlier             string          // the earlier questions and answers, as the shaper reads them
-	questionChecks      int             // question check calls made
-	questionUsage       provider.Usage  // the native question checks' tokens
-	questionRounds      int             // the external question check sessions' rounds
-	environmentRefusals int             // environment-only question refusals in this run
-	probed              map[string]bool // the commands of the probe calls of this run
-	ranCommand          bool            // the external session completed a Bash call
-	readPaths           map[string]bool // the cleaned path arguments of the read_file calls of the main conversation
-	listedPaths         map[string]bool // the cleaned path arguments of the list_files calls of the main conversation
+	earlier           string            // the earlier questions and answers, as the shaper reads them
+	questionChecks    int               // question check calls made
+	questionUsage     provider.Usage    // the native question checks' tokens
+	questionRounds    int               // the external question check sessions' rounds
+	evidencedRefusals int               // evidenced environment-only question submissions in this run
+	questionRefusals  []classCount      // the classes of the questions the question checks refused, in order of first refusal
+	probed            map[string]bool   // the commands of the probe calls of this run
+	probeTexts        map[string]string // the latest answer text of each probed command of this run
+	readTexts         map[string]string // the latest answer text of the read_file calls of the main conversation, by cleaned path
+	ranCommand        bool              // the external session completed a Bash call
+	readPaths         map[string]bool   // the cleaned path arguments of the read_file calls of the main conversation
+	listedPaths       map[string]bool   // the cleaned path arguments of the list_files calls of the main conversation
 
 	contractUsage    provider.Usage               // the native contract review and confirmation calls' tokens
 	contractRounds   int                          // the external contract review and confirmation sessions' rounds
@@ -700,11 +703,11 @@ func (sh *shaping) shape(ctx context.Context, st *state) (int, error) {
 				}
 			}
 			e := sys.Fail("intent", "not_ready", "the Intent is not ready to build", 1)
-			e.Lines = append(slices.Clone(res.problems), sh.earliestLines()...)
+			e.Lines = append(append(slices.Clone(res.problems), sh.earliestLines()...), sh.refusalCountsLines()...)
 			return 0, e
 		}
 		e := sys.Fail("shape", "invalid_output", fmt.Sprintf("the shaper's output was not a valid Intent after %d attempts", submissionRetryLimit(sh.in.SubmissionRetryLimit)), 1)
-		e.Lines = append(slices.Clone(res.problems), sh.earliestLines()...)
+		e.Lines = append(append(slices.Clone(res.problems), sh.earliestLines()...), sh.refusalCountsLines()...)
 		return 0, e
 	case outNoTool:
 		e := sys.Fail("shape", "invalid_output", res.detail, 1)
@@ -1152,7 +1155,15 @@ func (sh *shaping) runTool(ctx context.Context, c tools.Call) (tools.Output, err
 	tl := sh.agentTools(ctx, sh.mainTools())
 	sh.noteReach(c.Name, args)
 	if c.Name != ProbeTool {
-		return tl.Run(c.Name, args)
+		out, err := tl.Run(c.Name, args)
+		if err == nil && c.Name == tools.ReadFileTool {
+			if sh.readTexts == nil {
+				sh.readTexts = map[string]string{}
+			}
+			path, _ := args["path"].(string)
+			sh.readTexts[cleanCitedPath(path)] = out.Text
+		}
+		return out, err
 	}
 	sh.progress("kogen: probe: " + textOf(args["command"]))
 	var out tools.Output
@@ -1169,6 +1180,10 @@ func (sh *shaping) runTool(ctx context.Context, c tools.Call) (tools.Output, err
 		summary = strings.ReplaceAll(strings.TrimSpace(m), "\n", "; ")
 	}
 	sh.progress("kogen: probe result: " + summary)
+	if sh.probeTexts == nil {
+		sh.probeTexts = map[string]string{}
+	}
+	sh.probeTexts[textOf(args["command"])] = out.Text
 	return out, nil
 }
 

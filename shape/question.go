@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -18,7 +20,7 @@ import (
 // SubmitQuestionCheckTool is the one tool of the question check call.
 const SubmitQuestionCheckTool = "submit_question_check"
 
-const questionInstructions = `You check the questions a shaper wants to ask the user about one feature request. Only UI/UX choices that the request and the user's answers leave open, and mandatory authentication or security handoffs, may reach the user; the shaper investigates and decides everything else itself. You see only the request text, the earlier questions with the user's answers, and the questions. Read-only: do not use any tool except ` + SubmitQuestionCheckTool + `.
+const questionInstructions = `You check the questions a shaper wants to ask the user about one feature request. Only UI/UX choices that the request and the user's answers leave open, and mandatory authentication or security handoffs, may reach the user; the shaper investigates and decides everything else itself. You see only the request text, the earlier questions with the user's answers, the questions, and the cited evidence: the text this shaping read or ran for each (evidence: ...) item a question cites. Read-only: do not use any tool except ` + SubmitQuestionCheckTool + `.
 
 Give one item for every question: its number, one class and why (one short reason). The classes:
 - ui_ux: a choice of what the user sees or does in the product's interface or interaction (layout, wording, flow, feedback, input behavior) that the request and the earlier answers leave open;
@@ -26,12 +28,13 @@ Give one item for every question: its number, one class and why (one short reaso
 - answered: the request or an earlier answer already settles it;
 - technical: an implementation, architecture, library, protocol, data or testing choice;
 - product_policy: a business, pricing, permission or other product rule that is not a choice of interface or interaction;
-- environment: whether a tool, service, account, credential, network or other resource is available where the work runs;
+- environment: whether a tool, service, account, credential, network or other resource is available where the work runs, when it is not an environment_prerequisite;
+- environment_prerequisite: a resource without which this shaping cannot write the Intent or run its acceptance, as the question's cited evidence shows: the cited text is about the resource the question names and shows it needed and missing, and neither the cited text, the request nor the earlier answers show it optional, needed only to run the finished feature against a real external service, or already stood in for by a fake, stub, simulation or recorded response; the why names the part of the Intent or acceptance that cannot be written or run without it and what in the cited text shows that. A question with no cited text shown, or whose cited text does not support the claimed necessity, is environment, whatever its own wording claims;
 - repository_fact: a fact that the repository's files, history or commands can establish.
 Answer by calling ` + SubmitQuestionCheckTool + `.`
 
 // questionClasses are the classes of the question check; the first two reach the user.
-var questionClasses = []any{"ui_ux", "handoff", "answered", "technical", "product_policy", "environment", "repository_fact"}
+var questionClasses = []any{"ui_ux", "handoff", "answered", "technical", "product_policy", "environment", "environment_prerequisite", "repository_fact"}
 
 func questionSchema() map[string]any {
 	item := map[string]any{
@@ -149,43 +152,53 @@ func questionInstruction(class string) string {
 	case "answered":
 		return "the request or an earlier answer settles it; follow it and keep its (source: request) or (source: answer N)"
 	case "environment":
-		return "do not ask about the environment; proceed without it and record that Decision, or, if the request cannot be shaped without it, submit only such environment questions again and Shape ends with an environment fault"
+		return "record a Decision and continue: proceed without it, with the stand-in the repository shows or one the Intent specifies, as - <decision> (assumption: <the uncertainty>) (source: request); " +
+			"Shape stops only for environment questions that cite, as (evidence: <repository path>) or (evidence: ran `<command>`) in the question, what this shaping read or ran that shows the Intent or its acceptance cannot be written or run without the item"
+	case "environment_prerequisite":
+		return "the cited evidence shows the Intent or its acceptance cannot be written or run without it; if no stand-in can be used or specified, submit only such evidenced environment questions again and Shape stops with an environment fault that names the blocked part and the evidence; otherwise record a Decision and continue"
 	}
 	return "decide it from what the repository and the request establish"
 }
 
 // questionClassify makes the question check call: one fresh read-only request or session.
-func (sh *shaping) questionClassify(ctx context.Context, questions []map[string]any) ([]questionItem, error) {
+func (sh *shaping) questionClassify(ctx context.Context, questions []map[string]any) ([]questionItem, [][]string, error) {
 	earlier := sh.earlier
 	if earlier == "" {
 		earlier = "none"
 	}
 	input := "Slug: " + sh.slug + "\n\n# Request\n\n" + sh.request + "\n\n# Earlier questions and answers\n\n" + earlier + "\n\n# Questions\n\n" + questionsText(questions)
+	cited, shown, err := sh.citedEvidence(questions)
+	if err != nil {
+		return nil, nil, err
+	}
+	if cited != "" {
+		input += "\n\n# Cited evidence\n\n" + cited
+	}
 	var args map[string]any
 	sh.questionChecks++
 	if sh.ext != nil {
 		x, err := startExternal(ctx, sh.ext, sh.extMax, sh.repo, sh.root, sh.s.Getenv("HOME"),
 			fmt.Sprintf("%s/executor-question-%d", sh.ev.Dir, sh.questionChecks), sh.slug, sh.role, questionInstructions+"\n\n"+input, "", mustJSON(questionSchema()), sh.ev, nil)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		defer x.close()
 		res, err := x.round(ctx, "")
 		sh.questionRounds += x.rounds
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if res.Ending != executor.EndFinish {
-			return nil, questionInvalid("the session ended without a result")
+			return nil, nil, questionInvalid("the session ended without a result")
 		}
 		if args, err = submissionArgs(res.Structured); err != nil {
-			return nil, questionInvalid("not a JSON object")
+			return nil, nil, questionInvalid("not a JSON object")
 		}
 	} else {
 		sh.progress("kogen: checking the questions")
 		revision, err := CurrentRevision(sh.repo)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		cacheID := startConversation(sh.ev, "question-check")
 		req := conversationRequest(provider.Request{
@@ -199,54 +212,168 @@ func (sh *shaping) questionClassify(ctx context.Context, questions []map[string]
 		call.End(resp, err)
 		if err != nil {
 			if e, ok := sys.AsError(err); ok && e.Class == "provider" {
-				return nil, sh.providerFailed(e)
+				return nil, nil, sh.providerFailed(e)
 			}
-			return nil, err
+			return nil, nil, err
 		}
 		sh.progress(fmt.Sprintf("kogen: question check response %s wall_ms=%d", resp.Usage.Line(), time.Since(t0).Milliseconds()))
 		sh.questionUsage = sh.questionUsage.Add(resp.Usage)
 		calls := tools.Calls(resp.Items)
 		if len(calls) != 1 || calls[0].Name != SubmitQuestionCheckTool {
-			return nil, questionInvalid("expected one " + SubmitQuestionCheckTool + " call")
+			return nil, nil, questionInvalid("expected one " + SubmitQuestionCheckTool + " call")
 		}
 		args = calls[0].Args()
 	}
-	return parseQuestionCheck(args, len(questions))
+	items, err := parseQuestionCheck(args, len(questions))
+	return items, shown, err
+}
+
+// citedEvidence is the "# Cited evidence" blocks of the questions' (evidence: ...) items, ""
+// when no question cites a nonempty item, and for each question the cited items it shows, as cited.
+func (sh *shaping) citedEvidence(questions []map[string]any) (string, [][]string, error) {
+	shown := make([][]string, len(questions))
+	var blocks []string
+	var tracked map[string]bool
+	for i, q := range questions {
+		for _, citation := range evidenceCitations(textOf(q["question"])) {
+			for _, raw := range splitCitation(citation) {
+				it := parseEvidenceItem(raw)
+				if it.empty {
+					continue
+				}
+				cited := strings.TrimSpace(raw)
+				head := fmt.Sprintf("Question %d cites ", i+1)
+				if it.command != "" {
+					switch text, ok := sh.probeTexts[it.command]; {
+					case sh.ext != nil:
+						blocks = append(blocks, head+cited+": not shown (Kogen keeps no output of the external session's commands)")
+					case !ok:
+						blocks = append(blocks, head+cited+": not shown (no probe of this shaping ran `"+it.command+"`)")
+					default:
+						blocks = append(blocks, head+cited+" (probe output):\n"+strings.TrimRight(text, "\n"))
+						shown[i] = append(shown[i], cited)
+					}
+					continue
+				}
+				if tracked == nil {
+					out, err := sh.repo.OK("ls-tree", "-r", "-z", "--name-only", "HEAD")
+					if err != nil {
+						return "", nil, err
+					}
+					tracked = map[string]bool{}
+					for _, f := range strings.Split(strings.TrimSuffix(out, "\x00"), "\x00") {
+						tracked[f] = true
+					}
+				}
+				p := cleanCitedPath(it.path)
+				switch {
+				case strings.HasSuffix(it.path, "/") || !tracked[p]:
+					blocks = append(blocks, head+cited+": not shown ("+it.path+" is not a file tracked at HEAD)")
+				case sh.ext != nil && !sh.inspected:
+					blocks = append(blocks, head+cited+": not shown (this shaping's session read nothing, so "+it.path+" was not read)")
+				case sh.ext != nil:
+					data, rerr := os.ReadFile(filepath.Join(sh.root, filepath.FromSlash(p)))
+					if rerr != nil {
+						out, err := sh.repo.OK("show", "HEAD:"+p)
+						if err != nil {
+							return "", nil, err
+						}
+						data = []byte(out)
+					}
+					blocks = append(blocks, head+it.path+" (read from the checkout):\n"+strings.TrimRight(numberedLines(string(data)), "\n"))
+					shown[i] = append(shown[i], cited)
+				case !sh.readPaths[p]:
+					blocks = append(blocks, head+cited+": not shown (this shaping did not read "+it.path+")")
+				default:
+					blocks = append(blocks, head+it.path+" (read by this shaping):\n"+strings.TrimRight(sh.readTexts[p], "\n"))
+					shown[i] = append(shown[i], cited)
+				}
+			}
+		}
+	}
+	return strings.Join(blocks, "\n\n"), shown, nil
+}
+
+// numberedLines is text numbered as read_file numbers it: `<n>\t<line>`, a final newline ending
+// the last line.
+func numberedLines(text string) string {
+	lines := strings.Split(text, "\n")
+	if lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	for i, l := range lines {
+		lines[i] = fmt.Sprintf("%d\t%s", i+1, l)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// classCount is a question class and the number of questions refused in it.
+type classCount struct {
+	class string
+	n     int
+}
+
+// refusalCountsLines is the last error line of spent retries: the classes of the refused
+// questions with their counts, nil when no question was refused.
+func (sh *shaping) refusalCountsLines() []string {
+	if len(sh.questionRefusals) == 0 {
+		return nil
+	}
+	parts := make([]string, len(sh.questionRefusals))
+	for i, c := range sh.questionRefusals {
+		parts[i] = fmt.Sprintf("%s x%d", c.class, c.n)
+	}
+	return []string{"question check refusals: " + strings.Join(parts, ", ")}
+}
+
+func (sh *shaping) countRefusal(class string) {
+	for i := range sh.questionRefusals {
+		if sh.questionRefusals[i].class == class {
+			sh.questionRefusals[i].n++
+			return
+		}
+	}
+	sh.questionRefusals = append(sh.questionRefusals, classCount{class, 1})
 }
 
 // questionGate is the question check of a questions submission. refused holds the question
-// lines of a refusal (nil when every question may reach the user), with the feedback text; an
-// environment-only refusal that repeats, or that is the last allowed submission, is the
-// environment fault instead.
+// lines of a refusal (nil when every question may reach the user), with the feedback text; the
+// second evidenced environment-only submission of the run is the environment fault instead.
 func (sh *shaping) questionGate(ctx context.Context, questions []map[string]any) (text string, refused []string, err error) {
-	items, err := sh.questionClassify(ctx, questions)
+	items, shown, err := sh.questionClassify(ctx, questions)
 	if err != nil {
 		return "", nil, err
 	}
 	events := make([]any, len(items))
-	asked, environment := 0, 0
+	asked, evidenced := 0, true
 	for i, it := range items {
 		events[i] = map[string]any{"number": it.number, "question": textOf(questions[i]["question"]), "class": it.class, "why": it.why}
-		switch it.class {
-		case "ui_ux", "handoff":
+		if it.class == "ui_ux" || it.class == "handoff" {
 			asked++
+			evidenced = false
 			continue
-		case "environment":
-			environment++
 		}
-		refused = append(refused, fmt.Sprintf("- question %d (%s): %s | why: %s | %s", it.number, it.class, textOf(questions[i]["question"]), it.why, questionInstruction(it.class)))
+		instruction := it.class
+		if it.class == "environment_prerequisite" && len(shown[i]) == 0 {
+			instruction = "environment"
+		}
+		if instruction != "environment_prerequisite" {
+			evidenced = false
+		}
+		sh.countRefusal(it.class)
+		refused = append(refused, fmt.Sprintf("- question %d (%s): %s | why: %s | %s", it.number, it.class, textOf(questions[i]["question"]), it.why, questionInstruction(instruction)))
 	}
 	sh.ev.Record(map[string]any{"event": "question_check", "items": events, "asked": asked, "refused": len(items) - asked})
 	if refused == nil {
 		return "", nil, nil
 	}
 	sh.refused("question_check", refused)
-	if environment == len(items) {
-		sh.environmentRefusals++
-		if sh.environmentRefusals >= 2 || sh.priorInvalid >= submissionRetryLimit(sh.in.SubmissionRetryLimit)-1 {
+	if evidenced {
+		sh.evidencedRefusals++
+		if sh.evidencedRefusals >= 2 {
 			e := sys.Fail("environment", "shape_environment", "shaping cannot go on without something only your environment can provide; nothing was asked or published", 3)
-			for _, q := range questions {
-				e.Lines = append(e.Lines, "- "+textOf(q["question"]))
+			for i, q := range questions {
+				e.Lines = append(e.Lines, "- "+textOf(q["question"]), "  blocks: "+items[i].why, "  evidence: "+strings.Join(shown[i], "; "))
 			}
 			return "", nil, e
 		}

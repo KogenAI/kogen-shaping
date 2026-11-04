@@ -3,6 +3,7 @@ package shape
 import (
 	"encoding/json"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -27,7 +28,7 @@ func TestParseQuestionCheck(t *testing.T) {
 		{"native int64, in order", qcPayload(qcItem(int64(1), "ui_ux"), qcItem(int64(2), "technical")), 2, ""},
 		{"external float64, any order", qcPayload(qcItem(float64(2), "handoff"), qcItem(float64(1), "environment")), 2, ""},
 		{"json.Number", qcPayload(qcItem(json.Number("1"), "answered")), 1, ""},
-		{"every class", qcPayload(qcItem(1, "ui_ux"), qcItem(2, "handoff"), qcItem(3, "answered"), qcItem(4, "technical"), qcItem(5, "product_policy"), qcItem(6, "environment"), qcItem(7, "repository_fact")), 7, ""},
+		{"every class", qcPayload(qcItem(1, "ui_ux"), qcItem(2, "handoff"), qcItem(3, "answered"), qcItem(4, "technical"), qcItem(5, "product_policy"), qcItem(6, "environment"), qcItem(7, "environment_prerequisite"), qcItem(8, "repository_fact")), 8, ""},
 		{"items missing", map[string]any{}, 1, "items must be a list"},
 		{"items not a list", map[string]any{"items": "ui_ux"}, 1, "items must be a list"},
 		{"item not an object", qcPayload("ui_ux"), 1, "an item is malformed"},
@@ -120,7 +121,7 @@ func qcText(req map[string]any) string {
 	return s
 }
 
-const qcToolJSON = `{"type":"function","name":"submit_question_check","strict":true,"description":"Submit the question check: one item per question with its number, class and reason.","parameters":{"type":"object","properties":{"items":{"type":"array","items":{"type":"object","properties":{"number":{"type":"integer"},"class":{"type":"string","enum":["ui_ux","handoff","answered","technical","product_policy","environment","repository_fact"]},"why":{"type":"string"}},"required":["number","class","why"],"additionalProperties":false}}},"required":["items"],"additionalProperties":false}}`
+const qcToolJSON = `{"type":"function","name":"submit_question_check","strict":true,"description":"Submit the question check: one item per question with its number, class and reason.","parameters":{"type":"object","properties":{"items":{"type":"array","items":{"type":"object","properties":{"number":{"type":"integer"},"class":{"type":"string","enum":["ui_ux","handoff","answered","technical","product_policy","environment","environment_prerequisite","repository_fact"]},"why":{"type":"string"}},"required":["number","class","why"],"additionalProperties":false}}},"required":["items"],"additionalProperties":false}}`
 
 func TestShapeQuestionCheckRequestAndPublication(t *testing.T) {
 	parallel(t)
@@ -178,6 +179,8 @@ func TestShapeQuestionCheckRequestAndPublication(t *testing.T) {
 	}
 }
 
+const qcEnvironmentInstruction = "record a Decision and continue: proceed without it, with the stand-in the repository shows or one the Intent specifies, as - <decision> (assumption: <the uncertainty>) (source: request); Shape stops only for environment questions that cite, as (evidence: <repository path>) or (evidence: ran `<command>`) in the question, what this shaping read or ran that shows the Intent or its acceptance cannot be written or run without the item"
+
 const qcHeadline = "Question check: %s question(s) are not UI/UX choices left to the user; nothing was asked. Investigate and decide each one yourself: read the repository or run a probe, then record a Decisions line that cites what you read or ran before its source tag, as - <decision> (evidence: <repository path>) (source: request) or - <decision> (evidence: ran `<command>`) (source: request). Where the repository has no evidence or conflicting evidence, record the uncertainty you decided under instead, as - <decision> (assumption: <the uncertainty>) (source: request); the user confirms or reverses it at approval. Ask the user only UI/UX questions that the request and the answers leave open, or a mandatory authentication or security handoff."
 
 func TestShapeQuestionCheckRefusesTheWholeSubmission(t *testing.T) {
@@ -199,7 +202,7 @@ func TestShapeQuestionCheckRefusesTheWholeSubmission(t *testing.T) {
 		"- question 3 (answered): Settled? | why: a answered question | the request or an earlier answer settles it; follow it and keep its (source: request) or (source: answer N)",
 		"- question 4 (product_policy): Charge past-due? | why: a product_policy question | decide it from what the repository and the request establish",
 		"- question 5 (repository_fact): Is there a stub? | why: a repository_fact question | decide it from what the repository and the request establish",
-		"- question 6 (environment): Is the CLI installed? | why: a environment question | do not ask about the environment; proceed without it and record that Decision, or, if the request cannot be shaped without it, submit only such environment questions again and Shape ends with an environment fault",
+		"- question 6 (environment): Is the CLI installed? | why: a environment question | " + qcEnvironmentInstruction,
 	}, "\n")
 	shpEq(t, "feedback", shpOutputs(reqs[1])["q1"], wantFeedback)
 	// The refusal saved no round and printed nothing; the UI/UX question went through afterwards.
@@ -230,18 +233,56 @@ func TestShapeQuestionRefusalsCountAsInvalidSubmissions(t *testing.T) {
 	exit, err := f.shape("Add calc.is_even(n).")
 	e := shpWantError(t, err, "shape", "invalid_output", "after 3 attempts", 1)
 	shpEq(t, "exit", exit, 1)
-	shpEq(t, "lines", len(e.Lines), 1)
+	shpEq(t, "lines", len(e.Lines), 2)
+	shpEq(t, "last line", e.Lines[1], "question check refusals: technical x3")
 	if f.exists(".kogen/local/shaping/is-even/questions.json") || f.Stdout.Len() != 0 {
 		t.Fatal("nothing is asked")
 	}
 	shpEq(t, "refusals", len(shpNamed(f.events(), "submission_refused")), 3)
 }
 
+func TestShapeQuestionRefusalsAreTheLastLineOfANotReadyIntent(t *testing.T) {
+	parallel(t)
+	bad := shpFilesWithDecisions("- Zero is even. (evidence: nothing/here.rb) (source: request)")
+	f := newShpFx(t, shpSubmit("q1", map[string]any{"questions": []any{shpQuestion("Which engine?"), shpQuestion("Charge?")}}), shpQuestionCheck("c1", "technical", "product_policy"),
+		shpSubmit("f1", bad), shpSubmit("f2", bad))
+	exit, err := f.shape("Add calc.is_even(n).")
+	e := shpWantError(t, err, "intent", "not_ready", "", 1)
+	shpEq(t, "exit", exit, 1)
+	shpEq(t, "lines", strings.Join(e.Lines, "\n"), strings.Join([]string{
+		"- decision 1: nothing/here.rb is not a file or directory tracked at HEAD",
+		"earliest unresolved refusal (attempt 1, gate question_check):",
+		"- question 1 (technical): Which engine? | why: a technical question | decide it from what the repository and the request establish",
+		"- question 2 (product_policy): Charge? | why: a product_policy question | decide it from what the repository and the request establish",
+		"question check refusals: technical x1, product_policy x1",
+	}, "\n"))
+}
+
+// qcWeather is a tracked file the evidenced questions cite.
+const qcWeather = "// The weather client. No fake client exists: every call reaches the live service.\nexports.client = function () {}\n"
+
+const qcRead = "lib/weather.js"
+
+func qcCommit(f *shpFx) {
+	f.write(qcRead, qcWeather)
+	f.git("add", "-A")
+	f.git("commit", "-qm", "Add the weather client")
+}
+
 func TestShapeEnvironmentQuestions(t *testing.T) {
 	parallel(t)
-	env := map[string]any{"questions": []any{shpQuestion("Is a key set?", "yes", "no"), shpQuestion("Is the CLI installed?")}}
-	envCheck := func(id string) shpStep { return shpQuestionCheck(id, "environment", "environment") }
-	faultLines := []string{"- Is a key set?", "- Is the CLI installed?"}
+	plain := map[string]any{"questions": []any{shpQuestion("Is a key set?", "yes", "no"), shpQuestion("Is the CLI installed?")}}
+	cited := map[string]any{"questions": []any{shpQuestion("Is a key set? (evidence: lib/weather.js)", "yes", "no"), shpQuestion("Is the CLI installed? (evidence: lib/weather.js)")}}
+	unread := map[string]any{"questions": []any{shpQuestion("Is a key set? (evidence: lib/weather.js)"), shpQuestion("Is the CLI installed?")}}
+	read := shpAnswer(shpCall("r1", "read_file", map[string]any{"path": qcRead}))
+	policy := map[string]any{"questions": []any{shpQuestion("Print low risk?")}}
+	prerequisite := func(id string) shpStep {
+		return shpQuestionCheck(id, "environment_prerequisite", "environment_prerequisite")
+	}
+	faultLines := []string{
+		"- Is a key set? (evidence: lib/weather.js)", "  blocks: a environment_prerequisite question", "  evidence: lib/weather.js",
+		"- Is the CLI installed? (evidence: lib/weather.js)", "  blocks: a environment_prerequisite question", "  evidence: lib/weather.js",
+	}
 	fault := func(t *testing.T, f *shpFx, exit int, err error) {
 		t.Helper()
 		e := shpWantError(t, err, "environment", "shape_environment", "", 3)
@@ -252,47 +293,155 @@ func TestShapeEnvironmentQuestions(t *testing.T) {
 			t.Fatal("nothing is asked or published")
 		}
 	}
+	envCheck := func(id string) shpStep { return shpQuestionCheck(id, "environment", "environment") }
 
-	t.Run("a first environment-only refusal is feedback, then the shaper proceeds", func(t *testing.T) {
+	t.Run("an environment-only refusal is feedback to record a Decision, then the shaper proceeds", func(t *testing.T) {
 		parallel(t)
-		f := newShpFx(t, shpSubmit("q1", env), envCheck("c1"), shpSubmit("c2", shpFiles()), shpAck("c3"))
+		f := newShpFx(t, shpSubmit("q1", plain), envCheck("c1"), shpSubmit("c2", shpFiles()), shpAck("c3"))
 		if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 0 {
 			t.Fatalf("exit %d, err %v", exit, err)
 		}
-		shpContains(t, "feedback", shpOutputs(shpShaperRequests(f.Prov.requests())[1])["q1"], "(environment): Is a key set? | why: a environment question | do not ask about the environment;")
+		shpContains(t, "feedback", shpOutputs(shpShaperRequests(f.Prov.requests())[1])["q1"], "(environment): Is a key set? | why: a environment question | "+qcEnvironmentInstruction)
 	})
-	t.Run("the second environment-only refusal ends Shape", func(t *testing.T) {
+	t.Run("environment questions without evidence never end Shape, even repeated", func(t *testing.T) {
 		parallel(t)
-		f := newShpFx(t, shpSubmit("q1", env), envCheck("c1"), shpSubmit("q2", env), envCheck("c2"))
+		f := newShpFx(t, shpSubmit("q1", plain), envCheck("c1"), shpSubmit("q2", plain), envCheck("c2"), shpSubmit("q3", plain), envCheck("c3"))
+		exit, err := f.shape("Add calc.is_even(n).")
+		e := shpWantError(t, err, "shape", "invalid_output", "after 3 attempts", 1)
+		shpEq(t, "exit", exit, 1)
+		shpEq(t, "last line", e.Lines[len(e.Lines)-1], "question check refusals: environment x6")
+	})
+	t.Run("prerequisites with nothing shown never end Shape", func(t *testing.T) {
+		parallel(t)
+		f := newShpFx(t, shpSubmit("q1", unread), prerequisite("c1"), shpSubmit("q2", unread), prerequisite("c2"), shpSubmit("c3", shpFiles()), shpAck("c4"))
+		qcCommit(f)
+		if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 0 {
+			t.Fatalf("exit %d, err %v", exit, err)
+		}
+		shpContains(t, "feedback", shpOutputs(shpShaperRequests(f.Prov.requests())[1])["q1"], "(environment_prerequisite): Is a key set? (evidence: lib/weather.js) | why: a environment_prerequisite question | "+qcEnvironmentInstruction)
+	})
+	t.Run("the first evidenced environment-only submission is feedback, the second ends Shape", func(t *testing.T) {
+		parallel(t)
+		f := newShpFx(t, read, shpSubmit("q1", cited), prerequisite("c1"), shpSubmit("q2", cited), prerequisite("c2"))
+		qcCommit(f)
 		exit, err := f.shape("Add calc.is_even(n).")
 		fault(t, f, exit, err)
-		shpEq(t, "refusals", len(shpNamed(f.events(), "submission_refused")), 2)
-	})
-	t.Run("an environment-only refusal at the last allowed submission ends Shape", func(t *testing.T) {
-		parallel(t)
-		both := map[string]any{"questions": []any{shpQuestion("Q?")}, "files": shpFiles()["files"]}
-		f := newShpFx(t, shpSubmit("b1", both), shpSubmit("b2", both), shpSubmit("q1", env), envCheck("c1"))
-		exit, err := f.shape("Add calc.is_even(n).")
-		fault(t, f, exit, err)
+		shpContains(t, "feedback", shpOutputs(shpShaperRequests(f.Prov.requests())[2])["q1"], "(environment_prerequisite): Is a key set? (evidence: lib/weather.js) | why: a environment_prerequisite question | the cited evidence shows the Intent or its acceptance cannot be written or run without it;")
 		refused := shpNamed(f.events(), "submission_refused")
-		shpEq(t, "refusals", len(refused), 3)
-		shpEq(t, "last gate", refused[2]["gate"].(string), "question_check")
+		shpEq(t, "refusals", len(refused), 2)
+		shpEq(t, "last gate", refused[1]["gate"].(string), "question_check")
+	})
+	t.Run("evidenced environment-only submissions at the second and last attempts end Shape as an environment fault", func(t *testing.T) {
+		parallel(t)
+		f := newShpFx(t, read, shpSubmit("q1", policy), shpQuestionCheck("c1", "product_policy"), shpSubmit("q2", cited), prerequisite("c2"), shpSubmit("q3", cited), prerequisite("c3"))
+		qcCommit(f)
+		exit, err := f.shape("Add calc.is_even(n).")
+		fault(t, f, exit, err)
+	})
+	t.Run("one evidenced submission on the last attempt ends as spent retries", func(t *testing.T) {
+		parallel(t)
+		f := newShpFx(t, read, shpSubmit("q1", policy), shpQuestionCheck("c1", "product_policy"), shpSubmit("q2", policy), shpQuestionCheck("c2", "product_policy"), shpSubmit("q3", cited), prerequisite("c3"))
+		qcCommit(f)
+		exit, err := f.shape("Add calc.is_even(n).")
+		e := shpWantError(t, err, "shape", "invalid_output", "after 3 attempts", 1)
+		shpEq(t, "exit", exit, 1)
+		shpEq(t, "last line", e.Lines[len(e.Lines)-1], "question check refusals: product_policy x2, environment_prerequisite x2")
 	})
 	t.Run("another class in the submission is no environment fault", func(t *testing.T) {
 		parallel(t)
-		both := map[string]any{"questions": []any{shpQuestion("Q?")}, "files": shpFiles()["files"]}
-		f := newShpFx(t, shpSubmit("b1", both), shpSubmit("b2", both), shpSubmit("q1", env), shpQuestionCheck("c1", "environment", "technical"))
+		f := newShpFx(t, read, shpSubmit("q1", cited), shpQuestionCheck("c1", "environment_prerequisite", "technical"), shpSubmit("q2", cited), shpQuestionCheck("c2", "environment_prerequisite", "technical"),
+			shpSubmit("q3", cited), shpQuestionCheck("c3", "environment_prerequisite", "technical"))
+		qcCommit(f)
 		exit, err := f.shape("Add calc.is_even(n).")
 		shpWantError(t, err, "shape", "invalid_output", "", 1)
 		shpEq(t, "exit", exit, 1)
 	})
-	t.Run("an environment-only refusal after a mixed one is the first", func(t *testing.T) {
+}
+
+func TestShapeQuestionCheckCitedEvidence(t *testing.T) {
+	parallel(t)
+	const probe = "ls test/support 2>/dev/null || echo none"
+	ask := func(text string) shpStep {
+		return shpSubmit("q1", map[string]any{"questions": []any{shpQuestion(text, "yes", "no")}})
+	}
+	header := "Slug: is-even\n\n# Request\n\nAdd calc.is_even(n).\n\n# Earlier questions and answers\n\nnone\n\n# Questions\n\n"
+	t.Run("no citation leaves the input unchanged, and an empty item adds nothing", func(t *testing.T) {
 		parallel(t)
-		f := newShpFx(t, shpSubmit("q1", env), shpQuestionCheck("c1", "environment", "technical"), shpSubmit("q2", env), envCheck("c2"), shpSubmit("c3", shpFiles()), shpAck("c4"))
-		if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 0 {
+		f := newShpFx(t, ask("Which wording? (evidence: ; )"), shpUI(1))
+		if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 5 {
 			t.Fatalf("exit %d, err %v", exit, err)
 		}
+		shpEq(t, "input", qcText(qcChecks(f.Prov.requests())[0]), header+"1. Which wording? (evidence: ; )\n   a) yes (recommended)\n   b) no")
 	})
+	t.Run("native reads and probes are shown, the rest with their reason", func(t *testing.T) {
+		parallel(t)
+		question := "Needed? (evidence: lib/weather.js; ran `" + probe + "`; lib/other.js; lib/weather.js; nope.js; lib/; ran `echo hi`)"
+		f := newShpFx(t,
+			shpAnswer(shpCall("r1", "read_file", map[string]any{"path": "./lib/weather.js"}), shpCall("p1", "probe", map[string]any{"command": probe})),
+			ask(question), shpUI(1))
+		qcCommit(f)
+		f.write("lib/other.js", "other\n")
+		f.git("add", "-A")
+		f.git("commit", "-qm", "Add other")
+		if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 5 {
+			t.Fatalf("exit %d, err %v", exit, err)
+		}
+		text := qcText(qcChecks(f.Prov.requests())[0])
+		numbered := "1\t// The weather client. No fake client exists: every call reaches the live service.\n2\texports.client = function () {}"
+		wantTail := "\n\n# Cited evidence\n\n" + strings.Join([]string{
+			"Question 1 cites lib/weather.js (read by this shaping):\n" + numbered,
+			"Question 1 cites ran `" + probe + "` (probe output):\nexit status: 0\ntimed_out: false\nwall: WALL s\nnone",
+			"Question 1 cites lib/other.js: not shown (this shaping did not read lib/other.js)",
+			"Question 1 cites lib/weather.js (read by this shaping):\n" + numbered,
+			"Question 1 cites nope.js: not shown (nope.js is not a file tracked at HEAD)",
+			"Question 1 cites lib/: not shown (lib/ is not a file tracked at HEAD)",
+			"Question 1 cites ran `echo hi`: not shown (no probe of this shaping ran `echo hi`)",
+		}, "\n\n")
+		i := strings.Index(text, "\n\n# Cited evidence\n\n")
+		if i < 0 {
+			t.Fatalf("input %q", text)
+		}
+		shpEq(t, "questions", text[:i], header+"1. "+question+"\n   a) yes (recommended)\n   b) no")
+		shpEq(t, "evidence", regexp.MustCompile(`wall: [0-9.]+ s`).ReplaceAllString(text[i:], "wall: WALL s"), wantTail)
+	})
+}
+
+func TestExternalShapeQuestionCheckCitedEvidence(t *testing.T) {
+	parallel(t)
+	cases := []struct {
+		name   string
+		noRead bool
+		want   string
+	}{
+		{"the checkout text of a tracked file the session inspected, and no command output", false,
+			"Question 1 cites lib/weather.js (read from the checkout):\n1\t// The weather client. No fake client exists: every call reaches the live service.\n2\texports.client = function () {}\n\n" +
+				"Question 1 cites ran `ls`: not shown (Kogen keeps no output of the external session's commands)\n\n" +
+				"Question 1 cites nope.js: not shown (nope.js is not a file tracked at HEAD)"},
+		{"a session that read nothing", true,
+			"Question 1 cites lib/weather.js: not shown (this shaping's session read nothing, so lib/weather.js was not read)\n\n" +
+				"Question 1 cites ran `ls`: not shown (Kogen keeps no output of the external session's commands)\n\n" +
+				"Question 1 cites nope.js: not shown (nope.js is not a file tracked at HEAD)"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			parallel(t)
+			f := newShpFx(t)
+			f.useExternalShape()
+			qcCommit(f)
+			ask := map[string]any{"questions": []any{shpQuestion("Needed? (evidence: lib/weather.js; ran `ls`; nope.js)", "yes", "no")}}
+			check := result(map[string]any{"items": []any{map[string]any{"number": float64(1), "class": "ui_ux", "why": "w"}}})
+			x := &shapeExec{t: t, noRead: c.noRead, rounds: []func(int, string) (executor.RoundResult, error){result(ask), check}}
+			if exit, err := f.shapeWith(x, "Add calc.is_even(n)."); err != nil || exit != 5 {
+				t.Fatalf("exit %d, err %v\n%s", exit, err, f.Stderr)
+			}
+			stable := x.starts[1].Brief.Stable
+			i := strings.Index(stable, "\n\n# Cited evidence\n\n")
+			if i < 0 {
+				t.Fatalf("input %q", stable)
+			}
+			shpEq(t, "evidence", stable[i+len("\n\n# Cited evidence\n\n"):], c.want)
+		})
+	}
 }
 
 func TestShapeQuestionCheckInvalidAnswers(t *testing.T) {
