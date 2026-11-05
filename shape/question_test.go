@@ -2,6 +2,8 @@ package shape
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"strings"
@@ -419,16 +421,20 @@ func TestExternalShapeQuestionCheckCitedEvidence(t *testing.T) {
 	cases := []struct {
 		name   string
 		noRead bool
+		link   bool
 		want   string
 	}{
-		{"the checkout text of a tracked file the session inspected, and no command output", false,
+		{"the checkout text of a tracked file the session inspected, and no command output", false, false,
 			"Question 1 cites lib/weather.js (read from the checkout):\n1\t// The weather client. No fake client exists: every call reaches the live service.\n2\texports.client = function () {}\n\n" +
 				"Question 1 cites ran `ls`: not shown (Kogen keeps no output of the external session's commands)\n\n" +
 				"Question 1 cites nope.js: not shown (nope.js is not a file tracked at HEAD)"},
-		{"a session that read nothing", true,
+		{"a session that read nothing", true, false,
 			"Question 1 cites lib/weather.js: not shown (this shaping's session read nothing, so lib/weather.js was not read)\n\n" +
 				"Question 1 cites ran `ls`: not shown (Kogen keeps no output of the external session's commands)\n\n" +
 				"Question 1 cites nope.js: not shown (nope.js is not a file tracked at HEAD)"},
+		{"a tracked symlink to a file outside the checkout is not read, and a regular file beside it is shown", false, true,
+			"Question 1 cites lib/weather.js (read from the checkout):\n1\t// The weather client. No fake client exists: every call reaches the live service.\n2\texports.client = function () {}\n\n" +
+				"Question 1 cites lib/secret.js: not shown (lib/secret.js is a symbolic link)"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -436,7 +442,20 @@ func TestExternalShapeQuestionCheckCitedEvidence(t *testing.T) {
 			f := newShpFx(t)
 			f.useExternalShape()
 			qcCommit(f)
-			ask := map[string]any{"questions": []any{shpQuestion("Needed? (evidence: lib/weather.js; ran `ls`; nope.js)", "yes", "no")}}
+			cites := "lib/weather.js; ran `ls`; nope.js"
+			if c.link {
+				outside := filepath.Join(t.TempDir(), "secret.txt")
+				if err := os.WriteFile(outside, []byte("OUTSIDE-SECRET-7f3a: this file lies outside the checkout\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, filepath.Join(f.Root, "lib", "secret.js")); err != nil {
+					t.Fatal(err)
+				}
+				f.git("add", "-A")
+				f.git("commit", "-qm", "Add a symlink")
+				cites = "lib/weather.js; lib/secret.js"
+			}
+			ask := map[string]any{"questions": []any{shpQuestion("Needed? (evidence: "+cites+")", "yes", "no")}}
 			check := result(map[string]any{"items": []any{map[string]any{"number": float64(1), "class": "ui_ux", "why": "w"}}})
 			x := &shapeExec{t: t, noRead: c.noRead, rounds: []func(int, string) (executor.RoundResult, error){result(ask), check}}
 			if exit, err := f.shapeWith(x, "Add calc.is_even(n)."); err != nil || exit != 5 {
@@ -448,6 +467,9 @@ func TestExternalShapeQuestionCheckCitedEvidence(t *testing.T) {
 				t.Fatalf("input %q", stable)
 			}
 			shpEq(t, "evidence", stable[i+len("\n\n# Cited evidence\n\n"):], c.want)
+			if strings.Contains(stable, "OUTSIDE-SECRET") {
+				t.Fatalf("the outside file reached the question check: %q", stable)
+			}
 		})
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"math"
 	"os"
 	"path/filepath"
@@ -279,6 +280,8 @@ func (sh *shaping) citedEvidence(questions []map[string]any) (string, [][]string
 					blocks = append(blocks, head+cited+": not shown ("+it.path+" is not a file tracked at HEAD)")
 				case sh.ext != nil && !sh.inspected:
 					blocks = append(blocks, head+cited+": not shown (this shaping's session read nothing, so "+it.path+" was not read)")
+				case sh.ext != nil && isSymlink(filepath.Join(sh.root, filepath.FromSlash(p))):
+					blocks = append(blocks, head+cited+": not shown ("+it.path+" is a symbolic link)")
 				case sh.ext != nil:
 					data, rerr := os.ReadFile(filepath.Join(sh.root, filepath.FromSlash(p)))
 					if rerr != nil {
@@ -300,6 +303,12 @@ func (sh *shaping) citedEvidence(questions []map[string]any) (string, [][]string
 		}
 	}
 	return strings.Join(blocks, "\n\n"), shown, nil
+}
+
+// isSymlink is whether path is a symbolic link; an Lstat error is not one.
+func isSymlink(path string) bool {
+	fi, err := os.Lstat(path)
+	return err == nil && fi.Mode()&fs.ModeSymlink != 0
 }
 
 // numberedLines is text numbered as read_file numbers it: `<n>\t<line>`, a final newline ending
