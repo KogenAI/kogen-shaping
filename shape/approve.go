@@ -168,6 +168,9 @@ func approveLocked(ctx context.Context, s *sys.Session, in ApproveInput, repo *g
 	if !rd.Current(s, slug, ready) {
 		return 0, sys.Fail("intent", "not_ready", "readiness inputs changed; review again", 1)
 	}
+	if err := approveStaticChecks(ctx, s, in, repo, cfg, ready, sha); err != nil {
+		return 0, err
+	}
 	if err := project.ValidateSource(source); err != nil {
 		return 0, err
 	}

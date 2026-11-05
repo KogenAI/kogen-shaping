@@ -1015,3 +1015,49 @@ func TestMovedApprovalPassingRefused(t *testing.T) {
 		t.Fatalf("card %d %v %s", exit, err, out)
 	}
 }
+
+func TestApproveStaticChecks(t *testing.T) {
+	parallel(t)
+	const step = "features/steps/fixture_steps.js"
+	f := newApproveFx(t)
+	count := filepath.Join(f.Aux, "checks")
+	f.write(".kogen/project.yaml", "version: 1\ncommands:\n  checks:\n    - name: steps\n      run: 'echo x >> \""+count+"\"; ! grep -q BAD "+step+"'\n  acceptance:\n    run: sh accept.sh\n")
+	f.git("add", "-A")
+	f.git("commit", "-qm", "checks")
+	ran := func() int {
+		b, _ := os.ReadFile(count)
+		return strings.Count(string(b), "x\n")
+	}
+	if exit, _, err := f.approve(ApproveInput{}); err != nil || exit != 5 {
+		t.Fatalf("card: exit %d, err %v", exit, err)
+	}
+	if ran() != 1 || !strings.Contains(f.read(".kogen/local/static-checks/fixture.json"), `"outcome":"checked"`) {
+		t.Fatalf("the card ran the checks %d times, record %s", ran(), f.read(".kogen/local/static-checks/fixture.json"))
+	}
+	sha := f.sha()
+	s, _, errOut := f.session()
+	if exit, err := Approve(context.Background(), s, ApproveInput{Project: f.Root, Slug: approveSlug, Hash: sha}); err != nil || exit != 0 {
+		t.Fatalf("approve: exit %d, err %v", exit, err)
+	}
+	if ran() != 1 || !strings.Contains(errOut.String(), "kogen: static checks: reusing the result recorded for this package (checked)") {
+		t.Fatalf("approval did not reuse the record: %d runs\n%s", ran(), errOut)
+	}
+
+	os.Remove(filepath.Join(f.Root, ".kogen/local/approvals/fixture.json"))
+	f.write(step, "// BAD\n")
+	changed := f.sha()
+	exit, out, err := f.approve(ApproveInput{Hash: changed})
+	e := approveWantError(t, err, "intent", "static_checks", "the Intent's files fail configured static checks", 1)
+	if exit != 1 || out != "" || f.exists(".kogen/local/approvals/fixture.json") {
+		t.Fatalf("exit %d, output %q, approval written %v", exit, out, f.exists(".kogen/local/approvals/fixture.json"))
+	}
+	if want := "- check steps: exit 1; files: " + step + "; command: echo x >> \"" + count + "\"; ! grep -q BAD " + step; len(e.Lines) != 2 || e.Lines[0] != want || e.Lines[1] != "  | (no output)" {
+		t.Fatalf("lines %q", e.Lines)
+	}
+	if ran() < 2 {
+		t.Fatal("the changed package was not checked again")
+	}
+	if exit, out, err := f.approve(ApproveInput{}); err == nil || exit != 1 || out != "" {
+		t.Fatalf("the card of the refused package: exit %d, output %q, err %v", exit, out, err)
+	}
+}

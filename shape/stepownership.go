@@ -12,13 +12,26 @@ import (
 	"github.com/KogenAI/kogen-verification/verify"
 )
 
-// scopedStepPath is the flat namespace for newly proposed step files.
+// scopedStepPath is the namespace for newly proposed step files: a step module directly under
+// the steps folder, or a helper file inside the slug-owned directory <slug>__<suffix>/ there.
 func scopedStepPath(stepsDir, slug, path string) bool {
-	if filepath.Dir(path) != stepsDir || filepath.Ext(path) != ".js" {
+	if filepath.Dir(path) == stepsDir {
+		if filepath.Ext(path) != ".js" {
+			return false
+		}
+		suffix, ok := strings.CutPrefix(strings.TrimSuffix(filepath.Base(path), ".js"), slug+"__")
+		return ok && suffix != ""
+	}
+	if stepsDir == "" {
 		return false
 	}
-	suffix, ok := strings.CutPrefix(strings.TrimSuffix(filepath.Base(path), ".js"), slug+"__")
-	return ok && suffix != ""
+	below, ok := strings.CutPrefix(path, stepsDir+"/")
+	if !ok {
+		return false
+	}
+	owned, rest, ok := strings.Cut(below, "/")
+	suffix, owns := strings.CutPrefix(owned, slug+"__")
+	return ok && owns && suffix != "" && rest != "" && normalPath(rest)
 }
 
 // sharedStepCollision permits old shared dependencies only when both existing approval

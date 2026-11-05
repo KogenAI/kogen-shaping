@@ -615,8 +615,9 @@ type shaping struct {
 	pending      *shapeRefusal
 	// lastObservationsPath is the observations file of the last readiness check, relative to the root.
 	lastObservationsPath string
-	lastFresh            bool   // the last certify ran readiness
-	lastObservations     string // the readiness observations of that check; "" when green
+	lastFresh            bool       // the last certify ran readiness
+	staticLast           *staticRun // the last run of the static gate, reused for the identical candidate
+	lastObservations     string     // the readiness observations of that check; "" when green
 
 	// providerErr, when set, ends a check that a provider error stopped (Refine's checks, which
 	// run through a shaping bound to its scratch checkout); nil: the shaping's own ending.
@@ -1711,6 +1712,9 @@ func (sh *shaping) checkSubmission(ctx context.Context, files []string) (string,
 	if feedback != "" {
 		sh.refused("step_selfcheck", strings.Split(feedback, "\n")[1:])
 		return feedback, outcome{kind: outInvalid, problems: strings.Split(feedback, "\n")[1:]}, nil
+	}
+	if text, out, err := sh.staticChecks(ctx, hash); err != nil || out.kind == outInvalid {
+		return text, out, err
 	}
 	sh.progress("kogen: checking readiness")
 	text, result, err := sh.certify(ctx, files)

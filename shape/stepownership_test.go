@@ -24,6 +24,34 @@ func TestScopedStepPath(t *testing.T) {
 	}
 }
 
+func TestScopedStepPathHelperDir(t *testing.T) {
+	for _, tc := range []struct {
+		path string
+		want bool
+	}{
+		{"features/steps/alpha__driver/main.go", true},
+		{"features/steps/alpha__driver/sub/dir/x.txt", true},
+		{"features/steps/alpha__driver/", false},
+		{"features/steps/alpha__driver", false},
+		{"features/steps/alpha__/main.go", false},
+		{"features/steps/alpha__driver/../x.go", false},
+		{"features/steps/alpha__driver//x.go", false},
+		{"features/steps/alpha__driver/./x.go", false},
+		{"features/steps/beta__driver/main.go", false},
+		{"features/steps/driver/main.go", false},
+		{"features/steps/nested/alpha__driver/main.go", false},
+		{"features/other/alpha__driver/main.go", false},
+		{"alpha__driver/main.go", false},
+	} {
+		if got := scopedStepPath("features/steps", "alpha", tc.path); got != tc.want {
+			t.Errorf("%s: got %v, want %v", tc.path, got, tc.want)
+		}
+	}
+	if scopedStepPath("", "alpha", "alpha__driver/main.go") {
+		t.Error("a helper without a configured steps folder was accepted")
+	}
+}
+
 func TestSharedStepApprovalAndPreflight(t *testing.T) {
 	f := newApproveFx(t)
 	other := strings.ReplaceAll(approveIntentMD, "fixture", "other")
