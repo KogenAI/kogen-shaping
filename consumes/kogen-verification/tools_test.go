@@ -45,22 +45,29 @@ func TestTools(t *testing.T) {
 	}
 }
 
-// verify.ToolsFromInstall resolves Node from installRoot/node-path (the file's own path when
-// it cannot be read) and Quint and Cucumber under installRoot/lib.
+// verify.ToolsFromInstall, without a readable node-path, gives a Node that names no executable
+// file, and Quint and Cucumber are still the paths under installRoot/lib.
 func TestToolsFromInstall(t *testing.T) {
 	root := t.TempDir()
 	wantQuint := filepath.Join(root, "lib/quint/node_modules/@informalsystems/quint/dist/src/cli.js")
 	wantCucumber := filepath.Join(root, "lib/cucumber/node_modules")
 
 	got := verify.ToolsFromInstall(root)
-	want := verify.Tools{Node: filepath.Join(root, "node-path"), Quint: wantQuint, Cucumber: wantCucumber}
-	if got != want {
-		t.Errorf("verify.ToolsFromInstall: without a node-path file Node is that file's path:\n got: %+v\nwant: %+v", got, want)
+	if got.Quint != wantQuint || got.Cucumber != wantCucumber {
+		t.Errorf("verify.ToolsFromInstall: Quint and Cucumber must still be the paths under installRoot/lib, got %+v", got)
+	}
+	if st, err := os.Stat(got.Node); err == nil && st.Mode().IsRegular() && st.Mode().Perm()&0o111 != 0 {
+		t.Errorf("verify.ToolsFromInstall: without a node-path file Node names no executable regular file, got %+v", got)
 	}
 
-	write(t, root, "node-path", "/opt/node/bin/node\n")
+	bin := t.TempDir()
+	node := filepath.Join(bin, "node")
+	if err := os.WriteFile(node, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "node-path", node+"\n")
 	got = verify.ToolsFromInstall(root)
-	want.Node = "/opt/node/bin/node"
+	want := verify.Tools{Node: node, Quint: wantQuint, Cucumber: wantCucumber}
 	if got != want {
 		t.Errorf("verify.ToolsFromInstall: Node is the trimmed text of node-path:\n got: %+v\nwant: %+v", got, want)
 	}

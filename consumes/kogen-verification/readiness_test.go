@@ -80,7 +80,15 @@ func TestReadinessCheckAndKeptEvidence(t *testing.T) {
 	}
 	log, ev := &memLog{}, newEvidence()
 	r := p.readiness()
-	r.Tools = verify.Tools{Node: "/tools/node", Quint: "/tools/quint"}
+	toolsDir := t.TempDir()
+	node := filepath.Join(toolsDir, "node")
+	quint := filepath.Join(toolsDir, "quint")
+	for _, path := range []string{node, quint} {
+		if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r.Tools = verify.Tools{Node: node, Quint: quint}
 	r.Log, r.Evidence = log, ev
 	s := session(p.Root)
 
@@ -88,7 +96,7 @@ func TestReadinessCheckAndKeptEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("verify.Readiness.Check: %v", err)
 	}
-	if got := readFile(t, "", trace); got != "/tools/node|/tools/quint|candidate\nsecond\n" {
+	if got := readFile(t, "", trace); got != node+"|"+quint+"|candidate\nsecond\n" {
 		t.Errorf("verify.Readiness.Setup: setup runs in order in the candidate copy with the tools as KOGEN_NODE and KOGEN_QUINT (Tools), got %q", got)
 	}
 	if ev.counts["setup"] != 2 || ev.counts["acceptance"] != 1 || !slices.Equal(ev.timed, []string{"setup", "setup"}) {
