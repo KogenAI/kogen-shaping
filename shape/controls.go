@@ -484,14 +484,14 @@ func (sh *shaping) controlsRun(ctx context.Context, scenarios []project.Scenario
 	defer os.RemoveAll(base)
 	tree, kit := filepath.Join(base, "tree"), filepath.Join(base, "kit")
 	if err := os.MkdirAll(kit, 0o755); err != nil {
-		return res, nil
+		return res, err
 	}
 	preload, report := filepath.Join(kit, "preload.js"), filepath.Join(kit, "report.ndjson")
 	if err := os.WriteFile(preload, []byte(controlsPreload), 0o644); err != nil {
-		return res, nil
+		return res, err
 	}
 	if _, err := sh.repo.Materialize(sh.ready.CandidateTree, tree); err != nil {
-		return res, nil
+		return res, err
 	}
 	res.roots = []string{tree}
 	if resolved := resolvedPath(tree); resolved != tree {
@@ -534,8 +534,12 @@ func (sh *shaping) controlsRun(ctx context.Context, scenarios []project.Scenario
 		return r.Status, true, nil
 	}
 	for _, cmd := range sh.cfg.Setup {
-		if status, ran, err := command(cmd, nil); err != nil || !ran || status != 0 {
+		status, ran, err := command(cmd, nil)
+		if err != nil || !ran {
 			return res, err
+		}
+		if status != 0 {
+			return res, fmt.Errorf("setup command %q exited with status %d", cmd, status)
 		}
 	}
 	if sh.cfg.Acceptance == nil || sh.cfg.Acceptance.Run == "" {

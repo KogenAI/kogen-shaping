@@ -575,3 +575,76 @@ func TestWrongImplementationCheckRecordsAndSkips(t *testing.T) {
 		}
 	})
 }
+
+func controlsInfraCandidate() controlsCandidate {
+	exact := "Then is-even: add of 2 and 3 is 5"
+	return controlsCandidate{feature: controlsCalcFeature(exact), steps: controlsExactDef, correct: map[string]string{"calc.js": controlsCalc("add", "sub")}, wrong: controlsWrongs(exact, controlsCalc("sub"))}
+}
+
+// controlsInfraStops requires the check to stop with an error, refuse nothing, start one run
+// and record no event.
+func controlsInfraStops(t *testing.T, f *shpFx, sh *shaping) error {
+	t.Helper()
+	confirmed, err := sh.wrongImplementationCheck(context.Background(), "h1")
+	if err == nil {
+		t.Fatalf("no error; confirmed = %+v", confirmed)
+	}
+	if len(confirmed.wrong) != 0 || strings.Contains(f.Stderr.String(), "no pass is reachable") || strings.Count(f.Stderr.String(), "wrong-implementation check: run ") != 1 {
+		t.Fatalf("confirmed = %+v, progress %s", confirmed, f.Stderr.String())
+	}
+	if events := shpNamed(f.events(), "wrong_implementation_check"); len(events) != 0 {
+		t.Fatalf("events = %v", events)
+	}
+	return err
+}
+
+func TestWrongImplementationCheckReturnsAnErrorWhenTheCandidateTreeCannotBeMaterialized(t *testing.T) {
+	f, sh := controlsReal(t, controlsInfraCandidate())
+	sh.ready.CandidateTree = strings.Repeat("0", 40)
+	controlsInfraStops(t, f, sh)
+}
+
+func TestWrongImplementationCheckReturnsAnErrorWhenTheKitCannotBeCreated(t *testing.T) {
+	if !isolatedTmp(t) {
+		return
+	}
+	f, sh := controlsReal(t, controlsInfraCandidate())
+	file := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(file, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", file)
+	controlsInfraStops(t, f, sh)
+}
+
+func TestWrongImplementationCheckReturnsAnErrorWhenSetupFails(t *testing.T) {
+	f, sh := controlsReal(t, controlsInfraCandidate())
+	sh.cfg.Setup = []string{"exit 3"}
+	err := controlsInfraStops(t, f, sh)
+	if want := `setup command "exit 3" exited with status 3`; !strings.Contains(err.Error(), want) {
+		t.Fatalf("err = %v, want %s", err, want)
+	}
+}
+
+func TestContractCheckClearsReviewPropertiesWhenItReturnsEarly(t *testing.T) {
+	f, sh := controlsReal(t, controlsInfraCandidate())
+	if err := os.Remove(filepath.Join(f.Root, project.IntentMDPath(shpSlug))); err != nil {
+		t.Fatal(err)
+	}
+	if len(sh.reviewProps) == 0 {
+		t.Fatal("no review properties to clear")
+	}
+	if _, err := sh.contractCheck(context.Background(), "h1", ""); err == nil {
+		t.Fatal("contractCheck did not fail")
+	}
+	if sh.reviewProps != nil {
+		t.Fatalf("reviewProps = %v", sh.reviewProps)
+	}
+	confirmed, err := sh.wrongImplementationCheck(context.Background(), "h1")
+	if err != nil || !confirmed.empty() {
+		t.Fatalf("confirmed = %+v, err %v", confirmed, err)
+	}
+	if events := shpNamed(f.events(), "wrong_implementation_check"); len(events) != 0 || strings.Contains(f.Stderr.String(), "wrong-implementation check") {
+		t.Fatalf("events = %v, progress %s", events, f.Stderr.String())
+	}
+}

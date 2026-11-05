@@ -564,6 +564,7 @@ func (sh *shaping) contractRefusal(hash string) (string, outcome, bool) {
 // evidence for, to the confirmation. It returns the item lines of the confirmed findings, nil
 // when the candidate may go on.
 func (sh *shaping) contractCheck(ctx context.Context, hash, observations string) (contractConfirmed, error) {
+	sh.reviewProps = nil
 	intentBytes, err := os.ReadFile(filepath.Join(sh.root, project.IntentMDPath(sh.slug)))
 	if err != nil {
 		return contractConfirmed{}, err
