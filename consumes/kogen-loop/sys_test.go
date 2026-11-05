@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -268,11 +270,38 @@ func TestSessionRunContext(t *testing.T) {
 	}
 }
 
-func TestKillGroupOnExit(t *testing.T) {
+// running reports whether process pid runs. kill(pid, 0) also succeeds on a zombie, a process that
+// has exited but that its parent has not reaped (under a parent that is a child subreaper, a
+// killed group member stays one until the subreaper reaps it), so where /proc/<pid>/stat can be
+// read a process whose state field, the first after the last ')', is Z is gone. Without /proc
+// kill(pid, 0) decides.
+//
+// Follow-up in kogen-loop, not edited here: contract/sys_test.go TestRunKillGroupOnExit has the same
+// weakness, its waitGone polls kill(-pgid, 0) until ESRCH, which an unreaped zombie in the group
+// never gives.
+func running(pid int) bool {
+	if syscall.Kill(pid, 0) != nil {
+		return false
+	}
+	stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return true
+	}
+	end := bytes.LastIndexByte(stat, ')')
+	if end < 0 {
+		return true
+	}
+	fields := strings.Fields(string(stat[end+1:]))
+	return len(fields) == 0 || fields[0] != "Z"
+}
+
+// checkKillGroupOnExit runs a command that leaves a process behind in its group, once with
+// KillGroupOnExit, where the process must not be running afterwards, and once without, where it must.
+func checkKillGroupOnExit(t *testing.T) {
+	t.Helper()
 	s, dir := shellSession(t)
 	// The command leaves a process behind in its group and prints its process ID.
 	const leaveBehind = `mkfifo blocked; (read line < blocked) >/dev/null 2>&1 </dev/null & echo $!`
-	alive := func(pid int) bool { return syscall.Kill(pid, 0) == nil }
 	pidOf := func(res sys.Result) int {
 		var pid int
 		if _, err := fmt.Sscanf(res.Output, "%d", &pid); err != nil || pid <= 1 {
@@ -285,7 +314,7 @@ func TestKillGroupOnExit(t *testing.T) {
 	if err != nil || res.Status != 0 {
 		t.Fatalf("sys.Options.KillGroupOnExit: %+v, %v", res, err)
 	}
-	if pid := pidOf(res); alive(pid) {
+	if pid := pidOf(res); running(pid) {
 		syscall.Kill(pid, syscall.SIGKILL)
 		t.Errorf("sys.Options.KillGroupOnExit: process %d of the command's group is still running after Run", pid)
 	}
@@ -298,10 +327,43 @@ func TestKillGroupOnExit(t *testing.T) {
 		t.Fatalf("sys.Session.Run: %v", err)
 	}
 	pid := pidOf(res)
-	left := alive(pid)
+	left := running(pid)
 	syscall.Kill(pid, syscall.SIGKILL)
 	if !left {
 		t.Errorf("sys.Options.KillGroupOnExit: without the option process %d must outlive its command", pid)
+	}
+}
+
+func TestKillGroupOnExit(t *testing.T) {
+	checkKillGroupOnExit(t)
+}
+
+// childSubreaperEnv marks the re-run of the test binary that runs the check as a child subreaper.
+const childSubreaperEnv = "CONSUMES_KILL_GROUP_CHILD"
+
+// TestKillGroupOnExitUnderChildSubreaper runs the kill-group check in a child process that is a
+// child subreaper and never reaps, so the group member KillGroupOnExit killed stays a zombie of it.
+// The test process itself never becomes a subreaper.
+func TestKillGroupOnExitUnderChildSubreaper(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("child subreapers exist on Linux only")
+	}
+	if os.Getenv(childSubreaperEnv) == "1" {
+		if err := becomeChildSubreaper(); err != nil {
+			t.Fatalf("prctl(PR_SET_CHILD_SUBREAPER): %v", err)
+		}
+		checkKillGroupOnExit(t)
+		return
+	}
+	const name = "TestKillGroupOnExitUnderChildSubreaper"
+	cmd := exec.Command(os.Args[0], "-test.run=^"+name+"$", "-test.count=1", "-test.v")
+	cmd.Env = append(os.Environ(), childSubreaperEnv+"=1")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("the test binary as a child subreaper failed: %v\n%s", err, out)
+	}
+	if !bytes.Contains(out, []byte("--- PASS: "+name)) {
+		t.Errorf("the test binary as a child subreaper did not report %s as passed:\n%s", name, out)
 	}
 }
 

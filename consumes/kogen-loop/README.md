@@ -49,19 +49,26 @@ The suite asserts nothing kogen-shaping does not use. Other exported identifiers
 go test -race -count=1 ./consumes/kogen-loop/
 ```
 
-It also runs in `go test ./...`. Nothing is skipped and no test sleeps; the slowest tests wait
-for a 300 ms timeout of a command that blocks on a named pipe.
+It also runs in `go test ./...`. TestKillGroupOnExitUnderChildSubreaper runs only on Linux and is
+skipped elsewhere; nothing else is skipped and no test sleeps. The slowest tests wait for a 300 ms
+timeout of a command that blocks on a named pipe, and under a child subreaper a kill-group check
+waits for kogen-loop's sweep (about 6 s: its 5 s SIGTERM-to-SIGKILL interval plus its 1 s group
+wait), because `kill(-pgid, 0)` keeps succeeding while the killed group member is an unreaped zombie.
 
 ## Isolation
 
 `TestMain` unsets every inherited `GIT_*` and `KOGEN_*` variable and `EMAIL`, sets a `HOME` of its
 own (`os.MkdirTemp`, removed afterwards), `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1`
 and `GIT_TERMINAL_PROMPT=0`. The tests use no network (no listener, no HTTP server, no `net`
-package, no fixed port), write only under `t.TempDir()`, read no host path (not kogen-shaping's
-sources, not the module cache, not another repository), share no state and run in any order:
+package, no fixed port), write only under `t.TempDir()`, read no host path but one (not kogen-shaping's
+sources, not the module cache, not another repository; the one is named below), share no state and run in any order:
 `go test -race -count=1 -shuffle=on ./consumes/kogen-loop/` and `-trimpath` pass. The only
-processes are `/bin/sh` commands run through `sys.Session` and one `git init` in a temporary
-directory. The suite imports only the standard library and the exported packages of kogen-loop;
+processes are `/bin/sh` commands run through `sys.Session`, one `git init` in a temporary
+directory and, on Linux, the test binary re-run as a child (`os.Args[0]` on
+TestKillGroupOnExitUnderChildSubreaper, which sets `PR_SET_CHILD_SUBREAPER` only in that child). The
+one host path read is `/proc/<pid>/stat` of a process the test's own command started, where it
+exists, to tell a zombie from a running process. The suite imports only the standard library and
+the exported packages of kogen-loop;
 it never imports a kogen-shaping package or `github.com/KogenAI/kogen-loop/internal/...`.
 
 ## Coverage check
@@ -139,7 +146,7 @@ d=$(mktemp -d) && node -e "process.stdout.write(require('./features/steps/k-cons
 | `sys.Options` | TestSessionRun, TestSessionRunTimeout, TestSessionRunContext |
 | `sys.Options.Context` | TestSessionRunTimeout, TestSessionRunContext |
 | `sys.Options.Env` | TestSessionRun, TestSessionRunContext |
-| `sys.Options.KillGroupOnExit` | TestKillGroupOnExit |
+| `sys.Options.KillGroupOnExit` | TestKillGroupOnExit, TestKillGroupOnExitUnderChildSubreaper |
 | `sys.Options.Timeout` | TestSessionRunTimeout, TestSessionRun |
 | `sys.Result.Output` | TestSessionRun |
 | `sys.Result.Status` | TestSessionRun, TestSessionRunTimeout |
@@ -152,7 +159,7 @@ d=$(mktemp -d) && node -e "process.stdout.write(require('./features/steps/k-cons
 | `sys.Session.Out` | TestSessionOutput |
 | `sys.Session.Progress` | TestSessionOutput |
 | `sys.Session.Puts` | TestSessionOutput |
-| `sys.Session.Run` | TestSessionRun, TestSessionRunTimeout, TestKillGroupOnExit |
+| `sys.Session.Run` | TestSessionRun, TestSessionRunTimeout, TestKillGroupOnExit, TestKillGroupOnExitUnderChildSubreaper |
 | `sys.Session.RunContext` | TestSessionRunContext |
 | `sys.Session.Stdout` | TestNewSession, TestSessionOutput |
 | `sys.Session.WatchSignals` | TestWatchSignals |
