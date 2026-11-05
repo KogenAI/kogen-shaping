@@ -47,7 +47,7 @@ function build(bound) {
   const args = ['test', '-c', '-vet=off', '-overlay', overlay, '-o', bin];
   if (bound) {
     const loop = path.join(dir, 'kogen-loop');
-    const r = spawnSync('cp', ['-R', go(['list', '-m', '-f', '{{.Dir}}', 'kogen-loop'], 'locating kogen-loop').trim(), loop], {encoding: 'utf8'});
+    const r = spawnSync('cp', ['-R', go(['list', '-m', '-f', '{{.Dir}}', 'github.com/KogenAI/kogen-loop'], 'locating kogen-loop').trim(), loop], {encoding: 'utf8'});
     if (r.status !== 0) throw new Error(`${TEST}: copying kogen-loop failed: ${r.stderr}`);
     spawnSync('chmod', ['-R', 'u+w', loop]);
     const file = path.join(loop, 'provider', 'respond.go');
@@ -55,8 +55,7 @@ function build(bound) {
     if (!text.includes(SETTING)) throw new Error(`${TEST}: kogen-loop's provider/respond.go has no line ${JSON.stringify(SETTING)}`);
     fs.writeFileSync(file, text.replace(SETTING, `const InputBudgetBytes = ${bound}\n`));
     const mod = fs.readFileSync('go.mod', 'utf8');
-    if (!/^replace kogen-loop => .*$/m.test(mod)) throw new Error(`${TEST}: go.mod has no replace kogen-loop line`);
-    fs.writeFileSync(path.join(dir, 'go.mod'), mod.replace(/^replace kogen-loop => .*$/m, 'replace kogen-loop => ' + loop));
+    fs.writeFileSync(path.join(dir, 'go.mod'), mod.replace(/\n*$/, '\n') + `\nreplace github.com/KogenAI/kogen-loop => ${loop}\n`);
     fs.copyFileSync('go.sum', path.join(dir, 'go.sum'));
     args.push('-modfile', path.join(dir, 'go.mod'));
   }

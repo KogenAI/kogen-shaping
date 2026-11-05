@@ -8,8 +8,12 @@ const report = require('./k-consumes-shaping__report.js');
 
 const root = path.resolve(__dirname, '..', '..');
 
+// The feature's table names kogen-loop by its old bare module path; the module is now required by
+// its real path.
+const modulePath = (m) => (m === 'kogen-loop' ? 'github.com/KogenAI/kogen-loop' : m);
+
 When('k-consumes-shaping: the consumes observer judges this checkout against these suites:', { timeout: 900000 }, function (table) {
-  this.observed = report.observe(root, table.hashes().map((r) => [r.suite, r.module]));
+  this.observed = report.observe(root, table.hashes().map((r) => [r.suite, modulePath(r.module)]));
 });
 
 Then('k-consumes-shaping: the observer finds no problem', function () {

@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/KogenAI/kogen-executor/executor"
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 const decisionHead = "Decision check: 1 stated decisions are not supported by the request; follow the request, cite the repository evidence that decides it with (evidence: ...), or mark the decision as an assumption the user must confirm:"

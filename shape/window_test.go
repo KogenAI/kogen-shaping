@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/KogenAI/kogen-loop/provider"
+	"github.com/KogenAI/kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/tools"
 	"github.com/KogenAI/kogen-verification/verify"
-	"kogen-loop/provider"
-	"kogen-loop/sys"
-	"kogen-loop/tools"
 )
 
 // Ports test/integration/shape_working_context_test.exs.

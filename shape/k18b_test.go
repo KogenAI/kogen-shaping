@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"kogen-loop/provider"
+	"github.com/KogenAI/kogen-loop/provider"
 )
 
 // The binding-aware Anthropic fake of K18, for Shape and Refine requests.

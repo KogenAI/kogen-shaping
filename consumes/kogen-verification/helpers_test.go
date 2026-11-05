@@ -14,8 +14,8 @@ import (
 
 	"github.com/KogenAI/kogen-coordinator/git"
 	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-loop/sys"
 	"github.com/KogenAI/kogen-verification/verify"
-	"kogen-loop/sys"
 )
 
 // Compile-time pins of the two interfaces kogen-shaping implements for verify.

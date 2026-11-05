@@ -20,13 +20,14 @@ func TestBaselineAndHash(t *testing.T) {
 		t.Fatalf("project.Baseline: %v", err)
 	}
 	// Card order: intent.md, acceptance.feature, the rest of the Acceptance list, the other
-	// files of the Intent's folder, the configuration, then the protected files, each once.
+	// files of the Intent's folder, the configuration and the team model lineup, then the protected files, each once.
 	want := []string{
 		".kogen/intents/widget/intent.md",
 		".kogen/intents/widget/acceptance.feature",
 		"features/steps/widget__steps.js",
 		".kogen/intents/widget/notes.md",
 		".kogen/project.yaml",
+		".kogen/models.yaml",
 		".golangci.yml",
 		"testdata/a/golden.txt",
 	}
@@ -54,7 +55,7 @@ func TestBaselineAndHash(t *testing.T) {
 	}
 
 	// Changing a baselined file changes the hash; a file outside the baseline does not.
-	for _, p := range []string{".kogen/intents/widget/acceptance.feature", "features/steps/widget__steps.js", ".kogen/project.yaml", ".golangci.yml"} {
+	for _, p := range []string{".kogen/intents/widget/acceptance.feature", "features/steps/widget__steps.js", ".kogen/project.yaml", ".kogen/models.yaml", ".golangci.yml"} {
 		orig, _ := os.ReadFile(filepath.Join(dir, p))
 		write(t, dir, p, string(orig)+"# edited\n")
 		if got := project.Hash(dir, baseline); got == hash {

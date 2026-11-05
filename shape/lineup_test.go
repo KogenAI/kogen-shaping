@@ -7,7 +7,7 @@ import (
 
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/executor"
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // lineupShapeConfig loads a temporary project whose lineup is roles and whose other settings are

@@ -20,7 +20,7 @@ import (
 	"testing"
 
 	"github.com/KogenAI/kogen-executor/executor"
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // The synthetic orchard fixture: readings are stored in tenths of a degree, the alarm compares

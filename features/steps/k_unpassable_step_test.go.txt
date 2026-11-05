@@ -10,7 +10,7 @@ import (
 	"sync"
 	"testing"
 
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // The acceptance harness of k-shape-acceptance-unpassable-step: synthetic shaping journeys with a

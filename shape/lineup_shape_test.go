@@ -12,7 +12,7 @@ import (
 
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/executor"
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // shapeExec is a scripted Claude Code shaper: no process, no model. Each Start is a fresh

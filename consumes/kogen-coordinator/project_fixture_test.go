@@ -35,12 +35,18 @@ models:
     executor: claude-code
     model: m-build
     effort: medium
-    max_rounds: 4
   review:
     provider: openai-compatible
     base_url: http://localhost:11434/v1/
     model: m-review
     effort: low
+`
+
+// modelsYAML is the team lineup, which the baseline holds right after the configuration.
+const modelsYAML = `models:
+  shape:
+    model: m-shape
+    effort: high
 `
 
 const featureText = `Feature: Widget
@@ -89,6 +95,7 @@ func newProject(t *testing.T) (string, *project.Config) {
 	t.Helper()
 	dir := newRepo(t)
 	write(t, dir, project.ConfigPath, projectYAML)
+	write(t, dir, ".kogen/models.yaml", modelsYAML)
 	write(t, dir, ".gitignore", "*.log\n")
 	write(t, dir, project.IntentMDPath(slug), intentText("The request maps to the widget."))
 	write(t, dir, project.FeaturePath(slug), featureText)

@@ -17,8 +17,8 @@ import (
 
 	"github.com/KogenAI/kogen-coordinator/git"
 	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-loop/sys"
 	"github.com/KogenAI/kogen-verification/verify"
-	"kogen-loop/sys"
 )
 
 // ---- fixture: a ready (optionally approved, optionally source-bound) draft ----
@@ -537,7 +537,7 @@ func TestRefineOriginalReadinessHitRetainsTheRecordWithoutExecution(t *testing.T
 	shpEq(t, "evidence outcome", evidenceRec["outcome"], any("ready"))
 	shpEq(t, "evidence sha", evidenceRec["sha256"], any(f.hash()))
 	shpEq(t, "evidence title", evidenceRec["title"], any("Clarify the is-even check"))
-	shpEq(t, "evidence version", evidenceRec["version"], any(float64(3)))
+	shpEq(t, "evidence version", evidenceRec["version"], any(float64(5)))
 	for _, sc := range evidenceRec["scenarios"].([]any) {
 		shpEq(t, "scenario status", sc.(map[string]any)["status"], any("passed"))
 	}
@@ -696,7 +696,7 @@ func TestRefineUnchangedRedFromTheInitialContextAcknowledgesItsExistingCheck(t *
 	// only the original's dry run executed; the unchanged acknowledgment reused it
 	shpEq(t, "runner runs", f.runs()-runs, 1)
 	prompt := shpBody(f.Prov.requests()[0])
-	shpContains(t, "prompt", prompt, "Scenario: Even numbers (acceptance.feature line 2)\nacceptance.feature line 4: Then is-even: it is even\nassertion failed in scenario Even numbers")
+	shpContains(t, "prompt", prompt, "Scenario: Even numbers (acceptance.feature line 2)\nFailure phase: assertion\nacceptance.feature line 4: Then is-even: it is even\nassertion failed in scenario Even numbers")
 	m := regexp.MustCompile(`(?m)^Evidence: (.+)$`).FindStringSubmatch(prompt)
 	if m == nil {
 		t.Fatalf("no evidence reference in the prompt:\n%s", prompt)

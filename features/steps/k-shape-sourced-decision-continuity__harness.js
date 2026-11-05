@@ -26,7 +26,7 @@ import (
 	"testing"
 
 	"github.com/KogenAI/kogen-executor/executor"
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 const ksdcBT = "\x60"

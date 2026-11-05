@@ -25,10 +25,10 @@ import (
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/agent"
 	"github.com/KogenAI/kogen-executor/executor"
+	"github.com/KogenAI/kogen-loop/provider"
+	"github.com/KogenAI/kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/tools"
 	"github.com/KogenAI/kogen-verification/verify"
-	"kogen-loop/provider"
-	"kogen-loop/sys"
-	"kogen-loop/tools"
 )
 
 // ShapeInput is one `kogen intent shape <slug> <file|->`: the request, or the answers to the

@@ -20,7 +20,7 @@ const path = require('node:path');
 const suites = [
   ['kogen-coordinator', 'github.com/KogenAI/kogen-coordinator'],
   ['kogen-executor', 'github.com/KogenAI/kogen-executor'],
-  ['kogen-loop', 'kogen-loop'],
+  ['kogen-loop', 'github.com/KogenAI/kogen-loop'],
   ['kogen-verification', 'github.com/KogenAI/kogen-verification'],
 ];
 

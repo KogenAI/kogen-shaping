@@ -13,8 +13,8 @@ import (
 	"strings"
 	"testing"
 
-	"kogen-loop/sys"
-	"kogen-loop/tools"
+	"github.com/KogenAI/kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/tools"
 )
 
 // The acceptance harness of k-shape-size-for-one-review: synthetic shaping journeys in a small

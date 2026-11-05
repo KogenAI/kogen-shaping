@@ -3,10 +3,8 @@ module github.com/KogenAI/kogen-shaping
 go 1.27.2
 
 require (
-	github.com/KogenAI/kogen-coordinator v0.0.0-20261102193107-c4a49a4fe84f
-	github.com/KogenAI/kogen-executor v0.0.0-20261102193603-1aea0728c24b
-	github.com/KogenAI/kogen-verification v0.0.0-20261102193616-587f67dae7e8
-	kogen-loop v0.0.0
+	github.com/KogenAI/kogen-coordinator v0.0.0-20261105022408-e7bc7ce9c169
+	github.com/KogenAI/kogen-executor v0.0.0-20261105010505-8d465842f9df
+	github.com/KogenAI/kogen-loop v0.0.0-20261105005409-31036b2c02e8
+	github.com/KogenAI/kogen-verification v0.0.0-20261105003813-ac4f6a9a4877
 )
-
-replace kogen-loop => github.com/KogenAI/kogen-loop v0.0.0-20261102055344-c6e2360290d4

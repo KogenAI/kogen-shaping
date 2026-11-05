@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/KogenAI/kogen-executor/executor"
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // TestKShapeTimeAcceptance is the acceptance harness of k-shape-time: one scripted shaping run of

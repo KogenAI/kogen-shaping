@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"kogen-loop/tools"
+	"github.com/KogenAI/kogen-loop/tools"
 
 	"github.com/KogenAI/kogen-coordinator/project"
 )

@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"testing"
 
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 
 	"github.com/KogenAI/kogen-executor/executor"
 )
@@ -279,7 +279,8 @@ func TestExecutorInterfaces(t *testing.T) {
 }
 
 // TestExecutorUsage pins the usage record shape/external.go sums and writes to the run log as
-// JSON: pointer counts that stay null when not reported, the state and source words, and the
+// JSON: pointer counts that stay null when not reported (the cache_write count too, which
+// shaping does not set or read), the state and source words, and the
 // optional cost and model.
 func TestExecutorUsage(t *testing.T) {
 	var u executor.Usage
@@ -289,12 +290,12 @@ func TestExecutorUsage(t *testing.T) {
 	if input != nil || cached != nil || output != nil || reasoning != nil || cost != nil || state != "" || source != "" || model != "" {
 		t.Errorf("zero executor.Usage = %+v, want nothing reported", u)
 	}
-	if b, _ := json.Marshal(u); string(b) != `{"input":null,"cached":null,"output":null,"reasoning":null,"state":"","source":""}` {
-		t.Errorf("executor.Usage zero JSON = %s, want null counts and no cost_usd or model", b)
+	if b, _ := json.Marshal(u); string(b) != `{"input":null,"cached":null,"cache_write":null,"output":null,"reasoning":null,"state":"","source":""}` {
+		t.Errorf("executor.Usage zero JSON = %s, want null counts (cache_write included) and no cost_usd or model", b)
 	}
 	full := executor.Usage{Input: ptr(1), Cached: ptr(2), Output: ptr(3), Reasoning: ptr(4), State: executor.UsagePartial, Source: "harness", CostUSD: ptr(0.25), Model: "m"}
-	if b, _ := json.Marshal(full); string(b) != `{"input":1,"cached":2,"output":3,"reasoning":4,"state":"partial","source":"harness","cost_usd":0.25,"model":"m"}` {
-		t.Errorf("executor.Usage JSON = %s, want every field named input, cached, output, reasoning, state, source, cost_usd, model", b)
+	if b, _ := json.Marshal(full); string(b) != `{"input":1,"cached":2,"cache_write":null,"output":3,"reasoning":4,"state":"partial","source":"harness","cost_usd":0.25,"model":"m"}` {
+		t.Errorf("executor.Usage JSON = %s, want every field named input, cached, cache_write (null when unreported), output, reasoning, state, source, cost_usd, model", b)
 	}
 	var back executor.Usage
 	if err := json.Unmarshal([]byte(`{"input":5,"state":"complete","source":"provider"}`), &back); err != nil || *back.Input != 5 || back.Cached != nil || back.State != "complete" || back.Source != "provider" {

@@ -4,12 +4,12 @@ import (
 	"embed"
 	"fmt"
 	"github.com/KogenAI/kogen-executor/agent"
-	"kogen-loop/tools"
+	"github.com/KogenAI/kogen-loop/tools"
 )
 
 // Kogen's shaping tool names: the Shaper's and Refine's. The generic tools
 // (read_file, view_image, list_files, search_text, documentation) are named and defined by
-// kogen-loop/tools.
+// github.com/KogenAI/kogen-loop/tools.
 const (
 	ProbeTool            = "probe"
 	ProposeFilesTool     = "propose_files"

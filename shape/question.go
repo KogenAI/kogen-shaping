@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/KogenAI/kogen-executor/executor"
-	"kogen-loop/provider"
-	"kogen-loop/sys"
-	"kogen-loop/tools"
+	"github.com/KogenAI/kogen-loop/provider"
+	"github.com/KogenAI/kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/tools"
 )
 
 // SubmitQuestionCheckTool is the one tool of the question check call.

@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/KogenAI/kogen-loop/sys"
 	"github.com/KogenAI/kogen-verification/verify"
-	"kogen-loop/sys"
 )
 
 // Signatures and field types kogen-shaping's calls rely on.

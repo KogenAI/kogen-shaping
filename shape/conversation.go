@@ -3,8 +3,8 @@ package shape
 import (
 	"github.com/KogenAI/kogen-coordinator/git"
 	"github.com/KogenAI/kogen-coordinator/project"
-	"kogen-loop/provider"
-	"kogen-loop/tools"
+	"github.com/KogenAI/kogen-loop/provider"
+	"github.com/KogenAI/kogen-loop/tools"
 )
 
 // A conversation's prompt-cache identity (provider.NewCacheID: at most 64 characters, no

@@ -12,7 +12,7 @@ import (
 	"github.com/KogenAI/kogen-coordinator/git"
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/agent"
-	"kogen-loop/provider"
+	"github.com/KogenAI/kogen-loop/provider"
 )
 
 // The shaper's context: a deterministic, index-first navigation of the checkout (every file

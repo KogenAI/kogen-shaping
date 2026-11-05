@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/KogenAI/kogen-loop/sys"
 	"github.com/KogenAI/kogen-shaping/shape"
-	"kogen-loop/sys"
 )
 
 // These cases are copied from shape/response_budget_test.go, which kogen's response_budget_test.go

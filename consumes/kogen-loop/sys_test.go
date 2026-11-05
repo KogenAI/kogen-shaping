@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // Compile-time pins: the types and signatures kogen-shaping's code relies on.

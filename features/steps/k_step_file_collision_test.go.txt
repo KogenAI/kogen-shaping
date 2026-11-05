@@ -10,7 +10,7 @@ import (
 
  "github.com/KogenAI/kogen-coordinator/git"
  "github.com/KogenAI/kogen-coordinator/project"
- "kogen-loop/sys"
+ "github.com/KogenAI/kogen-loop/sys"
 )
 
 // Independent overlay: exercise the exported implementations of the existing

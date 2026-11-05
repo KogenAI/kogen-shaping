@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/KogenAI/kogen-coordinator/project"
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // The wrong-implementation check: acceptance can exercise every property the request asks for

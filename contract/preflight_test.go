@@ -11,8 +11,8 @@ import (
 	"testing"
 
 	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-loop/sys"
 	"github.com/KogenAI/kogen-shaping/shape"
-	"kogen-loop/sys"
 )
 
 const readyDocument = `{"schema_version":1,"kind":"preflight","checkout":{"id":"contract-checkout"},"error":null,"data":{"slug":"is-even","ready":true,"checks":[{"name":"configuration","status":"passed"},{"name":"package","status":"passed"},{"name":"approval","status":"passed"},{"name":"cleanliness","status":"passed"},{"name":"conflict","status":"passed"}],"blockers":[],"limitations":["Setup, checks, hooks, providers, tool availability, signing and full readiness/resume safety were not executed or established. Build revalidates normally."]}}`

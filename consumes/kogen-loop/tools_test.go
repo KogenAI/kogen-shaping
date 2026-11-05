@@ -19,9 +19,9 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"kogen-loop/provider"
-	"kogen-loop/sys"
-	"kogen-loop/tools"
+	"github.com/KogenAI/kogen-loop/provider"
+	"github.com/KogenAI/kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/tools"
 )
 
 // Compile-time pins: the types and signatures kogen-shaping's code relies on.
@@ -140,11 +140,12 @@ func TestOutputReserveTokens(t *testing.T) {
 }
 
 func TestDefinition(t *testing.T) {
-	// The bytes of each definition, as JSON with sorted keys: the models have always received them.
+	// The bytes of each definition, as JSON with sorted keys, as the pinned kogen-loop defines them
+	// (list_files and search_text now say how a path that is not plain text is printed).
 	want := map[string]string{
 		tools.ReadFileTool:      "8b7feea4738bbd82843a67aabbd538fa79e4beae6c15424eac0797663a1cefaa",
-		tools.ListFilesTool:     "42c312e80c7078718127c30c746c2f92922a3029ff3e4aa0e5b7c5d5e497d613",
-		tools.SearchTextTool:    "7333961efedac4a6b38dfde23ee404c11e16503e2b126b55197227aa7b8e0143",
+		tools.ListFilesTool:     "c0dc3b70c589de3ee7d2b338d92b99591260bd9d58f949d53a5da8d4500c5eb2",
+		tools.SearchTextTool:    "06eace1e8df95233ab8379de5ca28495294570b3b693fd3fbf3ae327db22c955",
 		tools.ViewImageTool:     "8fcab128c90478fbd42ff2995fc1c5b96294bb4b7aee9539d8e86037d6550287",
 		tools.DocumentationTool: "14177cc5761e23a96700576afdff9bbc99d34bec2aeac7880fb3c2c5b751ca68",
 	}
@@ -253,7 +254,10 @@ func TestReplay(t *testing.T) {
 	}
 }
 
-var cutMarker = regexp.MustCompile(`\n\[\.\.\. (\d+) bytes omitted \.\.\.\]\n`)
+// cutMarker is the omission marker: "[... N bytes omitted ...]", which counts the complete lines
+// omitted too ("[... L lines, N bytes omitted ...]", with their numbers for numbered text) when
+// the cut falls on line boundaries.
+var cutMarker = regexp.MustCompile(`\n\[\.\.\. (?:\d+ lines(?: \(\d+-\d+\))?, )?(\d+) bytes omitted \.\.\.\]\n`)
 
 func TestCut(t *testing.T) {
 	for _, text := range []string{"", "short", strings.Repeat("x", 16384), strings.Repeat("é", 8192)} {
@@ -281,7 +285,7 @@ func TestCut(t *testing.T) {
 			t.Errorf("tools.Cut: result of %d bytes is above 16384", len(got))
 		case !utf8.ValidString(got):
 			t.Errorf("tools.Cut: the result is not valid UTF-8")
-		case !strings.HasPrefix(text, head) || !strings.HasSuffix(text, tail) || len(head) < 4096-3 || len(head) > 4096:
+		case !strings.HasPrefix(text, head) || !strings.HasSuffix(text, tail) || len(head) < 4096-len(unit) || len(head) > 4096:
 			t.Errorf("tools.Cut: head of %d bytes and tail of %d bytes are not the start and end of the text", len(head), len(tail))
 		case omitted != len(text)-len(head)-len(tail):
 			t.Errorf("tools.Cut: marker says %d bytes omitted, %d are absent", omitted, len(text)-len(head)-len(tail))
@@ -395,7 +399,7 @@ func TestToolsRun(t *testing.T) {
 
 func TestToolsRepo(t *testing.T) {
 	root := t.TempDir()
-	git := &fakeGit{result: tools.GitResult{Stdout: "a.txt\nsub/b.txt\n"}}
+	git := &fakeGit{result: tools.GitResult{Stdout: "a.txt\x00sub/b.txt\x00"}}
 	var repo tools.Git = git
 	tl := &tools.Tools{Root: root, Repo: repo, Enabled: []string{tools.ListFilesTool, tools.SearchTextTool}}
 
@@ -406,9 +410,10 @@ func TestToolsRepo(t *testing.T) {
 	if len(git.runs) != 1 || git.runs[0][0] != "ls-files" {
 		t.Errorf("tools.Tools.Repo: list_files ran %v, want one git ls-files", git.runs)
 	}
-	git.result = tools.GitResult{Stdout: "a.txt:1:needle\n"}
+	// git grep -z -n records, <path> NUL <number> NUL <text> LF; tools keeps the lines the pattern matches.
+	git.result = tools.GitResult{Stdout: "a.txt\x001\x00needle\na.txt\x002\x00hay\n"}
 	out, err = tl.Run(tools.SearchTextTool, map[string]any{"pattern": "needle"})
-	if err != nil || out.Text != "a.txt:1:needle" || git.runs[1][0] != "grep" || !contains(git.runs[1], "needle") {
+	if err != nil || out.Text != "a.txt:1:needle" || git.runs[1][0] != "grep" {
 		t.Errorf("tools.Tools.Repo: search_text gave %+v, %v after %v", out, err, git.runs)
 	}
 	git.result = tools.GitResult{Status: 1}
@@ -419,15 +424,6 @@ func TestToolsRepo(t *testing.T) {
 	if out, _ := tl.Run(tools.ListFilesTool, map[string]any{}); out.Text != "(no files)" {
 		t.Errorf("tools.Tools.Repo: list_files without files gave %q, want (no files)", out.Text)
 	}
-}
-
-func contains(list []string, want string) bool {
-	for _, s := range list {
-		if s == want {
-			return true
-		}
-	}
-	return false
 }
 
 func TestToolsSession(t *testing.T) {

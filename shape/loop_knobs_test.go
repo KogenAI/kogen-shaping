@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // docBigOrigin serves a 44000-byte page at /big and a source list for any search.
@@ -43,20 +43,27 @@ func knobText(f *shpFx, err error) string {
 	return text
 }
 
-var knobMarker = regexp.MustCompile(`\n\[\.\.\. (\d+) bytes omitted \.\.\.\]\n`)
+var knobMarker = regexp.MustCompile(`\n\[\.\.\. (?:\d+ lines?, )?(\d+) bytes omitted \.\.\.\]\n`)
 
-// knobCut asserts a delivered tool result was cut once to bound bytes keeping about head bytes.
-func knobCut(t *testing.T, what, out string, bound, head int) {
+// probeBigDelivered is the size of probeBig's output once the pinned kogen-loop cut it: the
+// head keeps only the whole lines within its 4096-byte budget (the three status lines, 44 bytes,
+// as the next line is far longer), and the tail takes what is left of the
+// 16384 bytes after the marker and a head budget of 4096, not after the shorter head.
+const probeBigDelivered = 12332
+
+// knobCut asserts a delivered tool result was cut once to at most bound bytes: complete lines
+// within the head budget, an omission marker, then the tail. It came to want bytes in all.
+func knobCut(t *testing.T, what, out string, bound, head, want int) {
 	t.Helper()
 	loc := knobMarker.FindStringIndex(out)
 	if loc == nil {
 		t.Fatalf("%s: no omission marker in %d bytes: %.200q", what, len(out), out)
 	}
-	if len(out) > bound || len(out) < bound-64 {
-		t.Fatalf("%s: %d bytes delivered, want about %d", what, len(out), bound)
+	if len(out) > bound || len(out) != want {
+		t.Fatalf("%s: %d bytes delivered, want %d (at most %d)", what, len(out), want, bound)
 	}
-	if loc[0] > head || loc[0] < head-3 {
-		t.Fatalf("%s: marker after %d bytes, want the head of %d", what, loc[0], head)
+	if loc[0] > head || !strings.HasSuffix(out[:loc[0]], "\n") {
+		t.Fatalf("%s: marker after %d bytes, want whole lines within the head budget of %d", what, loc[0], head)
 	}
 }
 
@@ -100,7 +107,7 @@ func knobTools(t *testing.T, e knobEntry) {
 		if r.err != nil || r.exit != 0 || len(r.reqs) < 2 {
 			t.Fatalf("exit %d err %v requests %d", r.exit, r.err, len(r.reqs))
 		}
-		knobCut(t, "probe result", shpOutputs(r.reqs[1])["p1"], 16384, 4096)
+		knobCut(t, "probe result", shpOutputs(r.reqs[1])["p1"], 16384, 4096, probeBigDelivered)
 	})
 }
 
@@ -207,7 +214,7 @@ func TestLoopKnobsShape(t *testing.T) {
 			t.Fatal(err)
 		}
 		shpEq(t, "text is whole before delivery", strings.Contains(out.Text, "bytes omitted"), false)
-		knobCut(t, "delivered", out.Cut().Text, 16384, 4096)
+		knobCut(t, "delivered", out.Cut().Text, 16384, 4096, probeBigDelivered)
 	})
 }
 

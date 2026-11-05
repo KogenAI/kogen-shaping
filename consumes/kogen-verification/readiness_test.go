@@ -11,8 +11,8 @@ import (
 
 	"github.com/KogenAI/kogen-coordinator/git"
 	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-loop/sys"
 	"github.com/KogenAI/kogen-verification/verify"
-	"kogen-loop/sys"
 )
 
 // Signatures and field types kogen-shaping's calls rely on.
@@ -218,7 +218,7 @@ func TestReadinessRedObservations(t *testing.T) {
 	for _, part := range []string{
 		"Readiness observations\nChecked baseline: " + ready.SHA256 + "\nHEAD: " + p.head() + "\nAcceptance exit: 1\nEvidence: .kogen/local/readiness/fixture.json\n",
 		"Unexercised acceptance steps: 1\n",
-		"Scenario: First (acceptance.feature line 2)\nacceptance.feature line 3: Given a fixture\nAssertionError: must run exactly once",
+		"Scenario: First (acceptance.feature line 2)\nFailure phase: assertion\nacceptance.feature line 3: Given a fixture\nAssertionError: must run exactly once",
 		"Scenario: Later (acceptance.feature line 5)",
 		"Scenario: First (acceptance.feature line 2)\nacceptance.feature line 4: Then the candidate succeeds",
 	} {

@@ -14,15 +14,15 @@ import (
 
 	"github.com/KogenAI/kogen-coordinator/git"
 	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-loop/sys"
 	"github.com/KogenAI/kogen-verification/verify"
-	"kogen-loop/sys"
 )
 
 const approveSlug = "fixture"
 
 const approveFeature = "Feature: Fixture\n  Scenario: First\n    Then the candidate succeeds\n  Scenario: Later\n    Then the candidate succeeds\n"
 
-const approveIntentMD = "# Fixture intent\n\nSlug: fixture\nModel: not applicable — nothing to model\nAcceptance:\n" +
+const approveIntentMD = "# Sample intent\n\nSlug: fixture\nModel: not applicable — nothing to model\nAcceptance:\n" +
 	"- .kogen/intents/fixture/acceptance.feature\n- features/steps/fixture_steps.js\n\nThe fixture.\n\n" +
 	"## Decisions\n- Fixture decision. (source: request)\n\n## Tests\n- none: fixture\n\n## Feasibility\n- none\n"
 
@@ -257,7 +257,7 @@ func TestApproveCardOutput(t *testing.T) {
 		shpContains(t, "card file", files.String(), "  - "+path+"\n")
 	}
 	want := "Source provenance: unavailable (legacy)\n" +
-		"Intent: fixture — Fixture intent\n" +
+		"Intent: fixture — Sample intent\n" +
 		"SHA-256: " + sha + "\n" +
 		"Approver: Fixture <fixture@example.invalid>\n" +
 		"\n" +
@@ -271,9 +271,11 @@ func TestApproveCardOutput(t *testing.T) {
 		"Acceptance exit: 1\n" +
 		"Evidence: .kogen/local/readiness/fixture.json\n" +
 		"Scenario: First (acceptance.feature line 2)\n" +
+		"Failure phase: assertion\n" +
 		"acceptance.feature line 3: Then the candidate succeeds\n" +
 		"\n" +
 		"Scenario: Later (acceptance.feature line 4)\n" +
+		"Failure phase: assertion\n" +
 		"acceptance.feature line 5: Then the candidate succeeds\n" +
 		"\n" +
 		"Files\n" +

@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/KogenAI/kogen-coordinator/project"
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 func TestLoadIntent(t *testing.T) {
@@ -62,13 +62,16 @@ Acceptance:
 - .kogen/intents/widget/acceptance.feature
 - features/a.js
 - features/b.js
+
 Not a bullet.
 - features/after-break.js
 
 ## Decisions
 - first (source: request)
+
 not a bullet
 - second (source: answer 1)
+  wrapped
 ## Feasibility
 ## Tests
 - none: no behaviour
@@ -89,9 +92,9 @@ not a bullet
 	eq(t, "project.ModelSpec.Samples", m.Samples, "20")
 	eq(t, "project.ModelSpec.Steps", m.Steps, "5")
 	if want := []string{".kogen/intents/widget/acceptance.feature", "features/a.js", "features/b.js"}; !slices.Equal(in.Acceptance, want) {
-		t.Errorf("project.Intent.Acceptance = %q, want the bullets after the header up to the first non-bullet: %q", in.Acceptance, want)
+		t.Errorf("project.Intent.Acceptance = %q, want the bullets after the header up to the first blank line (a wrapped line continues its bullet): %q", in.Acceptance, want)
 	}
-	if want := []string{"- first (source: request)", "- second (source: answer 1)"}; !slices.Equal(in.Decisions, want) {
+	if want := []string{"- first (source: request)", "- second (source: answer 1) wrapped"}; !slices.Equal(in.Decisions, want) {
 		t.Errorf("project.Intent.Decisions = %q, want %q", in.Decisions, want)
 	}
 	if len(in.Feasibility) != 0 {
@@ -212,7 +215,7 @@ Acceptance:
 		"model: the Model: line must be `not applicable — <reason>` or `.kogen/intents/widget/model.qnt invariants=<Name> seed=<n> samples=<n> steps=<n>`",
 		"tests: - not a test line must be `- <rule>: <test to add or update> (<layer>)` or `- none: <reason>`",
 		"acceptance: features/steps/missing.js does not exist",
-		"decisions: a decision has no source",
+		"decisions: - no source here must end with `(source: request)` or `(source: answer <n>)`",
 		"feasibility: intent.md needs a ## Feasibility section listing each probe, or - none",
 		"acceptance: scenario S has no Then step",
 	}
@@ -232,8 +235,8 @@ Acceptance:
 	} {
 		_, _, err := project.CheckIntent(dir, c.slug, c.overlay)
 		se, ok := sys.AsError(err)
-		if !ok || se.Class != "intent" || se.Reason != "parse" || se.Exit != 1 || se.Detail != "the Intent cannot be read" || !slices.Equal(se.Lines, []string{c.line}) {
-			t.Errorf("project.CheckIntent with %s = %v, want intent/parse exit 1 with the line %q", c.name, err, c.line)
+		if !ok || se.Class != "intent" || se.Reason != "parse" || se.Exit != 1 || se.Detail != "the Intent cannot be read" || len(se.Lines) == 0 || se.Lines[0] != c.line {
+			t.Errorf("project.CheckIntent with %s = %v, want intent/parse exit 1 whose first line is %q (a broken feature also lists the lint problems after it)", c.name, err, c.line)
 		}
 	}
 }

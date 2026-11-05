@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/KogenAI/kogen-executor/executor"
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // The no-tool answer policy of native Shape and Refine: an answer with zero tool calls makes the

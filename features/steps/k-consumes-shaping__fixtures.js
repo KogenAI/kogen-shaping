@@ -228,9 +228,9 @@ var _ = thinking.Strip
   'kogen-loop': String.raw`package consumes
 
 import (
-	"kogen-loop/provider"
-	"kogen-loop/sys"
-	"kogen-loop/tools"
+	"github.com/KogenAI/kogen-loop/provider"
+	"github.com/KogenAI/kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/tools"
 )
 
 var _ *provider.Client

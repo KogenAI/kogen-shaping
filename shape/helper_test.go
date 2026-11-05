@@ -19,8 +19,8 @@ import (
 	"github.com/KogenAI/kogen-coordinator/git"
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/testproc"
-	"kogen-loop/provider"
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/provider"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // ---- a scripted provider ----
@@ -739,22 +739,18 @@ func unchangedLine(m int) string {
 	return fmt.Sprintf("\nUnchanged: this package is identical to the one refused at attempt %d; repair it before submitting again.", m)
 }
 
-// shpUnsourcedDecisionLines returns the two lint lines the coordinator can give for a
-// Decision bullet without a source: the pinned coordinator's single line and the current
-// coordinator's line naming the bullet.
-func shpUnsourcedDecisionLines(bullet string) [2]string {
-	return [2]string{
-		"decisions: a decision has no source",
-		"decisions: " + bullet + " must end with `(source: request)` or `(source: answer <n>)`",
-	}
+// shpUnsourcedDecisionLine is the lint line the pinned coordinator gives for a Decision bullet
+// without a source: it names the bullet.
+func shpUnsourcedDecisionLine(bullet string) string {
+	return "decisions: " + bullet + " must end with `(source: request)` or `(source: answer <n>)`"
 }
 
-// shpHasUnsourcedDecisionLine reports whether text has a whole line that is one of the
-// accepted unsourced-Decision lint lines for bullet.
+// shpHasUnsourcedDecisionLine reports whether text has a whole line that is the unsourced-Decision
+// lint line for bullet.
 func shpHasUnsourcedDecisionLine(text, bullet string) bool {
-	want := shpUnsourcedDecisionLines(bullet)
+	want := shpUnsourcedDecisionLine(bullet)
 	for _, line := range strings.Split(text, "\n") {
-		if line = strings.TrimSpace(line); line == want[0] || line == want[1] {
+		if strings.TrimSpace(line) == want {
 			return true
 		}
 	}
@@ -764,8 +760,7 @@ func shpHasUnsourcedDecisionLine(text, bullet string) bool {
 func shpExpectUnsourcedDecisionLine(t *testing.T, what, text, bullet string) {
 	t.Helper()
 	if !shpHasUnsourcedDecisionLine(text, bullet) {
-		want := shpUnsourcedDecisionLines(bullet)
-		t.Fatalf("%s has no line %q or %q:\n%s", what, want[0], want[1], text)
+		t.Fatalf("%s has no line %q:\n%s", what, shpUnsourcedDecisionLine(bullet), text)
 	}
 }
 

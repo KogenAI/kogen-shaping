@@ -17,8 +17,8 @@ import (
 	"testing"
 
 	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-loop/sys"
 	"github.com/KogenAI/kogen-verification/verify"
-	"kogen-loop/sys"
 )
 
 func TestShapeOneShotWritesThePackageAndPrintsTheLines(t *testing.T) {
@@ -502,11 +502,7 @@ func TestShapeInvalidSubmitIsRetriedWithFeedbackAndKeepsEarlierProposals(t *test
 	reqs := f.Prov.requests()
 	shpEq(t, "requests", len(reqs), 3)
 	feedback := shpOutputs(reqs[1])["c1"]
-	ok := false
-	for _, line := range shpUnsourcedDecisionLines("- Non-integers raise TypeError.") {
-		ok = ok || feedback == "invalid submission:\n"+line+"\nEarlier well-formed proposals are retained; submit only corrections."
-	}
-	if !ok {
+	if feedback != "invalid submission:\n"+shpUnsourcedDecisionLine("- Non-integers raise TypeError.")+"\nEarlier well-formed proposals are retained; submit only corrections." {
 		t.Fatalf("feedback is not the invalid-submission correction with an unsourced-Decision line:\n%s", feedback)
 	}
 	// The corrected intent.md alone completed the package: the earlier feature and steps stayed.

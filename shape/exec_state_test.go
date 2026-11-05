@@ -10,7 +10,7 @@ import (
 
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/executor"
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // hooksDir is the fixture's effective hooks directory (the fixture sets a private core.hooksPath).

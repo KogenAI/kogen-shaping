@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"kogen-loop/sys"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // The acceptance harness of k-shape-recovery-completes-package: one scripted native Shape journey

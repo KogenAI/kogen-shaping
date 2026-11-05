@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/KogenAI/kogen-loop/sys"
 	"github.com/KogenAI/kogen-shaping/shape"
-	"kogen-loop/sys"
 )
 
 // TestApproveExitCodes holds the exit codes and files kogen relies on from shape.Approve.

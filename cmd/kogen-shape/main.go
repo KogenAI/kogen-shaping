@@ -14,9 +14,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/KogenAI/kogen-coordinator/git"
+	"github.com/KogenAI/kogen-loop/sys"
 	"github.com/KogenAI/kogen-shaping/shape"
 	"github.com/KogenAI/kogen-verification/verify"
-	"kogen-loop/sys"
 )
 
 type writtenIntent struct {

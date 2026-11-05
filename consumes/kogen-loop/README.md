@@ -1,14 +1,15 @@
 # consumes/kogen-loop
 
 What kogen-shaping relies on from kogen-loop, as tests. kogen-shaping depends on kogen-loop through
-the Go module `kogen-loop`, which `go.mod` replaces with `github.com/KogenAI/kogen-loop`, at the
+the Go module `github.com/KogenAI/kogen-loop`, at the
 version `go.mod` pins. The suite is the consumer's side of the contract: if a kogen-loop change
 breaks something here, kogen-shaping breaks with it.
 
 ## What it pins
 
 Only what kogen-shaping's own code (`shape/*.go`, `cmd/kogen-shape/main.go`) uses of
-`kogen-loop/provider`, `kogen-loop/sys` and `kogen-loop/tools`, and nothing else:
+`github.com/KogenAI/kogen-loop/provider`, `github.com/KogenAI/kogen-loop/sys` and
+`github.com/KogenAI/kogen-loop/tools`, and nothing else:
 
 - Compile-time pins with their types written out (`var _ func(...) ... = pkg.Name`, and one
   pointer-returning function per struct, so a field's type is pinned too) fix the signature of
@@ -24,6 +25,10 @@ Only what kogen-shaping's own code (`shape/*.go`, `cmd/kogen-shape/main.go`) use
   `Run`/`RunContext` with every `sys.Options` field kogen-shaping sets; `sys.TmpPath`; the tool
   names, the exact bytes of their definitions (`tools.Definition`), `tools.Calls`, `Call.Args`,
   `Call.Output`, `tools.Replay`, `tools.DecodeArguments`, `tools.Cut` and `Output.Cut`,
+  (as the pinned version defines them: `list_files` and `search_text` say how a path that is not
+  plain text is printed; `Cut` keeps whole lines in its head when the text has them and its marker
+  then also counts the lines omitted; `Repo` reads NUL-separated `git ls-files -z` and
+  `git grep -z -n` output and filters the matches with the pattern itself),
   `tools.Measure` against the inclusive `tools.InputBudgetBytes` (equal to
   `provider.InputBudgetBytes`), `tools.OutputReserveTokens`, `tools.Tools.Run` with `Root`,
   `Enabled`, `Repo`, `Session`, `Probe` and `Documentation`, and `tools.ReadEvent` and
@@ -57,7 +62,7 @@ sources, not the module cache, not another repository), share no state and run i
 `go test -race -count=1 -shuffle=on ./consumes/kogen-loop/` and `-trimpath` pass. The only
 processes are `/bin/sh` commands run through `sys.Session` and one `git init` in a temporary
 directory. The suite imports only the standard library and the exported packages of kogen-loop;
-it never imports a kogen-shaping package or `kogen-loop/internal/...`.
+it never imports a kogen-shaping package or `github.com/KogenAI/kogen-loop/internal/...`.
 
 ## Coverage check
 
@@ -72,7 +77,7 @@ two sets are equal, and the inventory has exactly one row per use. The acceptanc
 prints the uses:
 
 ```sh
-d=$(mktemp -d) && node -e "process.stdout.write(require('./features/steps/k-consumes-shaping__observer.js').source)" > "$d/main.go" && printf 'module observer\n\ngo 1.27\n' > "$d/go.mod" && (cd "$d" && GOFLAGS= GOWORK=off go build -o observer .) && "$d/observer" -list . kogen-coordinator=github.com/KogenAI/kogen-coordinator kogen-executor=github.com/KogenAI/kogen-executor kogen-loop=kogen-loop kogen-verification=github.com/KogenAI/kogen-verification
+d=$(mktemp -d) && node -e "process.stdout.write(require('./features/steps/k-consumes-shaping__observer.js').source)" > "$d/main.go" && printf 'module observer\n\ngo 1.27\n' > "$d/go.mod" && (cd "$d" && GOFLAGS= GOWORK=off go build -o observer .) && "$d/observer" -list . kogen-coordinator=github.com/KogenAI/kogen-coordinator kogen-executor=github.com/KogenAI/kogen-executor kogen-loop=github.com/KogenAI/kogen-loop kogen-verification=github.com/KogenAI/kogen-verification
 ```
 
 ## Inventory
