@@ -123,6 +123,8 @@ func (p *scripted) RoundTrip(r *http.Request) (*http.Response, error) {
 	switch {
 	case toolNamed(req, "submit_decision_check"):
 		t = answer(call("decision-check", "submit_decision_check", map[string]any{"items": []any{}}))
+	case toolNamed(req, "submit_literal_check"):
+		t = answer(call("literal-check", "submit_literal_check", map[string]any{"items": []any{}}))
 	case toolNamed(req, "submit_contract_review"):
 		t = answer(call("contract-review", "submit_contract_review", map[string]any{"findings": []any{}, "environment": []any{}}))
 	case toolNamed(req, "submit_contract_confirmation"):

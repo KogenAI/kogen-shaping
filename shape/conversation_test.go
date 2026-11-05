@@ -28,11 +28,13 @@ func TestAShapeConversationKeepsOneCacheIdentityForEveryRequest(t *testing.T) {
 		t.Fatalf("cache keys %q", keys)
 	}
 	events := shpNamed(f.events(), "cache_identity")
-	var decisions []any
+	var decisions, literals []any
 	var others []map[string]any
 	for _, e := range events {
 		if e["owner"] == "decision-check" {
 			decisions = append(decisions, e["id"])
+		} else if e["owner"] == "literal-check" {
+			literals = append(literals, e["id"])
 		} else {
 			others = append(others, e)
 		}
@@ -46,6 +48,9 @@ func TestAShapeConversationKeepsOneCacheIdentityForEveryRequest(t *testing.T) {
 	}
 	if checks := cacheKeys(f.Prov.decisionRequests()); len(checks) != 2 || len(decisions) != 2 || checks[0] != decisions[0] || checks[1] != decisions[1] || checks[0] == checks[1] || checks[0] == keys[0] {
 		t.Fatalf("the decision check wire keys %q, saved %v", checks, decisions)
+	}
+	if checks := cacheKeys(f.Prov.literalRequests()); len(checks) != 2 || len(literals) != 2 || checks[0] != literals[0] || checks[1] != literals[1] || checks[0] == checks[1] || checks[0] == keys[0] {
+		t.Fatalf("the literal check wire keys %q, saved %v", checks, literals)
 	}
 	// A second invocation is another conversation.
 	g := newShpFx(t, shpSubmit("c1", shpFiles()), shpAck("c2"))

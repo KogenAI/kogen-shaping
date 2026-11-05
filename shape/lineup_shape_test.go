@@ -42,11 +42,22 @@ type shapeExec struct {
 	decision       []func(n int, root string) (executor.RoundResult, error)
 	decisionCalls  int // decision check rounds
 	decisionStarts []executor.Task
+	// literal, when set, answers the literal check sessions in order (the last repeats); they
+	// do not count in rounds or calls, and starts holds only the other sessions. Without it every
+	// check has no item.
+	literal       []func(n int, root string) (executor.RoundResult, error)
+	literalCalls  int // literal check rounds
+	literalStarts []executor.Task
 }
 
 // isContractTask is whether a session is a contract review or confirmation.
 func isContractTask(t executor.Task) bool {
 	return strings.Contains(string(t.Schema), `"findings"`) || strings.Contains(string(t.Schema), `"verdicts"`)
+}
+
+// isLiteralTask is whether a session is a literal check.
+func isLiteralTask(t executor.Task) bool {
+	return strings.Contains(string(t.Schema), `"source_quote"`)
 }
 
 // isDecisionTask is whether a session is a decision check.
@@ -71,6 +82,8 @@ func (x *shapeExec) Start(_ context.Context, t executor.Task, emit executor.Sink
 		x.contractStarts = append(x.contractStarts, t)
 	} else if isDecisionTask(t) {
 		x.decisionStarts = append(x.decisionStarts, t)
+	} else if isLiteralTask(t) {
+		x.literalStarts = append(x.literalStarts, t)
 	} else {
 		x.starts = append(x.starts, t)
 	}
@@ -93,6 +106,21 @@ func (s *shapeSession) Handle() executor.Handle {
 func (s *shapeSession) Close() error { return nil }
 func (s *shapeSession) Round(_ context.Context, in executor.Input) (executor.RoundResult, error) {
 	s.n++
+	if isLiteralTask(s.task) {
+		s.x.mu.Lock()
+		s.x.literalCalls++
+		fn := result(map[string]any{"items": []any{}})
+		if len(s.x.literal) > 0 {
+			fn = s.x.literal[min(s.x.literalCalls-1, len(s.x.literal)-1)]
+		}
+		s.x.mu.Unlock()
+		res, err := fn(s.n, s.task.Root)
+		if err != nil {
+			return executor.RoundResult{}, err
+		}
+		res.Ending, res.Handle = executor.EndFinish, s.Handle()
+		return res, nil
+	}
 	if isDecisionTask(s.task) {
 		s.x.mu.Lock()
 		s.x.decisionCalls++
@@ -220,7 +248,7 @@ func TestClaudeLineupShapeSubmission(t *testing.T) {
 		lines := strings.Split(strings.TrimSuffix(f.Stdout.String(), "\n"), "\n")
 		shpEq(t, "line count", len(lines), 7)
 		shpEq(t, "scenarios line", lines[4], "Scenarios: 2 (2 fail now, 0 pass now)")
-		shpMatch(t, "usage line", lines[5], `^shape claude-opus-5-5/xhigh claude-code 5 round\(s\) wall_ms=\d+$`)
+		shpMatch(t, "usage line", lines[5], `^shape claude-opus-5-5/xhigh claude-code 7 round\(s\) wall_ms=\d+$`)
 		shpEq(t, "feature", f.read(".kogen/intents/is-even/acceptance.feature"), shpFeature)
 		shpEq(t, "steps", f.read("features/steps/is-even__steps.js"), shpSteps)
 		shpEq(t, "intent", f.read(".kogen/intents/is-even/intent.md"), shpScopedIntentMD)
@@ -736,7 +764,7 @@ func TestExecutorRoundTiming(t *testing.T) {
 			}
 			events := f.events()
 			rounds := shpNamed(events, "executor_round")
-			var main, review, decision int
+			var main, review, decision, literal int
 			for _, e := range rounds {
 				if _, ok := e["model_ms"]; !ok {
 					t.Fatalf("no model_ms key: %v", e)
@@ -756,6 +784,9 @@ func TestExecutorRoundTiming(t *testing.T) {
 				case "executor-decision-1", "executor-decision-2":
 					decision++
 					shpEq(t, "decision model_ms", e["model_ms"], nil)
+				case "executor-literal-1", "executor-literal-2":
+					literal++
+					shpEq(t, "literal model_ms", e["model_ms"], nil)
 				default:
 					t.Fatalf("session %v", e["session"])
 				}
@@ -763,6 +794,7 @@ func TestExecutorRoundTiming(t *testing.T) {
 			shpEq(t, "main rounds", main, 2)
 			shpEq(t, "review rounds", review, 1)
 			shpEq(t, "decision rounds", decision, 2)
+			shpEq(t, "literal rounds", literal, 2)
 			accounts := shpNamed(events, "shape_time")
 			if len(accounts) != 1 {
 				t.Fatalf("accounts %v", accounts)

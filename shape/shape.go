@@ -567,6 +567,11 @@ type shaping struct {
 	decisionUsage  provider.Usage // the native decision checks' tokens
 	decisionRounds int            // the external decision check sessions' rounds
 
+	rounds        []map[string]any // the questions and answers of the shaping state, in round order
+	literalChecks int              // literal check calls made
+	literalUsage  provider.Usage   // the native literal checks' tokens
+	literalRounds int              // the external literal check sessions' rounds
+
 	earlier           string            // the earlier questions and answers, as the shaper reads them
 	questionChecks    int               // question check calls made
 	questionUsage     provider.Usage    // the native question checks' tokens
@@ -691,6 +696,7 @@ func (sh *shaping) shape(ctx context.Context, st *state) (int, error) {
 	}
 	sh.request = st.Request
 	sh.earlier = roundsText(st.Rounds)
+	sh.rounds = st.Rounds
 	input := []any{map[string]any{"role": "user", "content": blocks}}
 	sh.window = newShapeWindow(sh.root, sh.slug, input)
 	sh.cacheID = startConversation(sh.ev, "shape")
@@ -711,7 +717,7 @@ func (sh *shaping) shape(ctx context.Context, st *state) (int, error) {
 		var x *extSession
 		res, x, err = sh.converseExternal(ctx, blocks)
 		if x != nil {
-			usageLine = fmt.Sprintf("shape %s/%s %s %d round(s) wall_ms=%d", role.Model, role.Effort, executor.ClaudeCode, x.rounds+sh.decisionRounds+sh.contractRounds+sh.questionRounds, time.Since(t0).Milliseconds())
+			usageLine = fmt.Sprintf("shape %s/%s %s %d round(s) wall_ms=%d", role.Model, role.Effort, executor.ClaudeCode, x.rounds+sh.decisionRounds+sh.literalRounds+sh.contractRounds+sh.questionRounds, time.Since(t0).Milliseconds())
 		}
 		if err != nil {
 			return 0, err
@@ -725,7 +731,7 @@ func (sh *shaping) shape(ctx context.Context, st *state) (int, error) {
 			}
 			return 0, err
 		}
-		usageLine = fmt.Sprintf("shape %s/%s %s wall_ms=%d", role.Model, role.Effort, sh.decisionUsage.Add(sh.contractUsage).Add(sh.questionUsage).Add(usage).Line(), time.Since(t0).Milliseconds())
+		usageLine = fmt.Sprintf("shape %s/%s %s wall_ms=%d", role.Model, role.Effort, sh.decisionUsage.Add(sh.literalUsage).Add(sh.contractUsage).Add(sh.questionUsage).Add(usage).Line(), time.Since(t0).Milliseconds())
 	}
 
 	switch res.kind {
@@ -1687,6 +1693,14 @@ func (sh *shaping) checkSubmission(ctx context.Context, files []string) (string,
 	}
 	if lines != nil {
 		sh.refused("decision_check", lines[1:])
+		return strings.Join(lines, "\n"), outcome{kind: outInvalid, problems: lines[1:]}, nil
+	}
+	lines, err = sh.literalCheck(ctx)
+	if err != nil {
+		return "", outcome{}, err
+	}
+	if lines != nil {
+		sh.refused("literal_check", lines[1:])
 		return strings.Join(lines, "\n"), outcome{kind: outInvalid, problems: lines[1:]}, nil
 	}
 	sh.progress("kogen: checking step code")
