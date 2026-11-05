@@ -20,13 +20,14 @@ import (
 // SubmitQuestionCheckTool is the one tool of the question check call.
 const SubmitQuestionCheckTool = "submit_question_check"
 
-const questionInstructions = `You check the questions a shaper wants to ask the user about one feature request. Only UI/UX choices that the request and the user's answers leave open, and mandatory authentication or security handoffs, may reach the user; the shaper investigates and decides everything else itself. You see only the request text, the earlier questions with the user's answers, the questions, and the cited evidence: the text this shaping read or ran for each (evidence: ...) item a question cites. Read-only: do not use any tool except ` + SubmitQuestionCheckTool + `.
+const questionInstructions = `You check the questions a shaper wants to ask the user about one feature request. Only UI/UX choices that the request and the user's answers leave open, and mandatory authentication or security handoffs, may reach the user; the shaper investigates and decides everything else itself. You see only the request text, the earlier questions with the user's answers, the decisions this shaping recorded with the evidence they cite, the questions, and the cited evidence: the text this shaping read or ran for each (evidence: ...) item a question cites. Read-only: do not use any tool except ` + SubmitQuestionCheckTool + `.
 
-Give one item for every question: its number, one class and why (one short reason). The classes:
+Give one item for every question: its number, one class, why (one short reason) and decision (the id of the recorded decision that settles it when the class is decided, otherwise an empty string). The classes:
 - ui_ux: a choice of what the user sees or does in the product's interface or interaction (layout, wording, flow, feedback, input behavior) that the request and the earlier answers leave open;
 - handoff: a mandatory authentication or security step that only the user can perform, such as signing in or granting access;
 - answered: the request or an earlier answer already settles it;
-- technical: an implementation, architecture, library, protocol, data or testing choice;
+- decided: a recorded decision settles it, or settles the technical, security, protocol, storage or limit choice it asks about, whatever its wording or the granularity of its options;
+- technical: an implementation, architecture, library, protocol, data, storage, limit, security or testing choice, even when it is worded as what the user experiences or chooses;
 - product_policy: a business, pricing, permission or other product rule that is not a choice of interface or interaction;
 - environment: whether a tool, service, account, credential, network or other resource is available where the work runs, when it is not an environment_prerequisite;
 - environment_prerequisite: a resource without which this shaping cannot write the Intent or run its acceptance, as the question's cited evidence shows: the cited text is about the resource the question names and shows it needed and missing, and neither the cited text, the request nor the earlier answers show it optional, needed only to run the finished feature against a real external service, or already stood in for by a fake, stub, simulation or recorded response; the why names the part of the Intent or acceptance that cannot be written or run without it and what in the cited text shows that. A question with no cited text shown, or whose cited text does not support the claimed necessity, is environment, whatever its own wording claims;
@@ -34,17 +35,18 @@ Give one item for every question: its number, one class and why (one short reaso
 Answer by calling ` + SubmitQuestionCheckTool + `.`
 
 // questionClasses are the classes of the question check; the first two reach the user.
-var questionClasses = []any{"ui_ux", "handoff", "answered", "technical", "product_policy", "environment", "environment_prerequisite", "repository_fact"}
+var questionClasses = []any{"ui_ux", "handoff", "answered", "decided", "technical", "product_policy", "environment", "environment_prerequisite", "repository_fact"}
 
 func questionSchema() map[string]any {
 	item := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"number": map[string]any{"type": "integer"},
-			"class":  map[string]any{"type": "string", "enum": questionClasses},
-			"why":    map[string]any{"type": "string"},
+			"number":   map[string]any{"type": "integer"},
+			"class":    map[string]any{"type": "string", "enum": questionClasses},
+			"why":      map[string]any{"type": "string"},
+			"decision": map[string]any{"type": "string"},
 		},
-		"required":             []any{"number", "class", "why"},
+		"required":             []any{"number", "class", "why", "decision"},
 		"additionalProperties": false,
 	}
 	return map[string]any{
@@ -70,6 +72,7 @@ func questionInvalid(why string) error {
 type questionItem struct {
 	number     int
 	class, why string
+	decision   string // the id of the recorded decision that settles a decided question
 }
 
 // wholeNumber is a decoded JSON integer: int64 from native tool arguments, float64 from an
@@ -104,10 +107,14 @@ func parseQuestionCheck(args map[string]any, count int) ([]questionItem, error) 
 		n, okN := wholeNumber(m["number"])
 		class, okC := m["class"].(string)
 		why, okW := m["why"].(string)
-		if !okN || !okC || !okW || !slices.Contains(questionClasses, any(class)) {
+		decision, okD := "", true
+		if raw, has := m["decision"]; has {
+			decision, okD = raw.(string)
+		}
+		if !okN || !okC || !okW || !okD || !slices.Contains(questionClasses, any(class)) {
 			return nil, questionInvalid("an item is malformed")
 		}
-		items = append(items, questionItem{number: n, class: class, why: why})
+		items = append(items, questionItem{number: n, class: class, why: why, decision: decision})
 	}
 	slices.SortFunc(items, func(a, b questionItem) int { return a.number - b.number })
 	if len(items) != count {
@@ -166,7 +173,8 @@ func (sh *shaping) questionClassify(ctx context.Context, questions []map[string]
 	if earlier == "" {
 		earlier = "none"
 	}
-	input := "Slug: " + sh.slug + "\n\n# Request\n\n" + sh.request + "\n\n# Earlier questions and answers\n\n" + earlier + "\n\n# Questions\n\n" + questionsText(questions)
+	input := "Slug: " + sh.slug + "\n\n# Request\n\n" + sh.request + "\n\n# Earlier questions and answers\n\n" + earlier +
+		sh.ledger.checkInputText(sh.checkoutDigest) + "\n\n# Questions\n\n" + questionsText(questions)
 	cited, shown, err := sh.citedEvidence(questions)
 	if err != nil {
 		return nil, nil, err
@@ -347,7 +355,18 @@ func (sh *shaping) questionGate(ctx context.Context, questions []map[string]any)
 	events := make([]any, len(items))
 	asked, evidenced := 0, true
 	for i, it := range items {
-		events[i] = map[string]any{"number": it.number, "question": textOf(questions[i]["question"]), "class": it.class, "why": it.why}
+		var settled recordedDecision
+		if it.class == "decided" {
+			var ok bool
+			if settled, ok = sh.ledger.standingByID(it.decision); !ok {
+				it.class = "technical"
+			}
+		}
+		event := map[string]any{"number": it.number, "question": textOf(questions[i]["question"]), "class": it.class, "why": it.why}
+		if it.class == "decided" {
+			event["decision"] = settled.ID
+		}
+		events[i] = event
 		if it.class == "ui_ux" || it.class == "handoff" {
 			asked++
 			evidenced = false
@@ -361,7 +380,12 @@ func (sh *shaping) questionGate(ctx context.Context, questions []map[string]any)
 			evidenced = false
 		}
 		sh.countRefusal(it.class)
-		refused = append(refused, fmt.Sprintf("- question %d (%s): %s | why: %s | %s", it.number, it.class, textOf(questions[i]["question"]), it.why, questionInstruction(instruction)))
+		guidance := questionInstruction(instruction)
+		if it.class == "decided" {
+			guidance = fmt.Sprintf("%s (round %d) settles it: %s; do not ask it again. Complete the choice from %s, its constraints and its evidence, and keep it in the Intent's Decisions as: %s",
+				settled.ID, settled.Round, settled.Decision, settled.ID, settled.intentLine())
+		}
+		refused = append(refused, fmt.Sprintf("- question %d (%s): %s | why: %s | %s", it.number, it.class, textOf(questions[i]["question"]), it.why, guidance))
 	}
 	sh.ev.Record(map[string]any{"event": "question_check", "items": events, "asked": asked, "refused": len(items) - asked})
 	if refused == nil {

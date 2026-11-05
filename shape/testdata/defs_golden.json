@@ -92,6 +92,42 @@
           ],
           "type": "object"
         },
+        "decisions": {
+          "description": "Optional, with questions or files, never with blocked: the technical, security, protocol, storage and limit decisions this shaping made, kept across its continuations. evidence lists repository files this shaping read and ran `<command>` items of probes that succeeded; constraints are the rules the decision imposes; uncertainty states what stays uncertain and is required without evidence; revises names a recorded decision this one replaces, with why it changed and evidence this round read or ran.",
+          "items": {
+            "properties": {
+              "constraints": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "decision": {
+                "type": "string"
+              },
+              "evidence": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "revises": {
+                "type": "string"
+              },
+              "uncertainty": {
+                "type": "string"
+              },
+              "why": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "decision"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
         "files": {
           "items": {
             "properties": {

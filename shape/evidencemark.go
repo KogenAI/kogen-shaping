@@ -94,6 +94,20 @@ func (sh *shaping) listedCovers(dir string) bool {
 // evidenceProblems checks the (evidence: ...) markers of a written intent.md's Decisions: the
 // problem lines, empty when there is no marker or every item holds.
 func (sh *shaping) evidenceProblems(intent string) ([]string, error) {
+	problems, _, err := sh.evidenceCheck(intent)
+	return problems, err
+}
+
+// carriedItem is a cited item that rested only on a receipt of the decision ledger.
+type carriedItem struct {
+	decision int
+	item     string
+	receipt  receipt
+}
+
+// evidenceCheck is evidenceProblems with the items that rested only on a carried receipt.
+func (sh *shaping) evidenceCheck(intent string) ([]string, []carriedItem, error) {
+	var carried []carriedItem
 	var tracked []string
 	var listed bool
 	var problems []string
@@ -115,13 +129,17 @@ func (sh *shaping) evidenceProblems(intent string) ([]string, error) {
 					case sh.ext != nil && !sh.ranCommand:
 						problems = append(problems, fmt.Sprintf("- decision %d: this shaping's session ran no command, so `%s` was not run", n, it.command))
 					case sh.ext == nil && !sh.probed[it.command]:
-						problems = append(problems, fmt.Sprintf("- decision %d: no probe of this shaping ran `%s`", n, it.command))
+						if r, ok := sh.ledger.probeReceiptOf(it.command); ok {
+							carried = append(carried, carriedItem{n, strings.TrimSpace(raw), r})
+						} else {
+							problems = append(problems, fmt.Sprintf("- decision %d: no probe of this shaping ran `%s`", n, it.command))
+						}
 					}
 				default:
 					if !listed {
 						out, err := sh.repo.OK("ls-tree", "-r", "-z", "--name-only", "HEAD")
 						if err != nil {
-							return nil, err
+							return nil, nil, err
 						}
 						tracked, listed = strings.Split(strings.TrimSuffix(out, "\x00"), "\x00"), true
 					}
@@ -132,31 +150,59 @@ func (sh *shaping) evidenceProblems(intent string) ([]string, error) {
 							break
 						}
 					}
-					switch dir := strings.HasSuffix(it.path, "/"); {
+					dir := strings.HasSuffix(it.path, "/")
+					cleaned := cleanCitedPath(it.path)
+					var held receipt
+					var heldOK, changed bool
+					if found && !dir && sh.ledger != nil && (sh.ext != nil || !sh.readPaths[cleaned]) {
+						held, heldOK, changed = sh.ledger.fileReceipt(cleaned, sh.checkoutDigest(cleaned))
+					}
+					changedLine := fmt.Sprintf("- decision %d: %s changed since round %d read it; read it again", n, it.path, held.Round)
+					switch {
 					case !found:
 						problems = append(problems, fmt.Sprintf("- decision %d: %s is not a file or directory tracked at HEAD", n, it.path))
+					case heldOK:
+						carried = append(carried, carriedItem{n, strings.TrimSpace(raw), held})
 					case sh.ext != nil:
 						if !sh.inspected {
-							problems = append(problems, fmt.Sprintf("- decision %d: this shaping's session read nothing, so %s was not read", n, it.path))
+							if changed {
+								problems = append(problems, changedLine)
+							} else {
+								problems = append(problems, fmt.Sprintf("- decision %d: this shaping's session read nothing, so %s was not read", n, it.path))
+							}
 						}
-					case dir && !sh.listedCovers(cleanCitedPath(it.path)):
+					case dir && !sh.listedCovers(cleaned):
 						problems = append(problems, fmt.Sprintf("- decision %d: this shaping did not list %s", n, it.path))
-					case !dir && !sh.readPaths[cleanCitedPath(it.path)]:
-						problems = append(problems, fmt.Sprintf("- decision %d: this shaping did not read %s", n, it.path))
+					case !dir && !sh.readPaths[cleaned]:
+						if changed {
+							problems = append(problems, changedLine)
+						} else {
+							problems = append(problems, fmt.Sprintf("- decision %d: this shaping did not read %s", n, it.path))
+						}
 					}
 				}
 			}
 		}
 	}
-	return problems, nil
+	return problems, carried, nil
 }
 
 // evidenceGate refuses a written candidate whose Decisions cite a path that is not tracked at
 // HEAD, a file this shaping did not read, a directory it did not list or a command it did not run; ok is true for a refusal.
 func (sh *shaping) evidenceGate(intent string) (string, outcome, bool, error) {
-	problems, err := sh.evidenceProblems(intent)
-	if err != nil || len(problems) == 0 {
+	problems, carried, err := sh.evidenceCheck(intent)
+	if err != nil {
 		return "", outcome{}, false, err
+	}
+	if len(problems) == 0 {
+		if len(carried) > 0 {
+			items := make([]any, len(carried))
+			for i, c := range carried {
+				items[i] = map[string]any{"decision": c.decision, "item": c.item, "kind": c.receipt.Kind, "round": c.receipt.Round}
+			}
+			sh.ev.Record(map[string]any{"event": "carried_evidence", "items": items})
+		}
+		return "", outcome{}, false, nil
 	}
 	sh.refused("decision_evidence", problems)
 	headline := fmt.Sprintf("Decision evidence: %d problem(s) with what the Decisions cite; nothing was published. "+

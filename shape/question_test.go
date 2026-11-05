@@ -28,7 +28,9 @@ func TestParseQuestionCheck(t *testing.T) {
 		{"native int64, in order", qcPayload(qcItem(int64(1), "ui_ux"), qcItem(int64(2), "technical")), 2, ""},
 		{"external float64, any order", qcPayload(qcItem(float64(2), "handoff"), qcItem(float64(1), "environment")), 2, ""},
 		{"json.Number", qcPayload(qcItem(json.Number("1"), "answered")), 1, ""},
-		{"every class", qcPayload(qcItem(1, "ui_ux"), qcItem(2, "handoff"), qcItem(3, "answered"), qcItem(4, "technical"), qcItem(5, "product_policy"), qcItem(6, "environment"), qcItem(7, "environment_prerequisite"), qcItem(8, "repository_fact")), 8, ""},
+		{"every class", qcPayload(qcItem(1, "ui_ux"), qcItem(2, "handoff"), qcItem(3, "answered"), qcItem(4, "technical"), qcItem(5, "product_policy"), qcItem(6, "environment"), qcItem(7, "environment_prerequisite"), qcItem(8, "repository_fact"), qcItem(9, "decided")), 9, ""},
+		{"a decided item names its decision", qcPayload(map[string]any{"number": 1, "class": "decided", "why": "w", "decision": "D1"}), 1, ""},
+		{"decision not a string", qcPayload(map[string]any{"number": 1, "class": "decided", "why": "w", "decision": 1}), 1, "an item is malformed"},
 		{"items missing", map[string]any{}, 1, "items must be a list"},
 		{"items not a list", map[string]any{"items": "ui_ux"}, 1, "items must be a list"},
 		{"item not an object", qcPayload("ui_ux"), 1, "an item is malformed"},
@@ -44,6 +46,12 @@ func TestParseQuestionCheck(t *testing.T) {
 	}
 	for _, c := range cases {
 		items, err := parseQuestionCheck(c.args, c.n)
+		if c.name == "a decided item names its decision" && (err != nil || items[0].decision != "D1") {
+			t.Errorf("%s: %v, %+v", c.name, err, items)
+		}
+		if c.name == "native int64, in order" && (err != nil || items[0].decision != "") {
+			t.Errorf("%s: a missing decision is empty: %v, %+v", c.name, err, items)
+		}
 		if c.want == "" {
 			if err != nil || len(items) != c.n {
 				t.Errorf("%s: %v, %d items", c.name, err, len(items))
@@ -121,7 +129,7 @@ func qcText(req map[string]any) string {
 	return s
 }
 
-const qcToolJSON = `{"type":"function","name":"submit_question_check","strict":true,"description":"Submit the question check: one item per question with its number, class and reason.","parameters":{"type":"object","properties":{"items":{"type":"array","items":{"type":"object","properties":{"number":{"type":"integer"},"class":{"type":"string","enum":["ui_ux","handoff","answered","technical","product_policy","environment","environment_prerequisite","repository_fact"]},"why":{"type":"string"}},"required":["number","class","why"],"additionalProperties":false}}},"required":["items"],"additionalProperties":false}}`
+const qcToolJSON = `{"type":"function","name":"submit_question_check","strict":true,"description":"Submit the question check: one item per question with its number, class and reason.","parameters":{"type":"object","properties":{"items":{"type":"array","items":{"type":"object","properties":{"number":{"type":"integer"},"class":{"type":"string","enum":["ui_ux","handoff","answered","decided","technical","product_policy","environment","environment_prerequisite","repository_fact"]},"why":{"type":"string"},"decision":{"type":"string"}},"required":["number","class","why","decision"],"additionalProperties":false}}},"required":["items"],"additionalProperties":false}}`
 
 func TestShapeQuestionCheckRequestAndPublication(t *testing.T) {
 	parallel(t)

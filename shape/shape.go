@@ -130,11 +130,16 @@ func shapeRun(ctx context.Context, s *sys.Session, in ShapeInput) (exit int, err
 	if path := untrackedRequestPath(repo, root, in.RequestPath); path != "" {
 		s.Puts("note: " + path + " is untracked; commit or move it before kogen intent build")
 	}
+	var ledger *decisionLedger
 	if st == nil {
 		if _, err := os.Stat(filepath.Join(root, project.IntentDir(slug))); err == nil {
 			return 0, sys.Fail("intent", "exists",
 				slug+" is already shaped; edit its files, or delete .kogen/intents/"+slug+"/ and shape again", 5)
 		}
+		if err := os.Remove(filepath.Join(stateDir, ledgerFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return 0, err
+		}
+		ledger = &decisionLedger{}
 		origin, err := project.CaptureOrigin(root, cfg)
 		if err != nil {
 			return 0, err
@@ -146,8 +151,13 @@ func shapeRun(ctx context.Context, s *sys.Session, in ShapeInput) (exit int, err
 		st = &state{Request: in.Request, SourcePath: sourcePath, Rounds: []map[string]any{}, Origin: map[string]any{
 			"head": origin.Head, "tree": origin.Tree, "configuration": origin.Configuration,
 		}}
-	} else if err := st.answer(in.Request); err != nil {
-		return 0, err
+	} else {
+		if ledger, err = readLedger(stateDir); err != nil {
+			return 0, err
+		}
+		if err := st.answer(in.Request); err != nil {
+			return 0, err
+		}
 	}
 
 	if missing := st.unanswered(); len(missing) > 0 {
@@ -175,6 +185,7 @@ func shapeRun(ctx context.Context, s *sys.Session, in ShapeInput) (exit int, err
 	}
 	sh := &shaping{s: s, in: in, repo: repo, root: root, slug: slug, cfg: cfg, role: cfg.Models["shape"], ev: ev, ext: ext, extMax: extMax,
 		rd: rd, client: client, stateDir: stateDir, originals: map[string]original{}, proposed: map[string]string{},
+		ledger: ledger, round: len(st.Rounds) + 1,
 		contractSessions: map[string]int{}, contractChecked: map[string]bool{}, contractRefused: map[string]contractConfirmed{}}
 	return sh.shape(ctx, st)
 }
@@ -542,6 +553,12 @@ type shaping struct {
 	window    *window
 	cacheID   string // this conversation's cache identity
 
+	// ledger is the shaping's sourced decisions (nil in Refine) and round the number of this run in
+	// the shaping: the question rounds in state.json when the run started, plus one.
+	ledger  *decisionLedger
+	round   int
+	tracked map[string]bool // the files tracked at HEAD, once listed
+
 	submissions  int // submissions made in this run
 	priorInvalid int // invalid submissions before the current attempt
 
@@ -668,7 +685,7 @@ func (sh *shaping) shape(ctx context.Context, st *state) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	blocks, err := contextBlocks(promptInput{root: sh.root, slug: sh.slug, cfg: sh.cfg, state: st, protected: protected, selected: selected})
+	blocks, err := contextBlocks(promptInput{root: sh.root, slug: sh.slug, cfg: sh.cfg, state: st, protected: protected, selected: selected, ledger: sh.ledger, current: sh.checkoutDigest})
 	if err != nil {
 		return 0, err
 	}
@@ -1471,6 +1488,13 @@ func (sh *shaping) submitOne(ctx context.Context, args map[string]any) (string, 
 				"\nNo proposals from this submission were retained; earlier proposals are unchanged.",
 			outcome{kind: outInvalid, problems: problems}, nil
 	}
+	if !sub.blocked {
+		if text, out, refused, err := sh.decisionRecordGate(sub.decisions); err != nil {
+			return "", outcome{}, err
+		} else if refused {
+			return text, out, nil
+		}
+	}
 	switch {
 	case sub.questions != nil:
 		text, refused, err := sh.questionGate(ctx, sub.questions)
@@ -1648,6 +1672,9 @@ func (sh *shaping) checkSubmission(ctx context.Context, files []string) (string,
 	written, err := os.ReadFile(filepath.Join(sh.root, project.IntentMDPath(sh.slug)))
 	if err != nil {
 		return "", outcome{}, err
+	}
+	if text, out, refused := sh.carriedDecisionsGate(string(written)); refused {
+		return text, out, nil
 	}
 	if text, out, refused, err := sh.evidenceGate(string(written)); err != nil {
 		return "", outcome{}, err
@@ -1940,6 +1967,7 @@ func (sh *shaping) fixAttempt(ctx context.Context, paths []string) error {
 
 type submission struct {
 	questions []map[string]any
+	decisions []sourcedDecision
 	files     []proposedFile
 	blocked   bool
 	paths     []string
@@ -1953,9 +1981,36 @@ func isText(v any) bool {
 	return ok && strings.TrimSpace(s) != ""
 }
 
-// validate checks the submission's envelope: exactly one of questions, files or blocked. The
-// problems are nil for a valid one.
+// validate checks the submission's envelope: exactly one of questions, files or blocked, and
+// the decisions beside questions or files. The problems are nil for a valid one.
 func (sh *shaping) validate(args map[string]any) (submission, []string, error) {
+	sub, problems, err := sh.validateEnvelope(args)
+	if err != nil || (problems != nil && problems[0] == envelopeRule) {
+		return sub, problems, err
+	}
+	list, present, ok := decisionsOf(args)
+	switch {
+	case !present:
+		return sub, problems, nil
+	case hasBlocked(args):
+		problems = append(problems, decisionsWithBlocked)
+	case !ok:
+		problems = append(problems, decisionsMalformed)
+	case problems == nil:
+		sub.decisions = list
+	}
+	if problems != nil {
+		sub = submission{}
+	}
+	return sub, problems, nil
+}
+
+func hasBlocked(args map[string]any) bool {
+	_, has := args["blocked"]
+	return has
+}
+
+func (sh *shaping) validateEnvelope(args map[string]any) (submission, []string, error) {
 	_, hasQ := args["questions"]
 	_, hasF := args["files"]
 	blocked, hasB := args["blocked"]

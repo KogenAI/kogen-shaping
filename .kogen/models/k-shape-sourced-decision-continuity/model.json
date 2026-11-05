@@ -1,0 +1,15 @@
+{
+  "None": false,
+  "Path": ".kogen/models/k-shape-sourced-decision-continuity/model.qnt",
+  "Invariants": [
+    "InvalidBounded",
+    "StoppedOnlyAtLimit",
+    "ReceiptsNotLater",
+    "RevisionCitesItsRound",
+    "RevisedKept",
+    "PublishedCarriesStanding"
+  ],
+  "Seed": "11",
+  "Samples": "3000",
+  "Steps": "14"
+}

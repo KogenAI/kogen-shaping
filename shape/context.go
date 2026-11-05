@@ -379,6 +379,10 @@ type promptInput struct {
 	state      *state
 	protected  []string
 	selected   string // the context index text
+	// ledger is the shaping's recorded decisions (nil: none) and current the digest of a file's
+	// checkout bytes they are judged against.
+	ledger  *decisionLedger
+	current digestOf
 }
 
 // roundsText is the shaper's earlier questions and the caller's answers, one `Round <k>:` block
@@ -445,6 +449,9 @@ func contextBlocks(p promptInput) ([]any, error) {
 	b.WriteString("# Request\n\n" + p.state.Request + "\n\n")
 	if roundText != "" {
 		b.WriteString("# Your earlier questions and the caller's answers (cite them as `(source: answer <n>)` using the numbers of the latest round)\n\n" + roundText + "\n")
+	}
+	if p.current != nil {
+		b.WriteString(p.ledger.contextText(p.current))
 	}
 	b.WriteString("\n# The Intent to write\n\n")
 	fmt.Fprintf(&b, "Slug: %s\nWrite `%s`, `%s`, optionally `%s`, and step files under `%s/`.\n\n", p.slug,

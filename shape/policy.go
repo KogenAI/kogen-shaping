@@ -146,6 +146,22 @@ func submitDef() map[string]any {
 					},
 				},
 				"files": pathAndContent(true),
+				"decisions": map[string]any{
+					"type":        "array",
+					"description": "Optional, with questions or files, never with blocked: the technical, security, protocol, storage and limit decisions this shaping made, kept across its continuations. evidence lists repository files this shaping read and ran `<command>` items of probes that succeeded; constraints are the rules the decision imposes; uncertainty states what stays uncertain and is required without evidence; revises names a recorded decision this one replaces, with why it changed and evidence this round read or ran.",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"decision":    str(),
+							"evidence":    strList(),
+							"constraints": strList(),
+							"uncertainty": str(),
+							"revises":     str(),
+							"why":         str(),
+						},
+						"required": []any{"decision"},
+					},
+				},
 				"blocked": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
