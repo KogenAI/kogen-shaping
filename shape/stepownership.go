@@ -1,8 +1,11 @@
 package shape
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -82,7 +85,67 @@ func sharedStepCollision(root, slug string, cfg *project.Config) error {
 	return nil
 }
 
-// bindingCollision uses Cucumber's actual matching semantics for the current features.
+// bindingScript loads the step files the way verify's stepScript does (each file in its own
+// try/catch, so a throwing file keeps the definitions it registered before the throw) and
+// reports, as one marked stdout line, which loaded definitions' files match each text. No step
+// body or hook is called. The input is {"files":[...],"texts":[...]} on stdin.
+const bindingScript = `
+const fs = require('fs'), path = require('path');
+const cc = require('@cucumber/cucumber');
+const b = cc.supportCodeLibraryBuilder;
+const inp = JSON.parse(fs.readFileSync(0, 'utf8'));
+let n = 0;
+b.reset(process.cwd(), () => String(n++));
+for (const f of inp.files) {
+  try { require(path.resolve(f)); } catch (e) {}
+}
+const lib = b.finalize();
+const matches = inp.texts.map(t => lib.stepDefinitions.filter(d => d.matchesStepName(t)).map(d => d.uri));
+process.stdout.write('\nKOGEN_BINDING_RESULT:' + JSON.stringify({ matches }) + '\n');
+`
+
+const bindingResultPrefix = "KOGEN_BINDING_RESULT:"
+
+// runBindingScript loads files in root and returns, per text, the files of the definitions
+// matching it. loaded is false when no parsable result line came out; a cancelled context
+// returns its error.
+func runBindingScript(ctx context.Context, node, cucumber, root string, env, files, texts []string) (matches [][]string, loaded bool, err error) {
+	in, _ := json.Marshal(map[string]any{"files": files, "texts": texts})
+	cmd := exec.CommandContext(ctx, node, "-e", bindingScript)
+	cmd.Dir = root
+	cmd.Env = append(slices.Clone(env), "NODE_PATH="+cucumber)
+	cmd.Stdin = bytes.NewReader(in)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Run()
+	for _, line := range strings.Split(out.String(), "\n") {
+		if rest, ok := strings.CutPrefix(line, bindingResultPrefix); ok {
+			var res struct {
+				Matches [][]string `json:"matches"`
+			}
+			if json.Unmarshal([]byte(rest), &res) == nil && len(res.Matches) == len(texts) {
+				return res.Matches, true, nil
+			}
+		}
+	}
+	return nil, false, ctx.Err()
+}
+
+// stepTexts are the distinct step texts of the scenarios, in order, appended to texts.
+func stepTexts(texts []string, scenarios []project.Scenario) []string {
+	for _, sc := range scenarios {
+		for _, st := range sc.Steps {
+			if !slices.Contains(texts, st.Text) {
+				texts = append(texts, st.Text)
+			}
+		}
+	}
+	return texts
+}
+
+// bindingCollision uses Cucumber's actual matching semantics for the current features: one
+// loader per (own step file, other step file) pair matches every step text of both Intents.
+// A pair collides when one text is matched by a definition of each file.
 func bindingCollision(ctx context.Context, root, slug string, s *sys.Session, tools verify.Tools) error {
 	intent, scenarios, err := project.CheckIntent(root, slug, nil)
 	if err != nil {
@@ -92,7 +155,15 @@ func bindingCollision(ctx context.Context, root, slug string, s *sys.Session, to
 	if err != nil {
 		return err
 	}
+	node, cucumber := tools.Node, tools.Cucumber
+	if node == "" {
+		node = s.Getenv("KOGEN_NODE")
+	}
+	if cucumber == "" {
+		cucumber = s.Getenv("KOGEN_CUCUMBER")
+	}
 	own := intent.StepFiles()
+	ownTexts := stepTexts(nil, scenarios)
 	for _, path := range paths {
 		otherSlug := filepath.Base(filepath.Dir(path))
 		if otherSlug == slug {
@@ -102,47 +173,27 @@ func bindingCollision(ctx context.Context, root, slug string, s *sys.Session, to
 		if err != nil {
 			continue
 		}
+		texts := stepTexts(slices.Clone(ownTexts), otherScenarios)
+		if len(texts) == 0 {
+			continue
+		}
 		for _, a := range own {
 			for _, b := range other.StepFiles() {
 				if a == b {
 					continue
 				}
-				for _, ss := range [][]project.Scenario{scenarios, otherScenarios} {
-					var texts []string
-					for _, sc := range ss {
-						for _, st := range sc.Steps {
-							texts = append(texts, st.Text)
-						}
-					}
-					node, cucumber := tools.Node, tools.Cucumber
-					if node == "" {
-						node = s.Getenv("KOGEN_NODE")
-					}
-					if cucumber == "" {
-						cucumber = s.Getenv("KOGEN_CUCUMBER")
-					}
-					for _, text := range texts {
-						raw, loaded, err := verify.RunStepScript(ctx, node, cucumber, root, s.Env, []string{a, b}, []string{text})
-						if err != nil {
-							return err
-						}
-						if !loaded {
-							continue
-						}
-						usedA, usedB := false, false
-						for _, d := range raw.Defs {
-							if d.Used && d.File == a {
-								usedA = true
-							}
-							if d.Used && d.File == b {
-								usedB = true
-							}
-						}
-						if usedA && usedB {
-							e := sys.Fail("intent", "step_ownership_collision", fmt.Sprintf("Intents %s and %s have overlapping step bindings in %s and %s", slug, otherSlug, a, b), 1)
-							e.Lines = []string{a, b}
-							return e
-						}
+				matches, loaded, err := runBindingScript(ctx, node, cucumber, root, s.Env, []string{a, b}, texts)
+				if err != nil {
+					return err
+				}
+				if !loaded {
+					continue
+				}
+				for _, files := range matches {
+					if slices.Contains(files, a) && slices.Contains(files, b) {
+						e := sys.Fail("intent", "step_ownership_collision", fmt.Sprintf("Intents %s and %s have overlapping step bindings in %s and %s", slug, otherSlug, a, b), 1)
+						e.Lines = []string{a, b}
+						return e
 					}
 				}
 			}

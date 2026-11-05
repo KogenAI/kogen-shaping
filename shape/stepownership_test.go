@@ -2,9 +2,14 @@ package shape
 
 import (
 	"context"
-	"github.com/KogenAI/kogen-coordinator/project"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-verification/verify"
 )
 
 func TestScopedStepPath(t *testing.T) {
@@ -94,5 +99,124 @@ func TestSharedStepApprovalAndPreflight(t *testing.T) {
 	exit, err = Preflight(context.Background(), s, PreflightInput{Project: f.Root, Slug: "fixture"})
 	if err != nil || exit == 0 || !strings.Contains(out.String(), "step_ownership_collision") {
 		t.Fatalf("preflight: %d %v %s", exit, err, out)
+	}
+}
+
+// bindingFx is an approve fixture whose Intent `fixture` is checked against other Intents
+// with the real Node behind a wrapper that logs one line per invocation.
+type bindingFx struct {
+	*approveFx
+	log string
+}
+
+func newBindingFx(t *testing.T) *bindingFx {
+	t.Helper()
+	cucumber := os.Getenv("KOGEN_CUCUMBER")
+	if cucumber == "" {
+		t.Skip("run npm ci in testdata/tools/cucumber for the real Cucumber")
+	}
+	f := &bindingFx{approveFx: newApproveFx(t)}
+	f.log = filepath.Join(f.Aux, "node.log")
+	wrapper := filepath.Join(f.Aux, "node-wrapper.sh")
+	script := fmt.Sprintf("#!/bin/sh\necho run >> '%s'\nexec '%s' \"$@\"\n", f.log, os.Getenv("KOGEN_NODE"))
+	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f.Env = append(f.Env, "KOGEN_NODE="+wrapper, "KOGEN_CUCUMBER="+cucumber)
+	f.addIntent("fixture", "Given('own: step 1', () => {});\n")
+	return f
+}
+
+// addIntent writes an Intent with one scenario of one step `<slug>: step 1` and a step file
+// of the given content.
+func (f *bindingFx) addIntent(slug, steps string) {
+	step := fmt.Sprintf("features/steps/%s_steps.js", slug)
+	if slug == "fixture" {
+		step = "features/steps/fixture_steps.js"
+	}
+	md := strings.ReplaceAll(approveIntentMD, "fixture", slug)
+	md = strings.ReplaceAll(md, "features/steps/"+slug+"_steps.js", step)
+	text := slug + ": step 1"
+	if slug == "fixture" {
+		text = "own: step 1"
+	}
+	f.write(project.IntentMDPath(slug), md)
+	f.write(project.FeaturePath(slug), "Feature: "+slug+"\n  Scenario: First\n    Then "+text+"\n")
+	f.write(step, "const { Given } = require('@cucumber/cucumber');\n"+steps)
+}
+
+func (f *bindingFx) loaders() int {
+	b, _ := os.ReadFile(f.log)
+	return strings.Count(string(b), "run\n")
+}
+
+func (f *bindingFx) check() error {
+	s, _, _ := f.session()
+	return bindingCollision(context.Background(), f.Root, "fixture", s, verify.Tools{})
+}
+
+func TestBindingCollisionStartsOneLoaderPerStepFilePair(t *testing.T) {
+	f := newBindingFx(t)
+	// Each file defines only its own Intent's text: no text is matched on both sides.
+	f.addIntent("oa", "Given('oa: step 1', () => {});\n")
+	f.addIntent("ob", "Given('ob: step 1', () => {});\n")
+	f.addIntent("oc", "Given('oc: step 1', () => {});\n")
+	if err := f.check(); err != nil {
+		t.Fatalf("no collision: %v", err)
+	}
+	if got := f.loaders(); got != 3 {
+		t.Fatalf("loaders = %d, want 3 (one per step-file pair)", got)
+	}
+}
+
+func TestBindingCollisionRefusesTheFirstCollidingPairInIntentOrder(t *testing.T) {
+	f := newBindingFx(t)
+	f.addIntent("oa", "Given('oa: step 1', () => {});\n")
+	f.addIntent("ob", "Given('own: step 1', () => {});\n")
+	f.addIntent("oc", "Given('own: step 1', () => {});\n")
+	err := f.check()
+	e := approveWantError(t, err, "intent", "step_ownership_collision",
+		"Intents fixture and ob have overlapping step bindings in features/steps/fixture_steps.js and features/steps/ob_steps.js", 1)
+	if got := strings.Join(e.Lines, "|"); got != "features/steps/fixture_steps.js|features/steps/ob_steps.js" {
+		t.Fatalf("lines = %q", got)
+	}
+	if got := f.loaders(); got != 2 {
+		t.Fatalf("loaders = %d, want 2 (oa, then the colliding ob)", got)
+	}
+}
+
+func TestBindingCollisionNeedsOneTextMatchedOnBothSides(t *testing.T) {
+	f := newBindingFx(t)
+	// Each file's definition matches a different text, so no single text is matched twice.
+	f.addIntent("fixture", "Given('own: step 1', () => {});\n")
+	f.addIntent("oa", "Given('oa: step 1', () => {});\n")
+	if err := f.check(); err != nil {
+		t.Fatalf("definitions matching different texts: %v", err)
+	}
+	// The same text matched by a definition in each file collides.
+	f.addIntent("oa", "Given(/^(own|oa): step 1$/, () => {});\n")
+	approveWantError(t, f.check(), "intent", "step_ownership_collision", "", 1)
+}
+
+func TestBindingCollisionLoadFailuresAndMissingResultsDoNotRefuse(t *testing.T) {
+	f := newBindingFx(t)
+	f.addIntent("oa", "throw new Error('cannot load');\nGiven('own: step 1', () => {});\n")
+	if err := f.check(); err != nil {
+		t.Fatalf("file throwing before any definition: %v", err)
+	}
+	if f.loaders() != 1 {
+		t.Fatalf("loaders = %d, want 1", f.loaders())
+	}
+	// A file keeps the definitions registered before it throws.
+	f.addIntent("oa", "Given('own: step 1', () => {});\nthrow new Error('late');\n")
+	approveWantError(t, f.check(), "intent", "step_ownership_collision", "", 1)
+	// A Node that exits 1 without output yields no result: not a collision, no error.
+	failing := filepath.Join(f.Aux, "node-fails.sh")
+	if err := os.WriteFile(failing, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f.Env = append(f.Env, "KOGEN_NODE="+failing)
+	if err := f.check(); err != nil {
+		t.Fatalf("loader without a result: %v", err)
 	}
 }
