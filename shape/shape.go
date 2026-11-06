@@ -2131,7 +2131,7 @@ func validateQuestions(args map[string]any, qs []any) (submission, []string, err
 	for _, q := range qs {
 		m, ok := q.(map[string]any)
 		if !ok || !isText(m["question"]) || !validOptions(m) {
-			return submission{}, []string{"every question needs question text and optional options with string labels and boolean recommended values"}, nil
+			return submission{}, []string{"every question needs question text and options with string labels and boolean recommended values"}, nil
 		}
 	}
 	kinds := []any{args["kind"]}
@@ -2140,6 +2140,16 @@ func validateQuestions(args map[string]any, qs []any) (submission, []string, err
 	}
 	if slices.ContainsFunc(kinds, explicitRejectedKind) {
 		return submission{}, []string{"questions: decide technical questions inside shaping; only kind product or handoff may reach the caller"}, nil
+	}
+	var optionProblems []string
+	for i, q := range qs {
+		m := q.(map[string]any)
+		for _, p := range optionProblemsOf(m) {
+			optionProblems = append(optionProblems, fmt.Sprintf("question %d (%s): %s", i+1, m["question"].(string), p))
+		}
+	}
+	if optionProblems != nil {
+		return submission{}, append(optionProblems, optionsRule), nil
 	}
 	for _, q := range qs {
 		m := q.(map[string]any)
@@ -2168,9 +2178,54 @@ func explicitRejectedKind(kind any) bool {
 	return true
 }
 
+// optionsRule closes the problem lines of a question whose options are malformed.
+const optionsRule = "every question needs at least two options with distinct, non-empty labels and exactly one option marked recommended"
+
+// optionProblemsOf lists what is wrong with the options of a question that passed validOptions.
+func optionProblemsOf(q map[string]any) []string {
+	raw, has := q["options"]
+	if !has || raw == nil {
+		return []string{"no options"}
+	}
+	options := raw.([]any)
+	if len(options) == 0 {
+		return []string{"an empty option list"}
+	}
+	var problems []string
+	if len(options) == 1 {
+		problems = append(problems, "only one option")
+	}
+	letter := func(i int) string { return string(rune('a' + i)) }
+	var recommended []string
+	for i, o := range options {
+		m := o.(map[string]any)
+		label := strings.TrimSpace(m["label"].(string))
+		if label == "" {
+			problems = append(problems, fmt.Sprintf("option %s has an empty label", letter(i)))
+		} else {
+			for j := 0; j < i; j++ {
+				if strings.TrimSpace(options[j].(map[string]any)["label"].(string)) == label {
+					problems = append(problems, fmt.Sprintf("option %s repeats the label of option %s", letter(i), letter(j)))
+					break
+				}
+			}
+		}
+		if m["recommended"] == true {
+			recommended = append(recommended, letter(i))
+		}
+	}
+	switch {
+	case len(recommended) == 0:
+		problems = append(problems, "no option is marked recommended")
+	case len(recommended) > 1:
+		problems = append(problems, fmt.Sprintf("%d options are marked recommended (%s)", len(recommended), strings.Join(recommended, ", ")))
+	}
+	return problems
+}
+
 func validOptions(q map[string]any) bool {
 	raw, has := q["options"]
-	if !has {
+	if !has || raw == nil {
 		return true
 	}
 	options, ok := raw.([]any)

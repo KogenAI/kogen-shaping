@@ -323,7 +323,7 @@ func TestClaudeLineupShapeSubmission(t *testing.T) {
 		f := newShpFx(t)
 		f.useExternalShape()
 		x := &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){
-			result(map[string]any{"questions": []any{shpQuestion("What should is_even do with a non-integer?", "raise TypeError", "return False"), shpQuestion("How should it be named?")}}),
+			result(map[string]any{"questions": []any{shpQuestion("What should is_even do with a non-integer?", "raise TypeError", "return False"), shpQuestion("How should it be named?", "snake_case", "camelCase")}}),
 			result(map[string]any{"items": []any{map[string]any{"number": 1, "class": "ui_ux", "why": "a choice of behavior"}, map[string]any{"number": 2, "class": "ui_ux", "why": "a choice of wording"}}}),
 			result(shpFiles()),
 			result(map[string]any{"files": []any{map[string]any{"path": ".kogen/intents/is-even/acceptance.feature", "content": shpFeature}}}),
@@ -333,8 +333,8 @@ func TestClaudeLineupShapeSubmission(t *testing.T) {
 			t.Fatalf("exit %d, err %v", exit, err)
 		}
 		shpEq(t, "stdout", f.Stdout.String(), "Questions for is-even:\n"+
-			"1. What should is_even do with a non-integer?\n   a) raise TypeError (recommended)\n   b) return False\n2. How should it be named?\n"+
-			`Answer one per line as <n>: <letter or your words>, e.g. printf '1: a\n2: your words\n' | kogen intent shape is-even -`+"\n"+
+			"1. What should is_even do with a non-integer?\n   a) raise TypeError (recommended)\n   b) return False\n2. How should it be named?\n   a) snake_case (recommended)\n   b) camelCase\n"+
+			`Answer one per line as <n>: <letter or your words>, e.g. printf '1: a\n2: a\n' | kogen intent shape is-even -`+"\n"+
 			"Or enter all: recommended to use every question's recommended option.\n")
 		shapeAbsent(t, f)
 		exit, err = f.shapeWith(x, "1: a\n2: is_even")

@@ -70,7 +70,7 @@ func TestShapeRefusesToPublishBeforeAnythingWasInspected(t *testing.T) {
 
 func TestShapeQuestionsDoNotNeedInspection(t *testing.T) {
 	parallel(t)
-	f := newShpFx(t, shpSubmit("c1", map[string]any{"questions": []any{map[string]any{"question": "Which layout?"}}}), shpUI(1))
+	f := newShpFx(t, shpSubmit("c1", map[string]any{"questions": []any{shpQuestion("Which layout?")}}), shpUI(1))
 	exit, err := f.shape("Add calc.is_even(n).")
 	if err != nil || exit != 5 {
 		t.Fatalf("exit %d, err %v", exit, err)
@@ -81,11 +81,11 @@ func TestShapeKeepsAHandoffQuestionAndRejectsEngineeringQuestions(t *testing.T) 
 	parallel(t)
 	f := newShpFx(t,
 		shpSubmit("c1", map[string]any{"questions": []any{map[string]any{"question": "Which storage engine?", "kind": "engineering"}}}),
-		shpSubmit("c2", map[string]any{"kind": "design", "questions": []any{map[string]any{"question": "Which cache?"}}}),
+		shpSubmit("c2", map[string]any{"kind": "design", "questions": []any{shpQuestion("Which cache?")}}),
 		shpSubmit("c3", map[string]any{"questions": []any{
-			map[string]any{"question": "Sign in to the provider in your browser", "kind": "handoff"},
-			map[string]any{"question": "Which layout?", "kind": "product", "options": []any{map[string]any{"label": "Wide", "recommended": true}}},
-			map[string]any{"question": "Dark mode?"},
+			shpKindQuestion("handoff", "Sign in to the provider in your browser"),
+			shpKindQuestion("product", "Which layout?"),
+			shpQuestion("Dark mode?"),
 		}}), shpUI(3))
 	exit, err := f.shape("Add calc.is_even(n).")
 	if err != nil || exit != 5 {
@@ -114,10 +114,67 @@ func TestShapeKeepsAHandoffQuestionAndRejectsEngineeringQuestions(t *testing.T) 
 	}
 }
 
+func TestValidateQuestionsRefusesMalformedOptions(t *testing.T) {
+	parallel(t)
+	opt := func(label string, recommended ...bool) map[string]any {
+		o := map[string]any{"label": label}
+		if len(recommended) > 0 {
+			o["recommended"] = recommended[0]
+		}
+		return o
+	}
+	q := func(text string, options any) map[string]any {
+		m := map[string]any{"question": text}
+		if options != "absent" {
+			m["options"] = options
+		}
+		return m
+	}
+	prefix := func(n int, text string) string { return fmt.Sprintf("question %d (%s): ", n, text) }
+	for _, tc := range []struct {
+		name string
+		qs   []any
+		want []string
+	}{
+		{"absent options", []any{q("A?", "absent")}, []string{prefix(1, "A?") + "no options"}},
+		{"null options", []any{q("A?", nil)}, []string{prefix(1, "A?") + "no options"}},
+		{"empty list", []any{q("A?", []any{})}, []string{prefix(1, "A?") + "an empty option list"}},
+		{"one option", []any{q("A?", []any{opt("x", true)})}, []string{prefix(1, "A?") + "only one option"}},
+		{"one empty option", []any{q("A?", []any{opt(" ", true)})}, []string{prefix(1, "A?") + "only one option", prefix(1, "A?") + "option a has an empty label"}},
+		{"empty label", []any{q("A?", []any{opt("x", true), opt("\t")})}, []string{prefix(1, "A?") + "option b has an empty label"}},
+		{"repeated label", []any{q("A?", []any{opt("x", true), opt("y"), opt(" x "), opt("x")})}, []string{prefix(1, "A?") + "option c repeats the label of option a", prefix(1, "A?") + "option d repeats the label of option a"}},
+		{"case differs", []any{q("A?", []any{opt("x", true), opt("X")})}, nil},
+		{"none recommended", []any{q("A?", []any{opt("x"), opt("y", false)})}, []string{prefix(1, "A?") + "no option is marked recommended"}},
+		{"two recommended", []any{q("A?", []any{opt("x", true), opt("y"), opt("z", true)})}, []string{prefix(1, "A?") + "2 options are marked recommended (a, c)"}},
+		{"three recommended", []any{q("A?", []any{opt("x", true), opt("y", true), opt("z", true)})}, []string{prefix(1, "A?") + "3 options are marked recommended (a, b, c)"}},
+		{"order", []any{q("A?", []any{opt("x"), opt("x")}), q("B?", []any{opt("x", true), opt("y", true)}), q("C?", []any{opt("x", true), opt("y")})},
+			[]string{prefix(1, "A?") + "option b repeats the label of option a", prefix(1, "A?") + "no option is marked recommended", prefix(2, "B?") + "2 options are marked recommended (a, b)"}},
+		{"well formed", []any{q("A?", []any{opt("x", true), opt("y")}), withKind(q("B?", []any{opt("x"), opt("y", true)}), "handoff")}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parallel(t)
+			_, problems, err := validateQuestions(map[string]any{}, tc.qs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := tc.want
+			if want != nil {
+				want = append(want, optionsRule)
+			}
+			shpEq(t, "problems", strings.Join(problems, "\n"), strings.Join(want, "\n"))
+		})
+	}
+}
+
+func withKind(q map[string]any, kind any) map[string]any {
+	q["kind"] = kind
+	return q
+}
+
 func TestShapeKeepsAQuestionKindFromTheSubmissionLevel(t *testing.T) {
 	parallel(t)
 	got, problems, err := validateQuestions(map[string]any{"kind": "handoff"}, []any{
-		map[string]any{"question": "Sign in?"}, map[string]any{"question": "Colour?", "kind": "product"}, map[string]any{"question": "Odd", "kind": nil},
+		shpQuestion("Sign in?"), shpKindQuestion("product", "Colour?"), withKind(shpQuestion("Odd"), nil),
 	})
 	if err != nil || problems != nil {
 		t.Fatalf("problems %v, err %v", problems, err)
@@ -127,11 +184,11 @@ func TestShapeKeepsAQuestionKindFromTheSubmissionLevel(t *testing.T) {
 		t.Fatalf("kinds %v", kinds)
 	}
 	for _, kind := range []any{5, false, "engineering", ""} {
-		if _, problems, _ := validateQuestions(map[string]any{}, []any{map[string]any{"question": "x", "kind": kind}}); len(problems) != 1 {
+		if _, problems, _ := validateQuestions(map[string]any{}, []any{withKind(shpQuestion("x"), kind)}); len(problems) != 1 {
 			t.Fatalf("kind %v must be rejected: %v", kind, problems)
 		}
 	}
-	if _, problems, _ := validateQuestions(map[string]any{"kind": nil}, []any{map[string]any{"question": "x", "kind": nil}}); problems != nil {
+	if _, problems, _ := validateQuestions(map[string]any{"kind": nil}, []any{withKind(shpQuestion("x"), nil)}); problems != nil {
 		t.Fatalf("null kinds are no kinds: %v", problems)
 	}
 }

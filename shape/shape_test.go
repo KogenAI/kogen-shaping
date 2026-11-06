@@ -330,7 +330,10 @@ func shpAsInterrupted(err error, target **sys.Interrupted) bool { return errors.
 
 func shpQuestion(text string, options ...string) map[string]any {
 	q := map[string]any{"question": text}
-	if len(options) > 0 {
+	if len(options) == 0 {
+		options = []string{"Yes", "No"}
+	}
+	{
 		var list []any
 		for i, o := range options {
 			opt := map[string]any{"label": o}
@@ -341,6 +344,13 @@ func shpQuestion(text string, options ...string) map[string]any {
 		}
 		q["options"] = list
 	}
+	return q
+}
+
+// shpKindQuestion is a well-formed question of a kind: two options, the first recommended.
+func shpKindQuestion(kind, text string) map[string]any {
+	q := shpQuestion(text, "Yes", "No")
+	q["kind"] = kind
 	return q
 }
 
@@ -355,7 +365,7 @@ func TestShapeQuestionsPathPrintsNumberedQuestionsAndWritesNothing(t *testing.T)
 	parallel(t)
 	f := newShpFx(t, shpSubmit("q1", map[string]any{"questions": []any{
 		shpQuestion("What should is_even do with a non-integer?", "raise TypeError", "return False"),
-		shpQuestion("How should it be named?"),
+		shpQuestion("How should it be named?", "snake_case", "camelCase"),
 	}}), shpUI(2))
 	exit, err := f.shape("Add calc.is_even(n).")
 	if err != nil || exit != 5 {
@@ -366,7 +376,9 @@ func TestShapeQuestionsPathPrintsNumberedQuestionsAndWritesNothing(t *testing.T)
 		"   a) raise TypeError (recommended)\n"+
 		"   b) return False\n"+
 		"2. How should it be named?\n"+
-		`Answer one per line as <n>: <letter or your words>, e.g. printf '1: a\n2: your words\n' | kogen intent shape is-even -`+"\n"+
+		"   a) snake_case (recommended)\n"+
+		"   b) camelCase\n"+
+		`Answer one per line as <n>: <letter or your words>, e.g. printf '1: a\n2: a\n' | kogen intent shape is-even -`+"\n"+
 		"Or enter all: recommended to use every question's recommended option.\n")
 	if f.exists(".kogen/intents/is-even") {
 		t.Fatal("questions write no Intent")
@@ -476,14 +488,27 @@ func TestShapePendingQuestionsRejectInputeTheCallerCannotUse(t *testing.T) {
 	shpEq(t, "requests", len(shpShaperRequests(f.Prov.requests())), 1)
 }
 
-func TestShapeAllRecommendedNeedsARecommendedOptionForEveryQuestion(t *testing.T) {
+func TestShapeRefusesAQuestionWithoutOptionsBeforeAskingAndAllRecommendedAnswersTheRepairedOne(t *testing.T) {
 	parallel(t)
-	f := newShpFx(t, shpSubmit("q1", map[string]any{"questions": []any{shpQuestion("First?", "yes", "no"), shpQuestion("Free text?")}}), shpUI(2))
-	if _, err := f.shape("Add calc.is_even(n)."); err != nil {
-		t.Fatal(err)
+	text := "How should it be named?"
+	f := newShpFx(t,
+		shpSubmit("q1", map[string]any{"questions": []any{map[string]any{"question": text}}}),
+		shpSubmit("q2", map[string]any{"questions": []any{shpQuestion(text, "snake_case", "camelCase")}}), shpUI(1),
+		shpSubmit("c1", shpFilesWithDecisions("- Snake case. (source: answer 1)")),
+		shpAck("c2"))
+	if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 5 {
+		t.Fatalf("exit %d, err %v", exit, err)
 	}
-	_, err := f.shape("all: recommended")
-	shpWantError(t, err, "intent", "answers_invalid", "question 2 has no recommended option", 2)
+	// The malformed submission reached neither the question check nor the user.
+	reqs := f.Prov.requests()
+	shpEq(t, "question checks", len(qcChecks(reqs)), 1)
+	shpContains(t, "feedback", shpOutputs(reqs[1])["q1"], "invalid submission:\nquestion 1 ("+text+"): no options\n"+optionsRule+"\n")
+	shpEq(t, "stdout", f.Stdout.String(), "Questions for is-even:\n1. "+text+"\n   a) snake_case (recommended)\n   b) camelCase\n"+
+		`Answer one per line as <n>: <letter or your words>, e.g. printf '1: a\n' | kogen intent shape is-even -`+"\n"+
+		"Or enter all: recommended to use every question's recommended option.\n")
+	if exit, err := f.shape("all: recommended"); err != nil || exit != 0 {
+		t.Fatalf("exit %d, err %v\n%s", exit, err, f.Stdout)
+	}
 }
 
 // ---- invalid submissions and feedback ----
@@ -547,9 +572,9 @@ func TestShapeSubmissionEnvelopeProblems(t *testing.T) {
 		{"empty questions", map[string]any{"questions": []any{}}, "submit takes exactly one of a non-empty questions list, a non-empty files list, or a blocked report\nreceived: questions (list of 0)"},
 		{"files as text", map[string]any{"files": "x"}, "submit takes exactly one of a non-empty questions list, a non-empty files list, or a blocked report\nreceived: files (text)"},
 		{"none of the three", map[string]any{"note": "x"}, "submit takes exactly one of a non-empty questions list, a non-empty files list, or a blocked report\nreceived: none of questions, files or blocked"},
-		{"a question without text", map[string]any{"questions": []any{map[string]any{"question": " "}}}, "every question needs question text and optional options with string labels and boolean recommended values"},
-		{"an option without a label", map[string]any{"questions": []any{map[string]any{"question": "Q?", "options": []any{map[string]any{"recommended": true}}}}}, "every question needs question text and optional options with string labels and boolean recommended values"},
-		{"a recommended that is not boolean", map[string]any{"questions": []any{map[string]any{"question": "Q?", "options": []any{map[string]any{"label": "a", "recommended": "yes"}}}}}, "every question needs question text and optional options with string labels and boolean recommended values"},
+		{"a question without text", map[string]any{"questions": []any{map[string]any{"question": " "}}}, "every question needs question text and options with string labels and boolean recommended values"},
+		{"an option without a label", map[string]any{"questions": []any{map[string]any{"question": "Q?", "options": []any{map[string]any{"recommended": true}}}}}, "every question needs question text and options with string labels and boolean recommended values"},
+		{"a recommended that is not boolean", map[string]any{"questions": []any{map[string]any{"question": "Q?", "options": []any{map[string]any{"label": "a", "recommended": "yes"}}}}}, "every question needs question text and options with string labels and boolean recommended values"},
 		{"blocked paths that are not protected", map[string]any{"blocked": map[string]any{"paths": []any{"calc.js"}, "reason": "needed"}}, "blocked path calc.js is not protected by the current contract: the builder may edit it, so it is no reason to block"},
 		{"blocked without reason", map[string]any{"blocked": map[string]any{"paths": []any{".kogen/project.yaml"}}}, "blocked.reason must be non-empty text"},
 		{"blocked without paths", map[string]any{"blocked": map[string]any{"paths": []any{}, "reason": "x"}}, "blocked.paths must be a non-empty list"},
@@ -597,7 +622,7 @@ func TestShapeWithoutSubmitIsAskedToEndWithSubmit(t *testing.T) {
 func TestShapeOnlyOneSubmitCountsPerResponse(t *testing.T) {
 	parallel(t)
 	f := newShpFx(t,
-		shpAnswer(shpCall("s1", "submit", map[string]any{"questions": []any{shpQuestion("First?", "yes")}}), shpCall("s2", "submit", shpFiles())), shpUI(1))
+		shpAnswer(shpCall("s1", "submit", map[string]any{"questions": []any{shpQuestion("First?", "yes", "no")}}), shpCall("s2", "submit", shpFiles())), shpUI(1))
 	exit, err := f.shape("Add calc.is_even(n).")
 	if err != nil || exit != 5 {
 		t.Fatalf("exit %d, err %v", exit, err)
@@ -1189,9 +1214,9 @@ func (f *shpFx) questionsDoc() map[string]any {
 func TestShapeQuestionsFileListsKindsOptionsAndRecommendations(t *testing.T) {
 	parallel(t)
 	f := newShpFx(t, shpSubmit("q1", map[string]any{"questions": []any{
-		map[string]any{"question": "Sign in to the provider in your browser", "kind": "handoff"},
+		map[string]any{"question": "Sign in to the provider in your browser", "kind": "handoff", "options": []any{map[string]any{"label": "I have signed in", "recommended": true}, map[string]any{"label": "Pause until I have signed in"}}},
 		shpQuestion("Which wording?", "keep", "shorter"),
-		map[string]any{"question": "Pick one", "options": []any{map[string]any{"label": "x"}, map[string]any{"label": "y", "recommended": true}, map[string]any{"label": "z", "recommended": true}}},
+		map[string]any{"question": "Pick one", "options": []any{map[string]any{"label": "x"}, map[string]any{"label": "y", "recommended": true}, map[string]any{"label": "z"}}},
 	}}), shpUI(3))
 	if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 5 {
 		t.Fatalf("exit %d, err %v", exit, err)
@@ -1199,9 +1224,9 @@ func TestShapeQuestionsFileListsKindsOptionsAndRecommendations(t *testing.T) {
 	data := f.questionsDoc()
 	b, _ := json.Marshal(data)
 	shpEq(t, "data", string(b), `{"questions":[`+
-		`{"kind":"handoff","number":1,"options":[],"question":"Sign in to the provider in your browser","recommended":null},`+
+		`{"kind":"handoff","number":1,"options":[{"label":"I have signed in","letter":"a","recommended":true},{"label":"Pause until I have signed in","letter":"b","recommended":false}],"question":"Sign in to the provider in your browser","recommended":"a"},`+
 		`{"kind":"product","number":2,"options":[{"label":"keep","letter":"a","recommended":true},{"label":"shorter","letter":"b","recommended":false}],"question":"Which wording?","recommended":"a"},`+
-		`{"kind":"product","number":3,"options":[{"label":"x","letter":"a","recommended":false},{"label":"y","letter":"b","recommended":true},{"label":"z","letter":"c","recommended":true}],"question":"Pick one","recommended":"b"}`+
+		`{"kind":"product","number":3,"options":[{"label":"x","letter":"a","recommended":false},{"label":"y","letter":"b","recommended":true},{"label":"z","letter":"c","recommended":false}],"question":"Pick one","recommended":"b"}`+
 		`],"slug":"is-even"}`)
 }
 

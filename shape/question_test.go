@@ -137,7 +137,7 @@ func TestShapeQuestionCheckRequestAndPublication(t *testing.T) {
 	parallel(t)
 	f := newShpFx(t,
 		shpSubmit("q1", map[string]any{"questions": []any{
-			map[string]any{"question": "Sign in to the provider", "kind": "handoff"},
+			shpKindQuestion("handoff", "Sign in to the provider"),
 			shpQuestion("Which wording?", "keep", "shorter"),
 		}}),
 		shpQuestionCheck("c1", "handoff", "ui_ux"),
@@ -172,9 +172,9 @@ func TestShapeQuestionCheckRequestAndPublication(t *testing.T) {
 		t.Fatalf("tool %v, want %v", got, want)
 	}
 	shpEq(t, "first input", qcText(first), "Slug: is-even\n\n# Request\n\nAdd calc.is_even(n).\n\n# Earlier questions and answers\n\nnone\n\n# Questions\n\n"+
-		"1. Sign in to the provider\n   kind: handoff\n2. Which wording?\n   a) keep (recommended)\n   b) shorter")
+		"1. Sign in to the provider\n   a) Yes (recommended)\n   b) No\n   kind: handoff\n2. Which wording?\n   a) keep (recommended)\n   b) shorter")
 	shpEq(t, "second input", qcText(checks[1]), "Slug: is-even\n\n# Request\n\nAdd calc.is_even(n).\n\n# Earlier questions and answers\n\n"+
-		"Round 1:\n1. Sign in to the provider\n   answer: 1: done\n2. Which wording?\n   a) keep\n   b) shorter\n   answer: 2: b\n\n# Questions\n\n"+
+		"Round 1:\n1. Sign in to the provider\n   a) Yes\n   b) No\n   answer: 1: done\n2. Which wording?\n   a) keep\n   b) shorter\n   answer: 2: b\n\n# Questions\n\n"+
 		"1. Which icon?\n   a) star (recommended)\n   b) heart")
 	if first["prompt_cache_key"] == nil || first["prompt_cache_key"] == f.Prov.requests()[0]["prompt_cache_key"] {
 		t.Fatal("the question check has its own conversation identity")

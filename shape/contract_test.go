@@ -57,8 +57,8 @@ func TestShapeInvalidQuestionOptionsGetCorrectionFeedbackAndAreNeverPersisted(t 
 		[]any{map[string]any{"label": "One", "recommended": "yes"}},
 	}
 	valid := []any{
-		map[string]any{"question": "Any preference?"},
-		map[string]any{"question": "Which display?", "options": []any{}},
+		shpQuestion("Any preference?"),
+		shpQuestion("Which display?", "Wide", "Narrow"),
 		map[string]any{"question": "Which order?", "options": []any{
 			map[string]any{"label": "Newest", "recommended": true},
 			map[string]any{"label": "Oldest", "recommended": false},
@@ -131,7 +131,7 @@ func TestShapeBlockedSubmissionsNeedAnActualProtectedPathAndAReason(t *testing.T
 	var steps []shpStep
 	for i, submission := range invalid {
 		id := string(rune('a' + i))
-		steps = append(steps, shpSubmit("blocked-"+id, submission), shpSubmit("ask-"+id, map[string]any{"questions": []any{map[string]any{"question": "Continue?"}}}), shpUI(1))
+		steps = append(steps, shpSubmit("blocked-"+id, submission), shpSubmit("ask-"+id, map[string]any{"questions": []any{shpQuestion("Continue?")}}), shpUI(1))
 	}
 	f := newShpFx(t, steps...)
 	for i, tc := range []struct{ slug, expected string }{
