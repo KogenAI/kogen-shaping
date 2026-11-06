@@ -57,6 +57,7 @@ func TestLoadConfig(t *testing.T) {
 func TestConfigModels(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, project.ConfigPath, projectYAML)
+	write(t, dir, ".kogen/models.yaml", modelsYAML)
 	cfg, err := project.LoadConfig(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -85,7 +86,7 @@ func TestConfigModels(t *testing.T) {
 		t.Errorf("project.Role.External must be false for the native executor and for none")
 	}
 
-	// A file that names no model gets the defaults of each role.
+	// A checkout without a models file gets the defaults of each role.
 	bare := t.TempDir()
 	write(t, bare, project.ConfigPath, "version: 1\n")
 	cfg, err = project.LoadConfig(bare)
@@ -156,8 +157,21 @@ func TestLoadConfigStops(t *testing.T) {
 	if se.Class != "environment" || se.Reason != "project_config_invalid" || se.Exit != 3 || se.Detail != filepath.Join(bad, project.ConfigPath) {
 		t.Errorf("project.LoadConfig of an invalid file = %s/%s exit %d %q, want environment/project_config_invalid exit 3 naming the file", se.Class, se.Reason, se.Exit, se.Detail)
 	}
-	wantLines := []string{"line 3: unknown key bogus", `line 7: models.shape.effort "ultra" is not supported; accepted: any effort except ultra`}
+	wantLines := []string{"line 3: unknown key bogus", "line 4: models is no longer read from .kogen/project.yaml; move the model lineup to .kogen/models.yaml"}
 	if !slices.Equal(se.Lines, wantLines) {
 		t.Errorf("project.LoadConfig problems = %q, want one line per problem: %q", se.Lines, wantLines)
+	}
+
+	badModels := t.TempDir()
+	write(t, badModels, project.ConfigPath, "version: 1\n")
+	write(t, badModels, ".kogen/models.yaml", "models:\n  shape:\n    model: m\n    effort: ultra\n")
+	_, err = project.LoadConfig(badModels)
+	se = stop(t, err)
+	if se.Class != "environment" || se.Reason != "project_config_invalid" || se.Exit != 3 || se.Detail != filepath.Join(badModels, ".kogen/models.yaml") {
+		t.Errorf("project.LoadConfig of an invalid models file = %s/%s exit %d %q, want environment/project_config_invalid exit 3 naming the models file", se.Class, se.Reason, se.Exit, se.Detail)
+	}
+	wantLines = []string{`line 4: models.shape.effort "ultra" is not supported; accepted: any effort except ultra`}
+	if !slices.Equal(se.Lines, wantLines) {
+		t.Errorf("project.LoadConfig models problems = %q, want %q", se.Lines, wantLines)
 	}
 }

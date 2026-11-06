@@ -26,7 +26,10 @@ commands:
 protect:
   - '.golangci.yml'
   - 'testdata/**'
-models:
+`
+
+// modelsYAML is the team lineup, which the baseline holds right after the configuration.
+const modelsYAML = `models:
   shape:
     provider: anthropic
     model: m-shape
@@ -40,13 +43,6 @@ models:
     base_url: http://localhost:11434/v1/
     model: m-review
     effort: low
-`
-
-// modelsYAML is the team lineup, which the baseline holds right after the configuration.
-const modelsYAML = `models:
-  shape:
-    model: m-shape
-    effort: high
 `
 
 const featureText = `Feature: Widget

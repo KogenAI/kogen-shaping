@@ -631,32 +631,20 @@ func (f *shpFx) write(rel, content string) {
 	}
 }
 
-// lineupInModelsFile reports whether the coordinator in use reads the model lineup from
-// `.kogen/models.yaml` (it then refuses `models:` in `.kogen/project.yaml`) and not from `models:`
-// in `.kogen/project.yaml`.
-var lineupInModelsFile = sync.OnceValue(func() bool {
-	_, err := project.ParseConfig("version: 1\nmodels:\n  shape: {model: m, effort: high}\n", project.ConfigPath)
-	se, ok := sys.AsError(err)
-	return ok && se.Class == "environment" && se.Reason == "models_moved"
-})
-
 // lineupFiles is the project configuration `config` (without a lineup) and the roles (unindented
-// role lines) as the files the coordinator in use reads: the roles in `.kogen/models.yaml`, or
-// appended under `models:` to `.kogen/project.yaml`.
+// role lines) as the files the coordinator reads: `config` in `.kogen/project.yaml` and the roles
+// indented under `models:` in `.kogen/models.yaml`.
 func lineupFiles(config, roles string) map[string]string {
-	if lineupInModelsFile() {
-		return map[string]string{project.ConfigPath: config, ".kogen/models.yaml": roles}
-	}
 	indented := ""
 	for _, line := range strings.SplitAfter(roles, "\n") {
 		if line != "" {
 			indented += "  " + line
 		}
 	}
-	return map[string]string{project.ConfigPath: config + "models:\n" + indented}
+	return map[string]string{project.ConfigPath: config, ".kogen/models.yaml": "models:\n" + indented}
 }
 
-// writeLineup writes lineupFiles and stages them; the caller commits.
+// writeLineup writes the lineup in `.kogen/models.yaml` (lineupFiles) and stages the files; the caller commits.
 func (f *shpFx) writeLineup(config, roles string) {
 	f.t.Helper()
 	for path, content := range lineupFiles(config, roles) {

@@ -404,8 +404,8 @@ func roundsText(all []map[string]any) string {
 	return strings.Join(rounds, "\n")
 }
 
-// modelsFilePath is the team lineup file of a coordinator that reads the lineup from it; it is
-// named literally because a coordinator that keeps the lineup in `.kogen/project.yaml` has no
+// modelsFilePath is the team lineup file, the only place the coordinator reads the model roles
+// from besides `.kogen/local/models.yaml`; it is named literally because the coordinator has no
 // constant for it. It is a protected baseline path exactly when the coordinator's baseline lists it.
 const modelsFilePath = ".kogen/models.yaml"
 

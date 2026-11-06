@@ -11,7 +11,7 @@ import (
 )
 
 // lineupShapeConfig loads a temporary project whose lineup is roles and whose other settings are
-// rest, with the lineup where the coordinator in use reads it.
+// rest, with the lineup written in `.kogen/models.yaml`.
 func lineupShapeConfig(t *testing.T, roles, rest string) *project.Config {
 	t.Helper()
 	root := t.TempDir()

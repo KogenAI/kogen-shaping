@@ -1,5 +1,5 @@
-github.com/KogenAI/kogen-coordinator v0.0.0-20261105022408-e7bc7ce9c169 h1:1JQTfBtT0MT1ad13QTDBxuGqSZRaekRHR6qNjQYr9NU=
-github.com/KogenAI/kogen-coordinator v0.0.0-20261105022408-e7bc7ce9c169/go.mod h1:MMc15p3YwlY71dMxfCdX6QlR2jXJbSxL6YA9Y7971c8=
+github.com/KogenAI/kogen-coordinator v0.0.0-20261106110407-d74daae36f56 h1:8VmqsU9EArCYwqOTw8e9uuS54nRSlUHSUaDl8W+lYqs=
+github.com/KogenAI/kogen-coordinator v0.0.0-20261106110407-d74daae36f56/go.mod h1:MMc15p3YwlY71dMxfCdX6QlR2jXJbSxL6YA9Y7971c8=
 github.com/KogenAI/kogen-executor v0.0.0-20261105010505-8d465842f9df h1:ZyDgxjdzyMFmfxahK+vs08TnUTwgf9wiasGtft9K3/o=
 github.com/KogenAI/kogen-executor v0.0.0-20261105010505-8d465842f9df/go.mod h1:qjm/u2kVwQdMxIPTbNdExSqanEcPs8UpBUFldsotEDg=
 github.com/KogenAI/kogen-loop v0.0.0-20261105005409-31036b2c02e8 h1:FHmM4ohzS7si6JRIsOg/9mxVIV03ceLAwKFjXboAZPU=
