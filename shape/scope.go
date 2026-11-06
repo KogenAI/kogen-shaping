@@ -115,7 +115,6 @@ func scopeLines(in scopeInput) []string {
 		estimate := pkgBytes
 		areas := map[string]bool{}
 		for _, f := range u.named {
-			estimate += f.size
 			areas[path.Dir(f.path)] = true
 		}
 		if estimate <= in.bound {
@@ -125,9 +124,6 @@ func scopeLines(in scopeInput) []string {
 			u.name, estimate, in.scenarios, in.harnesses, len(u.named), len(areas), in.bound))
 		for _, p := range in.pkg {
 			lines = append(lines, fmt.Sprintf("- %s: %d bytes (Intent package)", p.path, p.size))
-		}
-		for _, f := range u.named {
-			lines = append(lines, fmt.Sprintf("- %s: %d bytes (named file, area %s)", f.path, f.size, path.Dir(f.path)))
 		}
 	}
 	if lines == nil {
