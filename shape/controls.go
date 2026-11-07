@@ -250,7 +250,23 @@ func parseControls(raw []byte, scenarios []project.Scenario, feature []string, r
 		if len(idx) == 0 {
 			problems = append(problems, fmt.Sprintf("- controls.json: %s: scenario \"%s\" is not a scenario of acceptance.feature", label, scenario))
 		} else if !slices.ContainsFunc(idx, func(k int) bool { return len(controlsStepLines(scenarios[k], e.step, feature)) > 0 }) {
-			problems = append(problems, fmt.Sprintf("- controls.json: %s: step \"%s\" is not a step of scenario \"%s\"", label, normalizeWhitespace(e.step), scenario))
+			problem := fmt.Sprintf("- controls.json: %s: step \"%s\" is not a step of scenario \"%s\"", label, normalizeWhitespace(e.step), scenario)
+			for _, k := range idx {
+				for _, st := range scenarios[k].Steps {
+					if normalizeWhitespace(e.step) != "" && normalizeWhitespace(e.step) == normalizeWhitespace(st.Text) {
+						line := normalizeWhitespace(st.Keyword + " " + st.Text)
+						if st.Line >= 1 && st.Line <= len(feature) {
+							line = normalizeWhitespace(feature[st.Line-1])
+						}
+						problem += fmt.Sprintf(`; write the step line as acceptance.feature writes it, keyword included: %q`, line)
+						break
+					}
+				}
+				if strings.Contains(problem, "keyword included:") {
+					break
+				}
+			}
+			problems = append(problems, problem)
 		}
 		cf.wrong = append(cf.wrong, controlsImpl{name: name, scenario: scenario, step: normalizeWhitespace(e.step), files: files})
 	}

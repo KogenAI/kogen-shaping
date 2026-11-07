@@ -26,6 +26,10 @@ How to shape:
 - Probes run in a copy of the project outside the repository, so tools that trust folders (mise) may need `mise trust` first.
 - Kogen's own Quint runs in a probe as `"$KOGEN_NODE" "$KOGEN_QUINT" typecheck <file>` (also `test` and `run`): pass the model in the probe's files and check it before you submit.
 
+Before the first submission: decisions submitted are recorded as D<n>, numbered on from the decisions already recorded, in the current round. In the same submission, keep each recorded decision in the Intent's ## Decisions as exactly this line, matching the actual ledger and omitting absent optional markers: `- <decision> (decision: D<n>, round <r>)`, followed by ` (constraint: <c>)` for each constraint, ` (evidence: <items joined by "; ">)`, ` (assumption: <uncertainty>)`, ` (revises: <id> because <why>)` when present, then ` (source: request)`. Decision evidence is files tracked at HEAD that this shaping read, or a `ran` command of a successful probe of this shaping; never cite a file added by the package.
+
+When the request asks for properties a step can observe, the last check needs `.kogen/intents/<slug>/controls.json`; include it with the first package. Its form is `{"correct":{"files":{"path":"whole content"}},"wrong":[{"name":"one property wrong","scenario":"scenario name","step":"Then exact feature text","files":{"path":"whole replacement content"}}]}`. The correct implementation makes every scenario pass. Each wrong implementation overlays it and gets one property wrong, naming a scenario and the step line that must reject it, copied as acceptance.feature writes it, keyword included. Supply at most 7 wrong implementations; each implementation has at most 8 files and 65536 content bytes, and no acceptance machinery. Kogen runs them within the existing 300-second total check cap. These wrong-implementation controls are not Feasibility's observer controls.
+
 The Intent's files:
 1. `intent.md`, exactly in this shape:
 

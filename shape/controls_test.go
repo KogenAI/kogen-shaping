@@ -48,6 +48,8 @@ func TestParseControls(t *testing.T) {
 	}{
 		{"valid", controlsJSON(`{"calc.js":"y"}`, ok), nil},
 		{"an outline's example step with the outline's name", controlsJSON(`{"calc.js":"y"}`, wrong("m", " Mul <a>  times <b>", "Then is-even: mul of <a> and <b> is <c>", `{"calc.js":"z"}`)), nil},
+		{"keywordless same scenario", controlsJSON(`{"a":"b"}`, wrong("n", "Add keeps working", "is-even: add of 2 and 3 is 5", `{"a":"b"}`)), []string{`- controls.json: wrong implementation "n": step "is-even: add of 2 and 3 is 5" is not a step of scenario "Add keeps working"; write the step line as acceptance.feature writes it, keyword included: "Then is-even: add of 2 and 3 is 5"`}},
+		{"keywordless other scenario", controlsJSON(`{"a":"b"}`, wrong("n", "Add keeps working", "is-even: mul of 2 and 3 is 6", `{"a":"b"}`)), []string{`- controls.json: wrong implementation "n": step "is-even: mul of 2 and 3 is 6" is not a step of scenario "Add keeps working"`}},
 		{"the correct implementation alone", controlsJSON(`{"calc.js":"y"}`, ""), nil},
 		{"not json", []byte("{"), []string{"- controls.json: it is not valid JSON"}},
 		{"not an object", []byte("[]"), []string{`- controls.json: it must be an object with exactly the fields "correct" and "wrong"`}},

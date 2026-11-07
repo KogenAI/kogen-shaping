@@ -102,3 +102,15 @@ func TestShaperPolicyMutation(t *testing.T) {
 		t.Fatalf("mutated policy request: %v\n%s", err, out)
 	}
 }
+
+func TestRenderedDecisionAndControlsGuidance(t *testing.T) {
+	text := ShaperInstructions()
+	for _, want := range []string{"D<n>", "(decision: D<n>, round <r>)", "(constraint: <c>)", "(evidence: <items joined by \"; \">)", "(assumption: <uncertainty>)", "(revises: <id> because <why>)", "tracked at HEAD", "never cite a file added", ".kogen/intents/<slug>/controls.json", "keyword included", "65536", "300-second", "not Feasibility's observer controls"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("guidance missing %q", want)
+		}
+	}
+	if !strings.Contains(externalNote, "A command this external session ran is no evidence of a submitted decision; cite the files read and put what the command showed in the decision's uncertainty.") {
+		t.Error("external note missing evidence rule")
+	}
+}

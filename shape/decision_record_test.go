@@ -1,6 +1,7 @@
 package shape
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -432,5 +433,90 @@ func TestShapeDecisionCarriedItemAsCited(t *testing.T) {
 	st, err := os.Stat(filepath.Join(f.Root, ".kogen/local/shaping/is-even"))
 	if err != nil || st.Mode().Perm() != 0o700 {
 		t.Fatalf("ledger directory %v, %v", st, err)
+	}
+}
+
+// A files submission records and carries its new decision in the same round.
+func TestShapeFilesRecordAndCarryDecisions(t *testing.T) {
+	d1 := map[string]any{"decision": "First", "evidence": []any{"calc.js"}}
+	d2 := map[string]any{"decision": "Second", "evidence": []any{"calc.js"}, "constraints": []any{"one", "two"}}
+	first := "- First (decision: D1, round 1) (evidence: calc.js) (source: request)"
+	second := "- Second (decision: D2, round 2) (constraint: one) (constraint: two) (evidence: calc.js) (source: request)"
+	missing := shpFilesWithDecisions(first)
+	missing["decisions"] = []any{d2}
+	dropped := shpFilesWithDecisions(first + "\n" + strings.Replace(second, " (constraint: two)", "", 1))
+	dropped["decisions"] = []any{d2}
+	good := shpFilesWithDecisions(first + "\n" + second)
+	good["decisions"] = []any{d2}
+	f := newShpFx(t, shpAnswer(dlRead("calc.js")), shpSubmit("a", dlAsk("Which wording?", d1)), shpUI(1), shpSubmit("missing", missing), shpSubmit("dropped", dropped), shpSubmit("good", good), shpAck("ack"))
+	if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 5 {
+		t.Fatalf("first: %d %v", exit, err)
+	}
+	if exit, err := f.shape("1: a"); err != nil || exit != 0 {
+		t.Fatalf("second: %d %v\n%s", exit, err, f.Stderr)
+	}
+	for _, id := range []string{"missing", "dropped"} {
+		var feedback string
+		for _, r := range shpShaperRequests(f.Prov.requests()) {
+			if out, ok := shpOutputs(r)[id]; ok {
+				feedback = out
+			}
+		}
+		if !strings.Contains(feedback, second) {
+			t.Errorf("%s feedback: %s", id, feedback)
+		}
+	}
+	ledger := dlLedger(t, f)
+	shpEq(t, "recorded", len(ledger.Decisions), 2)
+	shpEq(t, "second line", ledger.Decisions[1].intentLine(), second)
+}
+
+// Scripted-provider plumbing only: this does not establish live-model compliance.
+func TestShapeSyntheticWebRequestFirstPackage(t *testing.T) {
+	line := "- Use existing routing (decision: D1, round 1) (constraint: preserve navigation) (evidence: calc.js) (source: request)"
+	pkg := shpFilesWithDecisions(line)
+	pkg["decisions"] = []any{map[string]any{"decision": "Use existing routing", "constraints": []any{"preserve navigation"}, "evidence": []any{"calc.js"}}}
+	files := pkg["files"].([]any)
+	files = append(files, map[string]any{"path": ".kogen/intents/is-even/controls.json", "content": `{"correct":{"files":{"web/app.js":"correct","web/view.js":"correct"}},"wrong":[{"name":"navigation wrong","scenario":"Even numbers","step":"Then is-even: it is even","files":{"web/view.js":"wrong"}}]}`})
+	pkg["files"] = files
+	f := newShpFx(t, shpAnswer(dlRead("calc.js")), shpSubmit("package", pkg), shpAck("ack"))
+	exit, err := f.shape("Update the web application across its routing and view files, preserving navigation and showing the requested page.")
+	if err != nil || exit != 0 {
+		t.Fatalf("exit %d: %v\n%s", exit, err, f.Stderr)
+	}
+	if len(files) != 4 || files[3].(map[string]any)["path"] != ".kogen/intents/is-even/controls.json" {
+		t.Fatal("first package lacks controls")
+	}
+	scenarios, err := project.ParseGherkin(shpFeature)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controls := files[3].(map[string]any)["content"].(string)
+	if _, problems := parseControls([]byte(controls), scenarios, strings.Split(shpFeature, "\n"), controlsRules{}); len(problems) != 0 {
+		t.Fatalf("first package controls: %v", problems)
+	}
+	for _, ev := range shpNamed(f.events(), "submission_refused") {
+		gate, _ := ev["gate"].(string)
+		if gate == "carried_decisions" || gate == "decision_record" || strings.Contains(fmt.Sprint(ev["problems"]), "keyword included:") {
+			t.Fatalf("unexpected refusal: %v", ev)
+		}
+	}
+}
+
+func TestShapeDecisionRejectsPackageAddedEvidence(t *testing.T) {
+	bad := shpFiles()
+	bad["decisions"] = []any{map[string]any{"decision": "Use new step", "evidence": []any{"features/steps/is-even__steps.js"}}}
+	f := newShpFx(t, shpSubmit("bad", bad), shpSubmit("good", shpFiles()), shpAck("ack"))
+	if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 0 {
+		t.Fatalf("exit %d: %v\n%s", exit, err, f.Stderr)
+	}
+	var feedback string
+	for _, r := range shpShaperRequests(f.Prov.requests()) {
+		if out, ok := shpOutputs(r)["bad"]; ok {
+			feedback = out
+		}
+	}
+	if !strings.Contains(feedback, "features/steps/is-even__steps.js is not a file tracked at HEAD") {
+		t.Fatalf("feedback: %s", feedback)
 	}
 }
