@@ -74,3 +74,37 @@ func unresolvedLines(root, slug string) []string {
 	}
 	return out
 }
+
+// repairCarriedDecisionDraft restores only the exact lines supplied by the gate.
+func repairCarriedDecisionDraft(draft string, problems []string) string {
+	loc := decisionsHeading.FindStringIndex(draft)
+	if loc == nil {
+		return draft
+	}
+	end := len(draft)
+	if next := nextHeading.FindStringIndex(draft[loc[1]:]); next != nil {
+		end = loc[1] + next[0]
+	}
+	have := map[string]bool{}
+	for _, line := range decisionLines(draft) {
+		have[strings.TrimRight(line, "\r")] = true
+	}
+	var missing []string
+	for _, problem := range problems {
+		_, line, ok := strings.Cut(problem, " is not in Decisions; keep it as: ")
+		if ok && strings.HasPrefix(problem, "- D") && strings.HasPrefix(line, "- ") && !have[line] {
+			missing = append(missing, line)
+			have[line] = true
+		}
+	}
+	if len(missing) == 0 {
+		return draft
+	}
+	section := draft[:end]
+	trimmed := strings.TrimRight(section, "\r\n")
+	suffix := section[len(trimmed):]
+	if len(trimmed) > 0 {
+		trimmed += "\n"
+	}
+	return trimmed + strings.Join(missing, "\n") + suffix + draft[end:]
+}

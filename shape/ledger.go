@@ -654,6 +654,7 @@ func (sh *shaping) carriedDecisionsGate(intent string) (string, outcome, bool) {
 	if len(problems) == 0 {
 		return "", outcome{}, false
 	}
+	sh.carriedRepair = append([]string(nil), problems...)
 	sh.refused("carried_decisions", problems)
 	text := strings.Join(append([]string{fmt.Sprintf(carriedDecisionsHeadline, len(problems))}, problems...), "\n")
 	return text, outcome{kind: outInvalid, problems: problems}, true

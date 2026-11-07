@@ -455,16 +455,18 @@ func TestShapeFilesRecordAndCarryDecisions(t *testing.T) {
 	if exit, err := f.shape("1: a"); err != nil || exit != 0 {
 		t.Fatalf("second: %d %v\n%s", exit, err, f.Stderr)
 	}
-	for _, id := range []string{"missing", "dropped"} {
-		var feedback string
-		for _, r := range shpShaperRequests(f.Prov.requests()) {
-			if out, ok := shpOutputs(r)[id]; ok {
-				feedback = out
-			}
+	var feedback string
+	for _, r := range shpShaperRequests(f.Prov.requests()) {
+		if out, ok := shpOutputs(r)["missing"]; ok {
+			feedback = out
 		}
-		if !strings.Contains(feedback, second) {
-			t.Errorf("%s feedback: %s", id, feedback)
-		}
+	}
+	if !strings.Contains(feedback, second) {
+		t.Errorf("missing feedback: %s", feedback)
+	}
+	published := f.read(".kogen/intents/is-even/intent.md")
+	if !strings.Contains(published, second) {
+		t.Errorf("published draft missing carried decision: %s", published)
 	}
 	ledger := dlLedger(t, f)
 	shpEq(t, "recorded", len(ledger.Decisions), 2)

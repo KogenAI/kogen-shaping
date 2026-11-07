@@ -605,6 +605,7 @@ type shaping struct {
 	contractRefused  map[string]contractConfirmed // package hash to the item lines of its refusal
 	contractLines    []string                     // the item lines of the last contract refusal
 	reviewProps      []propertyReport             // the properties of the last contract review that was complete; nil otherwise
+	carriedRepair    []string                     // exact keep-lines from the last carried-decisions refusal
 	lastGate         string                       // the gate of the last refused submission
 	lastRefusal      []string                     // its problem lines as recorded in submission_refused
 	// unresolved are the refusals since the last submission answered with readiness failures.
@@ -1573,6 +1574,13 @@ func (sh *shaping) submitOne(ctx context.Context, args map[string]any) (string, 
 func (sh *shaping) acceptFiles(ctx context.Context, submitted []proposedFile) (string, outcome, error) {
 	for _, f := range submitted {
 		sh.proposed[f.path] = f.content
+	}
+	if len(sh.carriedRepair) > 0 {
+		p := project.IntentMDPath(sh.slug)
+		if draft, ok := sh.proposed[p]; ok {
+			sh.proposed[p] = repairCarriedDecisionDraft(draft, sh.carriedRepair)
+		}
+		sh.carriedRepair = nil
 	}
 	sh.packageKey = sh.mergedPackage()
 	sh.unchangedOf = sh.refusedPackages[sh.packageKey]
