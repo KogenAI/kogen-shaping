@@ -419,7 +419,10 @@ func TestApproveMissingIntent(t *testing.T) {
 	f := newApproveFx(t)
 	s, _, _ := f.session()
 	exit, err := Approve(context.Background(), s, ApproveInput{Project: f.Root, Slug: "unknown"})
-	approveWantError(t, err, "intent", "not_found", "Intent does not exist", 2)
+	e := approveWantError(t, err, "intent", "not_found", "Intent does not exist: unknown (looked in .kogen/intents/unknown)", 2)
+	if len(e.Lines) == 0 || e.Lines[0] != "kogen intent list shows existing Intents; kogen intent shape unknown <request-file> creates one" {
+		t.Fatalf("Lines = %q, want the next-command line first", e.Lines)
+	}
 	if exit != 2 {
 		t.Fatalf("exit %d", exit)
 	}

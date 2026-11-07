@@ -136,8 +136,9 @@ func TestIntentExistsAndDir(t *testing.T) {
 		t.Errorf("project.RequireIntentDir of the Intent: %v", err)
 	}
 	se, ok := sys.AsError(project.RequireIntentDir(dir, "absent"))
-	if !ok || se.Class != "intent" || se.Reason != "not_found" || se.Exit != 2 || se.Detail != "Intent does not exist" {
-		t.Errorf("project.RequireIntentDir of a missing folder = %+v, want intent/not_found exit 2 \"Intent does not exist\"", se)
+	if !ok || se.Class != "intent" || se.Reason != "not_found" || se.Exit != 2 || se.Detail != "Intent does not exist: absent (looked in .kogen/intents/absent)" ||
+		len(se.Lines) == 0 || se.Lines[0] != "kogen intent list shows existing Intents; kogen intent shape absent <request-file> creates one" {
+		t.Errorf("project.RequireIntentDir of a missing folder = %+v, want intent/not_found exit 2, Detail \"Intent does not exist: absent (looked in .kogen/intents/absent)\" and Lines[0] \"kogen intent list shows existing Intents; kogen intent shape absent <request-file> creates one\"", se)
 	}
 	// A file where the folder should be is no folder.
 	write(t, dir, ".kogen/intents/a-file", "x")

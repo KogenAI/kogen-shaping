@@ -1,7 +1,7 @@
 # consumes/kogen-coordinator
 
 This suite states, as tests, exactly what kogen-shaping relies on from kogen-coordinator (module `github.com/KogenAI/kogen-coordinator`, packages `durable`, `git` and `project`) at the version `go.mod` pins:
-`v0.0.0-20261106110407-d74daae36f56`. It is one Go package, `consumes`, made only of `_test.go` files, and it is part of `go test ./...`.
+`v0.0.0-20261107115359-b1f2988eb753`. It is one Go package, `consumes`, made only of `_test.go` files, and it is part of `go test ./...`.
 If kogen-coordinator changes something listed in the inventory below, a test here fails, so a producer's landing can run this suite instead of building and testing kogen-shaping in full.
 
 ## What it pins

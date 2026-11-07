@@ -1200,7 +1200,11 @@ func TestRefineRefusalsBeforeTheModel(t *testing.T) {
 		f := newRefFx(t, refOpts{})
 		f.newSession()
 		exit, err := Refine(context.Background(), f.S, RefineInput{Project: f.Root, Slug: "missing", Hash: f.hash0, Request: "x"})
-		shpWantError(t, err, "intent", "not_found", "Intent does not exist", 2)
+		e := shpWantError(t, err, "intent", "not_found", "", 2)
+		shpEq(t, "detail", e.Detail, "Intent does not exist: missing (looked in .kogen/intents/missing)")
+		if len(e.Lines) == 0 || e.Lines[0] != "kogen intent list shows existing Intents; kogen intent shape missing <request-file> creates one" {
+			t.Fatalf("Lines = %q, want the next-command line first", e.Lines)
+		}
 		shpEq(t, "exit", exit, 2)
 	})
 	t.Run("an Intent that is not ready", func(t *testing.T) {
