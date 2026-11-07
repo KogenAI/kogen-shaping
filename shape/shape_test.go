@@ -783,12 +783,32 @@ func TestShapeRejectsAnAbandonedDeclaredStep(t *testing.T) {
 
 // ---- tools and probes ----
 
+// Compare the complete progress lines after normalizing only their elapsed fields.
+func assertProbeProgress(t *testing.T, progress, command, status string) {
+	t.Helper()
+	elapsed := regexp.MustCompile(`\d+\.\d s|\d+ s`)
+	var relevant []string
+	for _, line := range strings.Split(progress, "\n") {
+		if strings.HasPrefix(line, "kogen: shaping (request 1,") ||
+			strings.HasPrefix(line, "kogen: probe: "+command+" (") ||
+			strings.HasPrefix(line, "kogen: probe result: exit status:") {
+			relevant = append(relevant, elapsed.ReplaceAllString(line, "<elapsed>"))
+		}
+	}
+	want := []string{
+		"kogen: shaping (request 1, <elapsed>)",
+		"kogen: probe: " + command + " (<elapsed>)",
+		"kogen: probe result: exit status: " + status + "; timed_out: false; wall: <elapsed> (<elapsed>)",
+	}
+	shpEq(t, "exact probe progress", strings.Join(relevant, "\n"), strings.Join(want, "\n"))
+}
+
 func TestShapeProbeRunsOutsideTheProjectAndItsResultIsRecorded(t *testing.T) {
 	if !isolatedTmp(t) {
 		return
 	}
 	probe := shpCall("p1", "probe", map[string]any{
-		"command": "printf focused; pwd; cat extra.txt",
+		"command": "printf focused; pwd; cat extra.txt; printf stdout-sentinel; printf stderr-sentinel >&2",
 		"files":   []any{map[string]any{"path": "extra.txt", "content": " scratch\n"}},
 	})
 	f := newShpFx(t, shpAnswer(probe), shpSubmit("c1", shpFiles()), shpAck("c2"))
@@ -804,8 +824,11 @@ func TestShapeProbeRunsOutsideTheProjectAndItsResultIsRecorded(t *testing.T) {
 	if strings.Contains(out, f.Root) {
 		t.Fatal("the probe ran outside the project folder")
 	}
-	shpMatch(t, "progress", f.Stderr.String(), `kogen: probe: printf focused; pwd; cat extra.txt \(\d+ s\)`)
+	shpMatch(t, "progress", f.Stderr.String(), `kogen: probe: printf focused; pwd; cat extra.txt; printf stdout-sentinel; printf stderr-sentinel >&2 \(\d+ s\)`)
 	shpMatch(t, "progress", f.Stderr.String(), `kogen: probe result: exit status: 0; timed_out: false; wall: \d+\.\d s \(\d+ s\)`)
+	assertProbeProgress(t, f.Stderr.String(), "printf focused; pwd; cat extra.txt; printf stdout-sentinel; printf stderr-sentinel >&2", "0")
+	shpContains(t, "probe stdout", out, "stdout-sentinel")
+	shpContains(t, "probe stderr", out, "stderr-sentinel")
 	if f.exists("extra.txt") {
 		t.Fatal("the project stays untouched")
 	}
@@ -827,7 +850,7 @@ func TestShapeProbeRunsOutsideTheProjectAndItsResultIsRecorded(t *testing.T) {
 func TestShapeProbeFailuresAreFindingsNotErrors(t *testing.T) {
 	parallel(t)
 	f := newShpFx(t, shpAnswer(
-		shpCall("p1", "probe", map[string]any{"command": "echo nope; exit 3"}),
+		shpCall("p1", "probe", map[string]any{"command": "echo nope; printf stdout-sentinel; printf stderr-sentinel >&2; exit 3"}),
 		shpCall("p2", "probe", map[string]any{"command": "true", "files": []any{map[string]any{"path": "../escape.txt", "content": "x"}}}),
 		shpCall("p3", "probe", map[string]any{"command": "true", "files": []any{map[string]any{"path": "x"}}}),
 		shpCall("p4", "probe", map[string]any{}),
@@ -846,6 +869,9 @@ func TestShapeProbeFailuresAreFindingsNotErrors(t *testing.T) {
 	}
 	shpEq(t, "probe statuses", statuses, "failed,failed,failed,failed,")
 	shpContains(t, "progress", f.Stderr.String(), "kogen: probe result: exit status: 3; timed_out: false; wall: ")
+	assertProbeProgress(t, f.Stderr.String(), "echo nope; printf stdout-sentinel; printf stderr-sentinel >&2; exit 3", "3")
+	shpContains(t, "probe stdout", out["p1"], "stdout-sentinel")
+	shpContains(t, "probe stderr", out["p1"], "stderr-sentinel")
 	shpContains(t, "progress", f.Stderr.String(), "kogen: probe result: tool error (")
 }
 
