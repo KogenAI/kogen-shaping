@@ -541,7 +541,7 @@ func TestShapeInvalidSubmitIsRetriedWithFeedbackAndKeepsEarlierProposals(t *test
 func TestShapeThreeInvalidSubmissionsStopShapingAndWriteNothing(t *testing.T) {
 	parallel(t)
 	outside := map[string]any{"files": []any{map[string]any{"path": "calc.js", "content": "x"}}}
-	const problem = "calc.js: shaping may write only .kogen/intents/is-even/{intent.md,acceptance.feature,model.qnt,controls.json} and step files under features/steps/"
+	const problem = "calc.js: shaping may write only files under .kogen/intents/is-even/ and step files under features/steps/"
 	f := newShpFx(t, shpSubmit("c1", outside), shpSubmit("c2", outside), shpSubmit("c3", outside))
 	exit, err := f.shape("Add calc.is_even(n).")
 	e := shpWantError(t, err, "shape", "invalid_output", "the shaper's output was not a valid Intent after 3 attempts", 1)
@@ -564,7 +564,7 @@ func TestShapeSubmissionEnvelopeProblems(t *testing.T) {
 		want string
 	}{
 		{"a file outside the Intent and the steps folder", map[string]any{"files": []any{file("calc.js", "x")}},
-			"calc.js: shaping may write only .kogen/intents/is-even/{intent.md,acceptance.feature,model.qnt,controls.json} and step files under features/steps/"},
+			"calc.js: shaping may write only files under .kogen/intents/is-even/ and step files under features/steps/"},
 		{"a path that is not normal", map[string]any{"files": []any{file("features/steps/../steps/a.js", "x")}}, "features/steps/../steps/a.js: paths must be relative and normal"},
 		{"an absolute path", map[string]any{"files": []any{file("/etc/passwd", "x")}}, "/etc/passwd: paths must be relative and normal"},
 		{"a missing content", map[string]any{"files": []any{map[string]any{"path": "features/steps/a.js"}}}, "every file needs a path and a content string"},

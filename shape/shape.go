@@ -2259,6 +2259,12 @@ func (sh *shaping) validateFiles(list []any) (submission, []string, error) {
 	var problems []string
 	var files []proposedFile
 	seen := map[string]bool{}
+	extra := map[string]bool{}
+	for p := range sh.proposed {
+		if intentFolderFile(slug, own, p) {
+			extra[p] = true
+		}
+	}
 	for _, f := range list {
 		m, _ := f.(map[string]any)
 		p, pok := m["path"].(string)
@@ -2271,6 +2277,11 @@ func (sh *shaping) validateFiles(list []any) (submission, []string, error) {
 		case !normalPath(p):
 			problems = append(problems, p+": paths must be relative and normal")
 		case slices.Contains(own, p):
+		case intentFolderFile(slug, own, p):
+			if len(c) > maxIntentFolderFileBytes {
+				problems = append(problems, fmt.Sprintf("%s: a file under %s/ may hold at most %d bytes", p, project.IntentDir(slug), maxIntentFolderFileBytes))
+			}
+			extra[p] = true
 		case steps != "" && strings.HasPrefix(p, steps+"/"):
 			if !scopedStepPath(steps, slug, p) {
 				problems = append(problems, p+": new step files must be named "+steps+"/"+slug+"__<suffix>.js (nonempty suffix); prefix step sentences and definitions with "+slug+": ")
@@ -2280,10 +2291,13 @@ func (sh *shaping) validateFiles(list []any) (submission, []string, error) {
 			if steps == "" {
 				where = "commands.acceptance.steps_dir (unset)"
 			}
-			problems = append(problems, p+": shaping may write only "+project.IntentDir(slug)+"/{intent.md,acceptance.feature,model.qnt,controls.json} and step files under "+where+"/")
+			problems = append(problems, p+": shaping may write only files under "+project.IntentDir(slug)+"/ and step files under "+where+"/")
 		}
 		seen[p] = true
 		files = append(files, proposedFile{p, c})
+	}
+	if len(extra) > maxIntentFolderFiles {
+		problems = append(problems, fmt.Sprintf("shaping may write at most %d files under %s/ besides intent.md, acceptance.feature, model.qnt and controls.json", maxIntentFolderFiles, project.IntentDir(slug)))
 	}
 	if len(problems) > 0 {
 		return submission{}, problems, nil
@@ -2293,6 +2307,18 @@ func (sh *shaping) validateFiles(list []any) (submission, []string, error) {
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].path < files[j].path })
 	return submission{files: files}, nil, nil
+}
+
+// The bounds of the extra files shaping may write under the Intent's own folder.
+const (
+	maxIntentFolderFiles     = 16
+	maxIntentFolderFileBytes = 65536
+)
+
+// intentFolderFile reports whether p is a normal path below the Intent's own folder other than
+// its four own files; the caller has checked that p is normal.
+func intentFolderFile(slug string, own []string, p string) bool {
+	return strings.HasPrefix(p, project.IntentDir(slug)+"/") && normalPath(p) && !slices.Contains(own, p)
 }
 
 // normalPath reports whether p is relative and already in its normal form: expanding it

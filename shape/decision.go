@@ -167,7 +167,7 @@ func decisionOutcome(items []decisionItem, request, intent string) (map[string]a
 		counts[it.verdict]++
 		events[i] = map[string]any{"statement": it.statement, "request_quotes": it.quotes, "verdict": it.verdict,
 			"intent_value": it.intentValue, "request_value": it.requestValue, "difference": it.difference, "why": it.why}
-		if it.verdict == "follows" || markedStatement(it.statement) {
+		if it.verdict == "follows" || markedStatement(intent, it.statement) {
 			continue
 		}
 		quoted := make([]string, len(it.quotes))
@@ -252,8 +252,51 @@ func (sh *shaping) decisionCheck(ctx context.Context, intent string) ([]string, 
 	return lines, nil
 }
 
-// markedStatement is a statement that carries an assumption or evidence marker: the decision
-// check does not count it as a problem.
-func markedStatement(statement string) bool {
-	return strings.Contains(statement, "(assumption:") || strings.Contains(statement, "(evidence:")
+// markedStatement reports whether every occurrence of the statement in intent.md (compared
+// after whitespace normalisation) has an assumption or evidence marker on every intent.md line
+// it spans: the decision check does not count such a statement as a problem. A statement that
+// does not occur in intent.md is not marked.
+func markedStatement(intent, statement string) bool {
+	needle := normalizeWhitespace(statement)
+	if needle == "" {
+		return false
+	}
+	lines := strings.Split(intent, "\n")
+	marked := make([]bool, len(lines))
+	var text []byte
+	var lineOf []int
+	pendingSpace := false
+	for i, line := range lines {
+		marked[i] = strings.Contains(line, "(assumption:") || strings.Contains(line, "(evidence:")
+		for j := 0; j < len(line); j++ {
+			if c := line[j]; c == ' ' || c == '\t' || c == '\r' {
+				pendingSpace = true
+				continue
+			}
+			if pendingSpace && len(text) > 0 {
+				text = append(text, ' ')
+				lineOf = append(lineOf, i)
+			}
+			pendingSpace = false
+			text = append(text, line[j])
+			lineOf = append(lineOf, i)
+		}
+		pendingSpace = true
+	}
+	found := false
+	hay := string(text)
+	for from := 0; ; {
+		k := strings.Index(hay[from:], needle)
+		if k < 0 {
+			return found
+		}
+		found = true
+		start, end := from+k, from+k+len(needle)-1
+		for l := lineOf[start]; l <= lineOf[end]; l++ {
+			if !marked[l] {
+				return false
+			}
+		}
+		from = start + 1
+	}
 }

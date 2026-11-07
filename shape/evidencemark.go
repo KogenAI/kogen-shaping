@@ -3,6 +3,7 @@ package shape
 import (
 	"fmt"
 	"path"
+	"slices"
 	"strings"
 )
 
@@ -143,48 +144,113 @@ func (sh *shaping) evidenceCheck(intent string) ([]string, []carriedItem, error)
 						}
 						tracked, listed = strings.Split(strings.TrimSuffix(out, "\x00"), "\x00"), true
 					}
-					found := false
-					for _, f := range tracked {
-						if f == it.path || strings.HasSuffix(it.path, "/") && strings.HasPrefix(f, it.path) {
-							found = true
-							break
-						}
-					}
-					dir := strings.HasSuffix(it.path, "/")
-					cleaned := cleanCitedPath(it.path)
-					var held receipt
-					var heldOK, changed bool
-					if found && !dir && sh.ledger != nil && (sh.ext != nil || !sh.readPaths[cleaned]) {
-						held, heldOK, changed = sh.ledger.fileReceipt(cleaned, sh.checkoutDigest(cleaned))
-					}
-					changedLine := fmt.Sprintf("- decision %d: %s changed since round %d read it; read it again", n, it.path, held.Round)
+					var cited []string
 					switch {
-					case !found:
-						problems = append(problems, fmt.Sprintf("- decision %d: %s is not a file or directory tracked at HEAD", n, it.path))
-					case heldOK:
-						carried = append(carried, carriedItem{n, strings.TrimSpace(raw), held})
-					case sh.ext != nil:
-						if !sh.inspected {
-							if changed {
-								problems = append(problems, changedLine)
-							} else {
-								problems = append(problems, fmt.Sprintf("- decision %d: this shaping's session read nothing, so %s was not read", n, it.path))
-							}
+					case isTracked(tracked, it.path):
+						cited = []string{it.path}
+					default:
+						var untracked string
+						cited, untracked = wordCitations(tracked, it.path)
+						switch {
+						case len(cited) == 0:
+							problems = append(problems, fmt.Sprintf("- decision %d: %s is not a file or directory tracked at HEAD", n, it.path))
+						case untracked != "":
+							problems = append(problems, fmt.Sprintf("- decision %d: %s is not a file or directory tracked at HEAD", n, untracked))
+							cited = nil
 						}
-					case dir && !sh.listedCovers(cleaned):
-						problems = append(problems, fmt.Sprintf("- decision %d: this shaping did not list %s", n, it.path))
-					case !dir && !sh.readPaths[cleaned]:
-						if changed {
-							problems = append(problems, changedLine)
-						} else {
-							problems = append(problems, fmt.Sprintf("- decision %d: this shaping did not read %s", n, it.path))
+					}
+					for _, cite := range cited {
+						itemText := strings.TrimSpace(raw)
+						if cite != it.path {
+							itemText = cite
 						}
+						problems, carried = sh.checkCitedPath(problems, carried, n, cite, itemText)
 					}
 				}
 			}
 		}
 	}
 	return problems, carried, nil
+}
+
+// isTracked reports whether p is a file tracked at HEAD, or a directory written with a trailing
+// slash that holds a tracked file.
+func isTracked(tracked []string, p string) bool {
+	for _, f := range tracked {
+		if f == p || strings.HasSuffix(p, "/") && strings.HasPrefix(f, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// wordCitations reads an item that is not a whole tracked path as space-separated words: the
+// cited paths are its leading words that are each tracked (after removing one trailing comma and
+// enclosing backticks), none when the first word is not; the rest is prose, except that the first
+// later word that looks like a file path (a slash and a file name with an extension, after
+// removing enclosing backticks, quotes or parentheses and trailing periods, commas, semicolons
+// or colons) and is not a file tracked at HEAD is returned as untracked.
+func wordCitations(tracked []string, item string) (cited []string, untracked string) {
+	words := strings.Fields(item)
+	i := 0
+	for ; i < len(words); i++ {
+		w := strings.TrimSuffix(words[i], ",")
+		if len(w) >= 2 && strings.HasPrefix(w, "`") && strings.HasSuffix(w, "`") {
+			w = w[1 : len(w)-1]
+		}
+		if !isTracked(tracked, w) {
+			break
+		}
+		cited = append(cited, w)
+	}
+	if len(cited) == 0 {
+		return nil, ""
+	}
+	for _, w := range words[i:] {
+		w = strings.TrimLeft(w, "`\"'(")
+		w = strings.TrimRight(w, "`\"')"+".,;:")
+		base := path.Base(w)
+		dot := strings.LastIndex(base, ".")
+		if strings.Contains(w, "/") && dot > 0 && dot < len(base)-1 && !slices.Contains(tracked, w) {
+			return cited, w
+		}
+	}
+	return cited, ""
+}
+
+// checkCitedPath applies the read and listed rules to one cited tracked path of decision n and
+// returns the problems and carried items with its result added; item is the text a carried
+// receipt is recorded under.
+func (sh *shaping) checkCitedPath(problems []string, carried []carriedItem, n int, citedPath, item string) ([]string, []carriedItem) {
+	dir := strings.HasSuffix(citedPath, "/")
+	cleaned := cleanCitedPath(citedPath)
+	var held receipt
+	var heldOK, changed bool
+	if !dir && sh.ledger != nil && (sh.ext != nil || !sh.readPaths[cleaned]) {
+		held, heldOK, changed = sh.ledger.fileReceipt(cleaned, sh.checkoutDigest(cleaned))
+	}
+	changedLine := fmt.Sprintf("- decision %d: %s changed since round %d read it; read it again", n, citedPath, held.Round)
+	switch {
+	case heldOK:
+		carried = append(carried, carriedItem{n, item, held})
+	case sh.ext != nil:
+		if !sh.inspected {
+			if changed {
+				problems = append(problems, changedLine)
+			} else {
+				problems = append(problems, fmt.Sprintf("- decision %d: this shaping's session read nothing, so %s was not read", n, citedPath))
+			}
+		}
+	case dir && !sh.listedCovers(cleaned):
+		problems = append(problems, fmt.Sprintf("- decision %d: this shaping did not list %s", n, citedPath))
+	case !dir && !sh.readPaths[cleaned]:
+		if changed {
+			problems = append(problems, changedLine)
+		} else {
+			problems = append(problems, fmt.Sprintf("- decision %d: this shaping did not read %s", n, citedPath))
+		}
+	}
+	return problems, carried
 }
 
 // evidenceGate refuses a written candidate whose Decisions cite a path that is not tracked at

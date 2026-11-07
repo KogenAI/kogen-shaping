@@ -298,7 +298,7 @@ func TestShapeForceNoToolBound(t *testing.T) {
 		shpEq(t, "exit", exit, 1)
 		shpEq(t, "requests", len(f.Prov.requests()), 9)
 		shpEq(t, "lines", strings.Join(e.Lines, "|"), "the shaper ended without calling submit|last refusal (attempt 2, gate validation):|"+
-			"calc.js: shaping may write only .kogen/intents/is-even/{intent.md,acceptance.feature,model.qnt,controls.json} and step files under features/steps/|last tool-free answer: Last words.")
+			"calc.js: shaping may write only files under .kogen/intents/is-even/ and step files under features/steps/|last tool-free answer: Last words.")
 		shapeAbsent(t, f)
 	})
 	// The stop after readiness failures names the unacknowledged submission and its file.

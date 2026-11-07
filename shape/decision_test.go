@@ -233,3 +233,26 @@ func TestNativeShapeDecisionCheckInvalidAnswer(t *testing.T) {
 		})
 	}
 }
+
+func TestMarkedStatementOnEveryOccupiedLine(t *testing.T) {
+	parallel(t)
+	const decision = "- Odd numbers return False (source: request)"
+	for _, c := range []struct {
+		name, intent, statement string
+		want                    bool
+	}{
+		{"marker elsewhere on the line", "## Decisions\n- Odd numbers return False (evidence: README.md) (source: request)\n", "Odd numbers return False", true},
+		{"assumption after the text", "## Decisions\n- Zero is even (assumption: silent) (source: request)\n", "Zero is even", true},
+		{"marker inside the statement text", "## Decisions\n- Zero is even (assumption: silent) (source: request)\n", "- Zero is even (assumption: silent) (source: request)", true},
+		{"marker on the next line", "## Decisions\n" + decision + "\n- Zero (assumption: silent) (source: request)\n", "Odd numbers return False", false},
+		{"two lines, one marker", "x (evidence: README.md)\nand zero is even.\n", "x (evidence: README.md) and zero is even.", false},
+		{"two lines, both marked", "x (evidence: README.md)\nand zero (assumption: a) is even.\n", "x (evidence: README.md) and zero (assumption: a) is even.", true},
+		{"statement not in intent", "## Decisions\n- Zero (assumption: silent) (source: request)\n", "- Zero is even (assumption: silent) (source: request)", false},
+		{"one unmarked occurrence of two", "a b (evidence: x)\na b\n", "a b", false},
+		{"unmarked", "## Decisions\n" + decision + "\n", decision, false},
+	} {
+		if got := markedStatement(c.intent, c.statement); got != c.want {
+			t.Errorf("%s: marked = %v, want %v", c.name, got, c.want)
+		}
+	}
+}

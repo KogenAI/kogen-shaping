@@ -30,6 +30,15 @@ Before the first submission: decisions submitted are recorded as D<n>, numbered 
 
 When the request asks for properties a step can observe, the last check needs `.kogen/intents/<slug>/controls.json`; include it with the first package. Its form is `{"correct":{"files":{"path":"whole content"}},"wrong":[{"name":"one property wrong","scenario":"scenario name","step":"Then exact feature text","files":{"path":"whole replacement content"}}]}`. The correct implementation makes every scenario pass. Each wrong implementation overlays it and gets one property wrong, naming a scenario and the step line that must reject it, copied as acceptance.feature writes it, keyword included. Supply at most 7 wrong implementations; each implementation has at most 8 files and 65536 content bytes, and no acceptance machinery. Kogen runs them within the existing 300-second total check cap. These wrong-implementation controls are not Feasibility's observer controls.
 
+Before the first submission, write the forms Kogen's checks require:
+- Assumption and evidence markers. Mark a Decision you made without evidence the user must confirm with (assumption: <what the user must confirm>). Cite the repository evidence that decides a Decision with (evidence: <tracked path>), naming files this shaping read or directories it listed, tracked at HEAD, or ran `<command>` for a command a probe of this shaping ran; separate items with "; ". Evidence items are paths and commands only, never prose. Markers go before the trailing tag: every Decisions line ends with exactly (source: request) or (source: answer <n>), and nothing follows it.
+- Repository facts. A repository fact (test location, framework, check command, current or unchanged behavior) is either cited with an evidence marker or left out.
+- Examples. Concrete examples (inputs and their results) belong in acceptance.feature, not in intent.md or Tests lines.
+- The Tests line form. Each line of `## Tests` is `- <rule>: <test> (<layer>)`, with the layer last.
+- Step sentences are Cucumber Expressions, not regular expressions: parentheses make the enclosed text optional and `/` separates alternatives, so escape a literal `(`, `{` or `/` with a backslash; "(s)" is optional text.
+- Exit-code steps. A step that checks an exit code runs a built program (compile it first, then run the binary), not go run, npm run or npx, whose exit codes are those of the tool.
+- Given and Then. Given steps pass on the unchanged tree; each scenario's failure today comes from a Then step.
+
 The Intent's files:
 1. `intent.md`, exactly in this shape:
 
@@ -42,11 +51,13 @@ Acceptance:
 - .kogen/intents/<slug>/acceptance.feature
 - <each step file the feature uses that this Intent adds or edits>
 
-<Short prose: the outcome and its boundaries, including what existing behavior is replaced or removed.>
+<Short prose: the outcome and its boundaries as the request states them, including what the request replaces or removes.>
 
 ## Decisions
 - <each UI/UX decision> (source: request)
 - <decided from an answer> (source: answer <n>)
+- <choice the repository settles> (evidence: <tracked path>) (source: request)
+- <choice decided without evidence> (assumption: <what the user must confirm>) (source: request)
 
 ## Source comparison
 - <addressed, omitted, conflicting or superseded behavior/non-secret literal; source and complete proposed contract references>

@@ -110,6 +110,30 @@ func TestRenderedDecisionAndControlsGuidance(t *testing.T) {
 			t.Errorf("guidance missing %q", want)
 		}
 	}
+	for _, want := range []string{
+		"Before the first submission, write the forms Kogen's checks require:",
+		"(assumption: <what the user must confirm>)", "(evidence: <tracked path>)",
+		"- <choice the repository settles> (evidence: <tracked path>) (source: request)",
+		"- <choice decided without evidence> (assumption: <what the user must confirm>) (source: request)",
+		"ran `<command>`", "Evidence items are paths and commands only, never prose.",
+		"Markers go before the trailing tag: every Decisions line ends with exactly (source: request) or (source: answer <n>), and nothing follows it.",
+		"A repository fact (test location, framework, check command, current or unchanged behavior) is either cited with an evidence marker or left out.",
+		"Concrete examples (inputs and their results) belong in acceptance.feature, not in intent.md or Tests lines.",
+		"- <rule>: <test> (<layer>)", "with the layer last", "Step sentences are Cucumber Expressions", "is optional text",
+		"A step that checks an exit code runs a built program", "not go run",
+		"Given steps pass on the unchanged tree; each scenario's failure today comes from a Then step.",
+		"<Short prose: the outcome and its boundaries as the request states them, including what the request replaces or removes.>",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("guidance missing %q", want)
+		}
+	}
+	if strings.Contains(text, "including what existing behavior is replaced or removed") {
+		t.Error("guidance keeps the old prose line")
+	}
+	if i, j := strings.Index(text, "Before the first submission, write the forms"), strings.Index(text, "The Intent's files:"); i < 0 || i > j {
+		t.Error("the forms paragraph does not come before the Intent's files")
+	}
 	if !strings.Contains(externalNote, "A command this external session ran is no evidence of a submitted decision; cite the files read and put what the command showed in the decision's uncertainty.") {
 		t.Error("external note missing evidence rule")
 	}
