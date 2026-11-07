@@ -259,7 +259,7 @@ func TestShapeQuestionRefusalsAreTheLastLineOfANotReadyIntent(t *testing.T) {
 	exit, err := f.shape("Add calc.is_even(n).")
 	e := shpWantError(t, err, "intent", "not_ready", "", 1)
 	shpEq(t, "exit", exit, 1)
-	shpEq(t, "lines", strings.Join(e.Lines, "\n"), strings.Join([]string{
+	shpContains(t, "lines", strings.Join(e.Lines, "\n"), strings.Join([]string{
 		"- decision 1: nothing/here.rb is not a file or directory tracked at HEAD",
 		"earliest unresolved refusal (attempt 1, gate question_check):",
 		"- question 1 (technical): Which engine? | why: a technical question | decide it from what the repository and the request establish",

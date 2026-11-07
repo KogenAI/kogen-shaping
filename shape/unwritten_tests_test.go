@@ -103,7 +103,7 @@ func TestUnwrittenTestsThreeTimesEndNotReadyWithTheItems(t *testing.T) {
 	exit, err := f.shape("Add calc.is_even(n).")
 	e := shpWantError(t, err, "intent", "not_ready", "the Intent is not ready to build", 1)
 	shpEq(t, "exit", exit, 1)
-	shpEq(t, "lines", strings.Join(e.Lines, "\n"), "- Even numbers (line 2): TestWidgetDoubles: did not run (no tests to run)")
+	shpContains(t, "lines", strings.Join(e.Lines, "\n"), "- Even numbers (line 2): TestWidgetDoubles: did not run (no tests to run)")
 	shpEq(t, "requests", len(f.Prov.requests()), 3)
 	shpEq(t, "refused events", len(shpNamed(f.events(), "submission_refused")), 3)
 	if f.exists(".kogen/local/readiness/is-even.json") {

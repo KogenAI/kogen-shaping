@@ -604,7 +604,7 @@ func TestContractCheckEnvironmentFindings(t *testing.T) {
 		exit, err := f.shape("Add calc.is_even(n).")
 		e := shpWantError(t, err, "intent", "not_ready", "the Intent is not ready to build", 1)
 		item := strings.Split(ccEnvRefusal, "\n")[1]
-		if exit != 1 || !reflect.DeepEqual(e.Lines, []string{item}) {
+		if exit != 1 || !strings.Contains(strings.Join(e.Lines, "\n"), item) {
 			t.Fatalf("exit %d lines %q", exit, e.Lines)
 		}
 		// The unchanged resubmission is refused again with the same text and no new review.
@@ -621,8 +621,8 @@ func TestContractCheckEnvironmentFindings(t *testing.T) {
 		var out strings.Builder
 		s.Stdout, s.Stderr = &out, &out
 		exit, err = Approve(context.Background(), s, ApproveInput{Project: f.Root, Slug: shpSlug, Hash: rec.SHA256})
-		e = shpWantError(t, err, "intent", "contract_contradicts", "", 1)
-		if exit != 1 || !reflect.DeepEqual(e.Lines, []string{item}) {
+		e = shpWantError(t, err, "intent", "not_ready", "", 1)
+		if exit != 1 || !strings.Contains(strings.Join(e.Lines, "\n"), item) {
 			t.Fatalf("approve: exit %d lines %q", exit, e.Lines)
 		}
 	})
@@ -749,7 +749,7 @@ func TestContractCheckKeptContradictionEndsNotReadyAndApprovalRefusesIt(t *testi
 		t.Fatalf("exit %d", exit)
 	}
 	item := strings.Split(ccRefusal, "\n")[1]
-	if !reflect.DeepEqual(e.Lines, []string{item}) {
+	if !strings.Contains(strings.Join(e.Lines, "\n"), item) {
 		t.Fatalf("lines %q", e.Lines)
 	}
 	// The unchanged resubmissions are refused again with the same text: no new review, no new
@@ -794,8 +794,8 @@ func TestContractCheckKeptContradictionEndsNotReadyAndApprovalRefusesIt(t *testi
 	}
 	for _, hash := range []string{"", rec.SHA256} {
 		exit, _, err := approve(hash)
-		e := shpWantError(t, err, "intent", "contract_contradicts", "Shape's contract check found acceptance expectations that contradict the Intent or code it keeps unchanged; correct the Intent's files, or shape it again with kogen intent shape is-even <request-file>", 1)
-		if exit != 1 || !reflect.DeepEqual(e.Lines, []string{item}) {
+		e := shpWantError(t, err, "intent", "not_ready", "Shape refused this draft; refusing check: contract_review", 1)
+		if exit != 1 || !strings.Contains(strings.Join(e.Lines, "\n"), item) {
 			t.Fatalf("approve %q: exit %d lines %q", hash, exit, e.Lines)
 		}
 		if f.exists(".kogen/local/approvals/is-even.json") {
@@ -803,17 +803,21 @@ func TestContractCheckKeptContradictionEndsNotReadyAndApprovalRefusesIt(t *testi
 		}
 	}
 
-	// A record of another hash (the files were edited) or one that does not parse has no effect.
+	// Editing the package or the old hash-bound record cannot clear the Shape refusal.
 	f.write(ccIntentPath, shpScopedIntentMD+"\nNothing else changes.\n")
-	if exit, out, err := approve(""); err != nil || exit != 5 {
-		t.Fatalf("hand-corrected card: exit %d, err %v\n%s", exit, err, out)
+	if exit, _, err := approve(""); exit != 1 {
+		t.Fatalf("hand-edited card: exit %d, err %v", exit, err)
+	} else {
+		shpWantError(t, err, "intent", "not_ready", "", 1)
 	}
 	f.write(ccIntentPath, shpScopedIntentMD)
 	if err := os.WriteFile(recordPath, []byte("not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if exit, out, err := approve(""); err != nil || exit != 5 {
-		t.Fatalf("unparseable record: exit %d, err %v\n%s", exit, err, out)
+	if exit, _, err := approve(""); exit != 1 {
+		t.Fatalf("unparseable record: exit %d, err %v", exit, err)
+	} else {
+		shpWantError(t, err, "intent", "not_ready", "", 1)
 	}
 
 	// A Shape of the slug that ends ready removes the record.

@@ -187,7 +187,7 @@ func TestShapeRefusesWhatItCannotShape(t *testing.T) {
 		f := newShpFx(t)
 		f.write(".kogen/intents/is-even/intent.md", shpScopedIntentMD)
 		exit, err := f.shape("x")
-		shpWantError(t, err, "intent", "exists", "is-even is already shaped; edit its files, or delete .kogen/intents/is-even/ and shape again", 5)
+		shpWantError(t, err, "intent", "exists", "is-even is already shaped", 5)
 		shpEq(t, "exit", exit, 5)
 		shpEq(t, "requests", len(f.Prov.requests()), 0)
 	})
@@ -730,10 +730,11 @@ func TestShapeUndefinedStepGoesBackToTheShaperAndStaysNotReady(t *testing.T) {
 	exit, err := f.shape("Add calc.is_even(n).")
 	e := shpWantError(t, err, "intent", "not_ready", "the Intent is not ready to build", 1)
 	shpEq(t, "exit", exit, 1)
-	shpEq(t, "lines", strings.Join(e.Lines, "\n"), "acceptance.feature line 3: undefined step: Given is-even: the number 4\nacceptance.feature line 4: undefined step: Then is-even: it is even\nacceptance.feature line 6: undefined step: Given is-even: the number 3\nacceptance.feature line 7: undefined step: Then is-even: it is not even")
+	shpContains(t, "lines", strings.Join(e.Lines, "\n"), "acceptance.feature line 3: undefined step: Given is-even: the number 4\nacceptance.feature line 4: undefined step: Then is-even: it is even\nacceptance.feature line 6: undefined step: Given is-even: the number 3\nacceptance.feature line 7: undefined step: Then is-even: it is not even")
 	reqs := f.Prov.requests()
 	shpEq(t, "requests", len(reqs), 3)
-	shpEq(t, "feedback", shpOutputs(reqs[1])["c1"], "not ready:\n"+strings.Join(e.Lines, "\n"))
+	shpEq(t, "feedback", shpOutputs(reqs[1])["c1"], "not ready:\nacceptance.feature line 3: undefined step: Given is-even: the number 4\nacceptance.feature line 4: undefined step: Then is-even: it is even\nacceptance.feature line 6: undefined step: Given is-even: the number 3\nacceptance.feature line 7: undefined step: Then is-even: it is not even")
+	shpContains(t, "recovery", strings.Join(e.Lines, "\n"), "Next: kogen intent shape is-even <request-file>")
 	// The files of the last attempt stay for the caller.
 	if !f.exists(".kogen/intents/is-even/acceptance.feature") {
 		t.Fatal("the files of a not-ready attempt stay")
@@ -1260,5 +1261,89 @@ func TestShapeQuestionsFileFollowsThePendingRoundAndGoesWhenReady(t *testing.T) 
 	}
 	if f.exists(".kogen/local/shaping/is-even/questions.json") || f.exists(".kogen/local/shaping/is-even/state.json") {
 		t.Fatal("a ready shape leaves neither questions.json nor state.json")
+	}
+}
+
+func TestFailedShapeBlocksApprovalUntilSuccessfulRetry(t *testing.T) {
+	parallel(t)
+	f := newShpFx(t, shpSubmit("c1", shpFiles()), shpAck("c2"), shpAck("c3"))
+	for _, v := range shpFiles()["files"].([]any) {
+		m := v.(map[string]any)
+		f.write(m["path"].(string), m["content"].(string))
+	}
+	hash := func() string {
+		cfg, err := project.LoadConfig(f.Root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		paths, err := project.Baseline(f.Root, shpSlug, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return project.Hash(f.Root, paths)
+	}
+	old := hash()
+	if err := os.RemoveAll(filepath.Join(f.Root, project.IntentDir(shpSlug))); err != nil {
+		t.Fatal(err)
+	}
+	f.setReport("UNDEFINED", 1)
+	_, err := f.shape("Add calc.is_even(n).")
+	shpWantError(t, err, "intent", "not_ready", "the Intent is not ready to build", 1)
+	f.setReport("FAILED", 1)
+	check := func(h string) {
+		t.Helper()
+		f.newSession()
+		exit, err := Approve(context.Background(), f.S, ApproveInput{Project: f.Root, Slug: shpSlug, Hash: h, By: "Fixture", Tools: verify.Tools{Node: os.Getenv("KOGEN_NODE"), Cucumber: os.Getenv("KOGEN_CUCUMBER"), Quint: os.Getenv("KOGEN_QUINT")}})
+		e, ok := sys.AsError(err)
+		if !ok || e.Reason != "not_ready" || e.Class != "intent" || exit == 0 {
+			t.Fatalf("approval: %d %v", exit, err)
+		}
+		shpContains(t, "check and recovery", e.Detail+strings.Join(e.Lines, "\n"), "kogen intent shape is-even <request-file>")
+		if f.exists(".kogen/local/approvals/is-even.json") || strings.Contains(f.Stdout.String(), "Approve with:") {
+			t.Fatal("refused draft was approved or presented")
+		}
+	}
+	check("")
+	check(hash())
+	check(old)
+	f.write(".kogen/intents/is-even/intent.md", f.read(".kogen/intents/is-even/intent.md")+"\nHand edit.\n")
+	check(hash())
+	f.Prov.mu.Lock()
+	f.Prov.seq = append(f.Prov.seq, shpSubmit("retry", shpFiles()), shpAck("retry-ack"))
+	f.Prov.mu.Unlock()
+	if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 0 {
+		t.Fatalf("retry: %d %v", exit, err)
+	}
+	f.newSession()
+	in := ApproveInput{Project: f.Root, Slug: shpSlug, By: "Fixture", Tools: verify.Tools{Node: os.Getenv("KOGEN_NODE"), Cucumber: os.Getenv("KOGEN_CUCUMBER"), Quint: os.Getenv("KOGEN_QUINT")}}
+	if exit, err := Approve(context.Background(), f.S, in); err != nil || exit != 5 || !strings.Contains(f.Stdout.String(), "Approve with:") {
+		t.Fatalf("card: %d %v", exit, err)
+	}
+	in.Hash = hash()
+	if exit, err := Approve(context.Background(), f.S, in); err != nil || exit != 0 || !f.exists(".kogen/local/approvals/is-even.json") {
+		t.Fatalf("approval: %d %v", exit, err)
+	}
+}
+
+func TestDeletingFailedDraftStartsNewShapeLifecycle(t *testing.T) {
+	parallel(t)
+	f := newShpFx(t, shpSubmit("c1", shpFiles()), shpAck("c2"), shpAck("c3"))
+	f.setReport("UNDEFINED", 1)
+	_, err := f.shape("Add calc.is_even(n).")
+	shpWantError(t, err, "intent", "not_ready", "the Intent is not ready to build", 1)
+	if err := os.RemoveAll(filepath.Join(f.Root, project.IntentDir(shpSlug))); err != nil {
+		t.Fatal(err)
+	}
+	f.setReport("FAILED", 1)
+	f.Prov.mu.Lock()
+	f.Prov.seq = append(f.Prov.seq, shpSubmit("fresh", shpFiles()), shpAck("fresh-ack"))
+	f.Prov.mu.Unlock()
+	if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 0 {
+		t.Fatalf("fresh shape: %d %v", exit, err)
+	}
+	f.newSession()
+	in := ApproveInput{Project: f.Root, Slug: shpSlug, By: "Fixture", Tools: verify.Tools{Node: os.Getenv("KOGEN_NODE"), Cucumber: os.Getenv("KOGEN_CUCUMBER"), Quint: os.Getenv("KOGEN_QUINT")}}
+	if exit, err := Approve(context.Background(), f.S, in); err != nil || exit != 5 {
+		t.Fatalf("card after fresh shape: %d %v", exit, err)
 	}
 }

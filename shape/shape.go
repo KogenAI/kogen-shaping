@@ -85,6 +85,14 @@ func shapeRun(ctx context.Context, s *sys.Session, in ShapeInput) (exit int, err
 	}
 	root, slug := repo.Dir, in.Slug
 	stateDir := filepath.Join(root, ".kogen/local/shaping", slug)
+	if _, statErr := os.Stat(filepath.Join(root, project.IntentDir(slug))); errors.Is(statErr, fs.ErrNotExist) {
+		if err := os.Remove(draftRefusalPath(root, slug)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return 0, err
+		}
+	} else if statErr != nil {
+		return 0, statErr
+	}
+
 	ev, err := NewEvidence(stateDir, slug)
 	if err != nil {
 		return 0, err
@@ -133,8 +141,13 @@ func shapeRun(ctx context.Context, s *sys.Session, in ShapeInput) (exit int, err
 	var ledger *decisionLedger
 	if st == nil {
 		if _, err := os.Stat(filepath.Join(root, project.IntentDir(slug))); err == nil {
-			return 0, sys.Fail("intent", "exists",
-				slug+" is already shaped; edit its files, or delete .kogen/intents/"+slug+"/ and shape again", 5)
+			refusal, err := readDraftRefusal(root, slug)
+			if err != nil {
+				return 0, err
+			}
+			if refusal == nil {
+				return 0, draftDiagnostic(root, slug, "exists", slug+" is already shaped", 5, nil, nil)
+			}
 		}
 		if err := os.Remove(filepath.Join(stateDir, ledgerFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return 0, err
@@ -749,9 +762,19 @@ func (sh *shaping) shape(ctx context.Context, st *state) (int, error) {
 					return 0, err
 				}
 			}
-			e := sys.Fail("intent", "not_ready", "the Intent is not ready to build", 1)
-			e.Lines = append(append(slices.Clone(res.problems), sh.earliestLines()...), sh.refusalCountsLines()...)
-			return 0, e
+			problems := append(append(slices.Clone(res.problems), sh.earliestLines()...), sh.refusalCountsLines()...)
+			data, err := json.Marshal(draftRefusal{Gate: sh.lastGate, Problems: problems})
+			if err != nil {
+				return 0, err
+			}
+			if err := os.WriteFile(draftRefusalPath(sh.root, sh.slug), data, 0600); err != nil {
+				return 0, err
+			}
+			var files []string
+			for p := range sh.originals {
+				files = append(files, p)
+			}
+			return 0, draftDiagnostic(sh.root, sh.slug, "not_ready", "the Intent is not ready to build", 1, append([]string{"Refusing check: " + sh.lastGate}, problems...), files)
 		}
 		e := sys.Fail("shape", "invalid_output", fmt.Sprintf("the shaper's output was not a valid Intent after %d attempts", submissionRetryLimit(sh.in.SubmissionRetryLimit)), 1)
 		e.Lines = append(append(slices.Clone(res.problems), sh.earliestLines()...), sh.refusalCountsLines()...)
@@ -793,6 +816,9 @@ func (sh *shaping) shape(ctx context.Context, st *state) (int, error) {
 		return 0, err
 	}
 	if err := sh.rd.RecordPass(sh.s, sh.slug, sh.ready); err != nil {
+		return 0, err
+	}
+	if err := os.Remove(draftRefusalPath(sh.root, sh.slug)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return 0, err
 	}
 	os.Remove(filepath.Join(sh.stateDir, "state.json"))

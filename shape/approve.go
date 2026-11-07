@@ -84,6 +84,18 @@ func approveRun(ctx context.Context, s *sys.Session, in ApproveInput) (int, erro
 
 func approveLocked(ctx context.Context, s *sys.Session, in ApproveInput, repo *git.Repo) (int, error) {
 	root, slug, prefix := repo.Dir, in.Slug, in.Hash
+	if _, err := os.Stat(filepath.Join(root, project.IntentDir(slug))); err == nil {
+		refusal, err := readDraftRefusal(root, slug)
+		if err != nil {
+			return 0, err
+		}
+		if refusal != nil {
+			e := sys.Fail("intent", "not_ready", "Shape refused this draft; refusing check: "+refusal.Gate, 1)
+			e.Lines = append(e.Lines, refusal.Problems...)
+			e.Lines = append(e.Lines, draftRecovery(slug)...)
+			return 0, e
+		}
+	}
 	unmerged, err := repo.Observing().OK("ls-files", "--unmerged", "--format=%(path)", "-z")
 	if err != nil {
 		return 0, err
