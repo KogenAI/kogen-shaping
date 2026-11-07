@@ -9,122 +9,171 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/KogenAI/kogen-executor/agent"
 	"github.com/KogenAI/kogen-loop/tools"
 
 	"github.com/KogenAI/kogen-coordinator/project"
 )
 
-// scopeGate is the gate name of a candidate refused for being too large for one review.
+// scopeGate is the gate name of a candidate refused for holding more review material than the
+// review ceiling.
 const scopeGate = "scope"
 
-const scopeGuidance = "Above the bound, split the work into an ordered ## Stages plan of at least two stages, each with a real gate in its checks and each inside the bound, " +
-	"or narrow the Intent to the requested behaviour. A stage's goal names in backticks the files that stage changes; a named file that no stage goal names counts in every stage, " +
-	"and every stage carries the whole Intent package. Do not satisfy the bound by deleting requested behaviour: every behaviour and example the request asks for keeps its scenario. " +
+const scopeGuidance = "Above the ceiling this cannot be approved as one Intent: split the work into separately reviewable Intents. " +
+	"Narrow this Intent to its first part so that its estimate fits, and list every remaining part in a ## Split section of intent.md, one bullet per part, `- <slug>: <what the part delivers>`, " +
+	"naming in backticks the files that part changes; a part's estimate is the review inputs plus those files, and each part must fit the ceiling too. " +
+	"A ## Stages plan does not lower the estimate, because the final review carries every stage. " +
+	"Do not satisfy the ceiling by deleting requested behaviour: every behaviour and example the request asks for stays in this Intent or in a part. " +
 	"Resubmitting this candidate unchanged is refused again."
+
+const (
+	scopeReadme = "README.md"
+	scopeRules  = "docs/testing-rules.md"
+)
 
 // scopeSpan is a span of text between a pair of single backticks on one line.
 var scopeSpan = regexp.MustCompile("`([^`\n]+)`")
 
-// scopeFile is a file with the bytes it adds to one review.
+// scopeBullet is a bullet of the ## Split section: the slug of a part and what it delivers.
+var scopeBullet = regexp.MustCompile(`^- ([a-z0-9-]{3,48}): (.*)$`)
+
+// scopeFile is a file with the bytes it adds to the review material.
 type scopeFile struct {
 	path string
 	size int
 }
 
-// scopeInput is what the scope check counts: the candidate package as written, the blobs of
-// the HEAD tree and the Intent's scenarios, harnesses and stages.
+// scopePart is a remaining part of a split Intent.
+type scopePart struct {
+	slug, text string
+}
+
+// scopeInput is what the scope check counts: the candidate package as written, the review
+// inputs, the blobs of the HEAD tree and the Intent's scenarios, harnesses and split parts.
 type scopeInput struct {
-	intentText string
-	pkg        []scopeFile    // the Intent package in order: intent.md, the Acceptance: paths, the model
-	head       map[string]int // blob path -> size at HEAD
+	intentText string      // intent.md without its ## Split section
+	parts      []scopePart // the bullets of the ## Split section
+	pkg        []scopeFile // intent.md, the Acceptance: paths, the model
+	inputs     []scopeFile // README.md at HEAD and the testing rules
+	head       map[string]int
 	scenarios  int
 	harnesses  int
-	stages     []project.Stage // nil without a plan
-	bound      int
+	ceiling    int
 }
 
-// scopeSpans are the texts of the single-backtick spans of text, in order.
-func scopeSpans(text string) []string {
-	var spans []string
-	for _, m := range scopeSpan.FindAllStringSubmatch(text, -1) {
-		spans = append(spans, m[1])
+// scopeSplit separates the ## Split section of an intent.md from the rest of its text.
+func scopeSplit(text string) (string, []scopePart) {
+	var rest []string
+	var parts []scopePart
+	in := false
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimRight(line, " \t\r")
+		switch {
+		case line == "## Split":
+			in = true
+			continue
+		case in && strings.HasPrefix(line, "## "):
+			in = false
+		}
+		if !in {
+			rest = append(rest, line)
+		} else if m := scopeBullet.FindStringSubmatch(line); m != nil {
+			parts = append(parts, scopePart{m[1], m[2]})
+		}
 	}
-	return spans
+	return strings.Join(rest, "\n"), parts
 }
 
-// namedFiles are the files the Intent text names: spans that equal a HEAD blob path outside
-// .kogen/ and outside the Intent package, once each, in order of first appearance.
-func (in scopeInput) namedFiles() []scopeFile {
-	inPackage := map[string]bool{}
+// changedFiles are the files the text names as changed: single-backtick spans that equal a HEAD
+// blob path outside .kogen/, other than README.md and the Intent package, once each in order of
+// first appearance.
+func (in scopeInput) changedFiles(text string) []scopeFile {
+	skip := map[string]bool{scopeReadme: true}
 	for _, p := range in.pkg {
-		inPackage[p.path] = true
+		skip[p.path] = true
 	}
-	var named []scopeFile
-	seen := map[string]bool{}
-	for _, span := range scopeSpans(in.intentText) {
-		size, ok := in.head[span]
-		if !ok || seen[span] || inPackage[span] || strings.HasPrefix(span, ".kogen/") {
+	var changed []scopeFile
+	for _, m := range scopeSpan.FindAllStringSubmatch(text, -1) {
+		size, ok := in.head[m[1]]
+		if !ok || skip[m[1]] || strings.HasPrefix(m[1], ".kogen/") {
 			continue
 		}
-		seen[span] = true
-		named = append(named, scopeFile{span, size})
+		skip[m[1]] = true
+		changed = append(changed, scopeFile{m[1], size})
 	}
-	return named
+	return changed
 }
 
-// scopeUnit is one thing a review must hold: the whole Intent or one stage.
-type scopeUnit struct {
-	name  string
-	named []scopeFile
-}
-
-func (in scopeInput) units() []scopeUnit {
-	named := in.namedFiles()
-	if in.stages == nil {
-		return []scopeUnit{{"the Intent", named}}
-	}
-	goals := make([]map[string]bool, len(in.stages))
-	assigned := map[string]bool{}
-	for i, st := range in.stages {
-		goals[i] = map[string]bool{}
-		for _, span := range scopeSpans(st.Goal) {
-			goals[i][span] = true
-			assigned[span] = true
+func scopeSum(lists ...[]scopeFile) int {
+	n := 0
+	for _, list := range lists {
+		for _, f := range list {
+			n += f.size
 		}
 	}
-	units := make([]scopeUnit, len(in.stages))
-	for i, st := range in.stages {
-		units[i].name = fmt.Sprintf("stage %q", st.ID)
-		for _, f := range named {
-			if goals[i][f.path] || !assigned[f.path] {
-				units[i].named = append(units[i].named, f)
-			}
-		}
-	}
-	return units
+	return n
 }
 
-// scopeLines is the refusal of a candidate with a unit over the bound, nil when every unit fits.
+func scopeAreas(files []scopeFile) int {
+	areas := map[string]bool{}
+	for _, f := range files {
+		areas[path.Dir(f.path)] = true
+	}
+	return len(areas)
+}
+
+// estimate is the bytes of mandatory review material of the Intent as one review.
+func (in scopeInput) estimate() int {
+	return scopeSum(in.pkg, in.inputs, in.changedFiles(in.intentText))
+}
+
+// partEstimate is the same for a part, whose own package does not exist yet.
+func (in scopeInput) partEstimate(p scopePart) int {
+	return scopeSum(in.inputs, in.changedFiles(p.text))
+}
+
+// scopeReviewInputs are the review inputs every review carries: the README at HEAD (0 when
+// absent) and the testing rules.
+func scopeReviewInputs(head map[string]int) []scopeFile {
+	return []scopeFile{{scopeReadme, head[scopeReadme]}, {scopeRules, len(agent.Prompt(agent.TestingRules))}}
+}
+
+func scopeItems(lines []string, kind string, files []scopeFile) []string {
+	for _, f := range files {
+		lines = append(lines, fmt.Sprintf("- %s: %d bytes (%s)", f.path, f.size, kind))
+	}
+	return lines
+}
+
+func scopeChangedItems(lines []string, changed []scopeFile) []string {
+	for _, f := range changed {
+		lines = append(lines, fmt.Sprintf("- %s: %d bytes (changed file, area %s)", f.path, f.size, path.Dir(f.path)))
+	}
+	return lines
+}
+
+// scopeLines is the refusal of a candidate whose Intent or one of whose parts is over the
+// ceiling (an estimate equal to it fits), nil when everything fits.
 func scopeLines(in scopeInput) []string {
 	var lines []string
-	pkgBytes := 0
-	for _, p := range in.pkg {
-		pkgBytes += p.size
+	if estimate := in.estimate(); estimate > in.ceiling {
+		changed := in.changedFiles(in.intentText)
+		lines = append(lines, fmt.Sprintf("Scope check: the Intent is estimated at %d bytes of mandatory review material (scenarios %d, acceptance harnesses %d, changed files %d in areas %d), over the %d-byte review ceiling (tools.InputBudgetBytes).",
+			estimate, in.scenarios, in.harnesses, len(changed), scopeAreas(changed), in.ceiling))
+		lines = scopeItems(lines, "Intent package", in.pkg)
+		lines = scopeItems(lines, "review input", in.inputs)
+		lines = scopeChangedItems(lines, changed)
 	}
-	for _, u := range in.units() {
-		estimate := pkgBytes
-		areas := map[string]bool{}
-		for _, f := range u.named {
-			areas[path.Dir(f.path)] = true
-		}
-		if estimate <= in.bound {
+	for _, p := range in.parts {
+		estimate := in.partEstimate(p)
+		if estimate <= in.ceiling {
 			continue
 		}
-		lines = append(lines, fmt.Sprintf("Scope check: %s is estimated at %d bytes of one review (scenarios %d, acceptance harnesses %d, named files %d in areas %d), over the %d-byte bound of one review (tools.InputBudgetBytes).",
-			u.name, estimate, in.scenarios, in.harnesses, len(u.named), len(areas), in.bound))
-		for _, p := range in.pkg {
-			lines = append(lines, fmt.Sprintf("- %s: %d bytes (Intent package)", p.path, p.size))
-		}
+		changed := in.changedFiles(p.text)
+		lines = append(lines, fmt.Sprintf("Scope check: part %q is estimated at %d bytes of mandatory review material (changed files %d in areas %d; its own package is not counted), over the %d-byte review ceiling (tools.InputBudgetBytes).",
+			p.slug, estimate, len(changed), scopeAreas(changed), in.ceiling))
+		lines = scopeItems(lines, "review input", in.inputs)
+		lines = scopeChangedItems(lines, changed)
 	}
 	if lines == nil {
 		return nil
@@ -155,9 +204,9 @@ func (sh *shaping) headBlobs() map[string]int {
 	return blobs
 }
 
-// scopeRefusal is the refusal of a written candidate whose review would not fit the review
-// stage's bound; false when every unit fits or the package cannot be counted (later gates
-// report that).
+// scopeRefusal shows the review estimate of a written candidate and refuses it when the Intent
+// or a part of its split would not fit the review ceiling; false when everything fits or the
+// package cannot be counted (later gates report that).
 func (sh *shaping) scopeRefusal() (string, outcome, bool) {
 	intent, scenarios, err := project.CheckIntent(sh.root, sh.slug, nil)
 	if err != nil {
@@ -168,7 +217,8 @@ func (sh *shaping) scopeRefusal() (string, outcome, bool) {
 	if intent.Model != nil && !intent.Model.None {
 		paths = append(paths, intent.Model.Path)
 	}
-	in := scopeInput{intentText: intent.Text, head: sh.headBlobs(), scenarios: len(scenarios), harnesses: len(intent.StepFiles()), bound: tools.InputBudgetBytes}
+	in := scopeInput{head: sh.headBlobs(), scenarios: len(scenarios), harnesses: len(intent.StepFiles()), ceiling: tools.InputBudgetBytes}
+	in.intentText, in.parts = scopeSplit(intent.Text)
 	seen := map[string]bool{}
 	for _, p := range paths {
 		if seen[p] {
@@ -181,11 +231,17 @@ func (sh *shaping) scopeRefusal() (string, outcome, bool) {
 		}
 		in.pkg = append(in.pkg, scopeFile{p, len(b)})
 	}
-	if stages, err := project.ParseStages(intent.Text); err == nil {
-		in.stages = stages
-	}
+	in.inputs = scopeReviewInputs(in.head)
+	sh.progress(fmt.Sprintf("kogen: review estimate %d bytes of the %d-byte review ceiling (tools.InputBudgetBytes)", in.estimate(), in.ceiling))
 	lines := scopeLines(in)
 	if lines == nil {
+		if len(in.parts) > 0 {
+			var parts []string
+			for _, p := range in.parts {
+				parts = append(parts, fmt.Sprintf("%s (%d of %d bytes)", p.slug, in.partEstimate(p), in.ceiling))
+			}
+			sh.progress(fmt.Sprintf("kogen: split: this Intent is part 1 of %d; shape the other parts as their own Intents: %s", len(in.parts)+1, strings.Join(parts, ", ")))
+		}
 		return "", outcome{}, false
 	}
 	sh.refused(scopeGate, lines)

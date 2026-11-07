@@ -2,10 +2,12 @@ package shape
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/KogenAI/kogen-executor/agent"
 	"github.com/KogenAI/kogen-executor/executor"
 	"github.com/KogenAI/kogen-loop/tools"
 
@@ -14,12 +16,15 @@ import (
 
 const scopeBT = "`"
 
-func scopeBase(intent string, head map[string]int, bound int) scopeInput {
-	return scopeInput{
-		intentText: intent,
-		pkg:        []scopeFile{{".kogen/intents/x/intent.md", 100}, {".kogen/intents/x/acceptance.feature", 50}, {"features/steps/x__steps.js", 50}},
-		head:       head, scenarios: 3, harnesses: 1, bound: bound,
+func scopeBase(intent string, head map[string]int, ceiling int) scopeInput {
+	in := scopeInput{
+		pkg:       []scopeFile{{".kogen/intents/x/intent.md", 100}, {".kogen/intents/x/acceptance.feature", 50}, {"features/steps/x__steps.js", 50}},
+		inputs:    []scopeFile{{scopeReadme, head[scopeReadme]}, {scopeRules, 30}},
+		head:      head,
+		scenarios: 3, harnesses: 1, ceiling: ceiling,
 	}
+	in.intentText, in.parts = scopeSplit(intent)
+	return in
 }
 
 func scopeNames(files []scopeFile) string {
@@ -37,79 +42,117 @@ func TestScopeBoundIsTheReviewStagesSetting(t *testing.T) {
 }
 
 func TestScopeEstimateAtTheBoundFitsAndOneByteMoreIsRefused(t *testing.T) {
-	// The package is 200 bytes; the named file is larger than the bound and does not count.
-	in := scopeBase("Change "+scopeBT+"a/f.js"+scopeBT+".", map[string]int{"a/f.js": 1000}, 200)
+	// Package 200, README 1000, testing rules 30 and a changed file of 4000: 5230 bytes.
+	in := scopeBase("Change "+scopeBT+"a/f.js"+scopeBT+".", map[string]int{"a/f.js": 4000, scopeReadme: 1000}, 5230)
+	shpEq(t, "estimate", in.estimate(), 5230)
 	if lines := scopeLines(in); lines != nil {
-		t.Fatalf("estimate 200 against 200: %v", lines)
+		t.Fatalf("estimate 5230 against 5230: %v", lines)
 	}
-	in.bound = 199
+	in.ceiling = 5229
 	lines := scopeLines(in)
 	want := []string{
-		"Scope check: the Intent is estimated at 200 bytes of one review (scenarios 3, acceptance harnesses 1, named files 1 in areas 1), over the 199-byte bound of one review (tools.InputBudgetBytes).",
+		"Scope check: the Intent is estimated at 5230 bytes of mandatory review material (scenarios 3, acceptance harnesses 1, changed files 1 in areas 1), over the 5229-byte review ceiling (tools.InputBudgetBytes).",
 		"- .kogen/intents/x/intent.md: 100 bytes (Intent package)",
 		"- .kogen/intents/x/acceptance.feature: 50 bytes (Intent package)",
 		"- features/steps/x__steps.js: 50 bytes (Intent package)",
+		"- README.md: 1000 bytes (review input)",
+		"- docs/testing-rules.md: 30 bytes (review input)",
+		"- a/f.js: 4000 bytes (changed file, area a)",
 		scopeGuidance,
 	}
 	shpEq(t, "lines", strings.Join(lines, "\n"), strings.Join(want, "\n"))
+	// Without a README at HEAD it counts 0.
+	in = scopeBase("No files.", map[string]int{}, 5230)
+	shpEq(t, "no README", in.estimate(), 230)
 }
 
-func TestScopeNamedFilesAreCountedByTheirRules(t *testing.T) {
-	head := map[string]int{"a/f.js": 1, "b/g.js": 1, "root.js": 1, "x/dir/h.js": 1, ".kogen/p.txt": 1, "features/steps/x__steps.js": 1, "keep.js": 1}
+func TestScopeChangedFilesAreCountedByTheirRules(t *testing.T) {
+	head := map[string]int{"a/f.js": 1, "b/g.js": 1, "root.js": 1, "x/dir/h.js": 1, ".kogen/p.txt": 1, "features/steps/x__steps.js": 1, "keep.js": 1, scopeReadme: 1}
 	text := strings.Join([]string{
-		"`b/g.js` `a/f.js` `b/g.js` `missing.js` `x/dir` `.kogen/p.txt` `features/steps/x__steps.js` `.kogen/intents/x/intent.md`",
+		"`b/g.js` `a/f.js` `b/g.js` `missing.js` `x/dir` `.kogen/p.txt` `features/steps/x__steps.js` `.kogen/intents/x/intent.md` `README.md`",
 		"`root.js` `keep.js and more` `x/dir/h.js`",
 		"```",
 		"keep.js",
 		"```",
 		"`unterminated.js",
 		"`a/f.js\n`",
+		"## Split",
+		"- other-part: change `keep.js`",
 	}, "\n")
 	in := scopeBase(text, head, 1)
-	got := in.namedFiles()
-	shpEq(t, "named", scopeNames(got), "b/g.js,a/f.js,root.js,x/dir/h.js")
+	shpEq(t, "named", scopeNames(in.changedFiles(in.intentText)), "b/g.js,a/f.js,root.js,x/dir/h.js")
+	shpEq(t, "part", scopeNames(in.changedFiles(in.parts[0].text)), "keep.js")
 	lines := scopeLines(in)
-	shpContains(t, "counts", lines[0], "named files 4 in areas 4)")
-	shpEq(t, "no named file item line", strings.Contains(strings.Join(lines, "\n"), "named file,"), false)
-	shpEq(t, "no named file listed", strings.Contains(strings.Join(lines, "\n"), "root.js"), false)
+	shpContains(t, "counts", lines[0], "changed files 4 in areas 4)")
+	shpContains(t, "root area", strings.Join(lines, "\n"), "- root.js: 1 bytes (changed file, area .)")
+	shpEq(t, "README is not a changed file", strings.Contains(strings.Join(lines, "\n"), "(changed file, area .)\n- README"), false)
+	intentUnit, _, _ := strings.Cut(strings.Join(lines, "\n"), "Scope check: part ")
+	shpEq(t, "Split file is not the Intent's", strings.Contains(intentUnit, "keep.js"), false)
 }
 
 func TestScopeAreasAreDistinctDirectories(t *testing.T) {
 	head := map[string]int{"a/f.js": 1, "a/g.js": 1, "a/b/h.js": 1, "r.js": 1}
 	in := scopeBase(strings.Join([]string{"`a/f.js`", "`a/g.js`", "`a/b/h.js`", "`r.js`"}, " "), head, 1)
-	shpContains(t, "areas", scopeLines(in)[0], "named files 4 in areas 3)")
+	shpContains(t, "areas", scopeLines(in)[0], "changed files 4 in areas 3)")
 }
 
-func TestScopeStageUnits(t *testing.T) {
-	head := map[string]int{"a/f.js": 200000, "b/g.js": 200000, "c/h.js": 100000}
-	intent := "Files `a/f.js`, `b/g.js` and `c/h.js`."
-	stages := []project.Stage{
-		{ID: "one", Goal: "Change `a/f.js`", Checks: []string{"true"}},
-		{ID: "two", Goal: "Change `b/g.js` and `a/f.js`", Checks: []string{"true"}},
+func TestScopeSplitSectionYieldsItsBullets(t *testing.T) {
+	text := strings.Join([]string{
+		"# Title",
+		"## Split",
+		"- part-one: delivers the first part",
+		"prose is ignored",
+		"- Bad_Slug: ignored",
+		"- ab: slug too short",
+		"* star-bullet: ignored",
+		"- part-two: delivers `a/f.js`",
+		"## Tests",
+		"- later-one: not in the section",
+	}, "\n")
+	rest, parts := scopeSplit(text)
+	shpEq(t, "parts", len(parts), 2)
+	shpEq(t, "one", parts[0], scopePart{"part-one", "delivers the first part"})
+	shpEq(t, "two", parts[1].slug, "part-two")
+	shpEq(t, "rest keeps other sections", strings.Contains(rest, "later-one") && !strings.Contains(rest, "part-two"), true)
+}
+
+func TestScopePartEstimateIsTheReviewInputsPlusItsFilesAndAPartOverTheCeilingIsRefusedAlone(t *testing.T) {
+	head := map[string]int{"a/f.js": 400, "a/g.js": 700, scopeReadme: 100}
+	intent := "Change `a/f.js`.\n\n## Split\n- small-part: `a/f.js`\n- large-part: `a/f.js` and `a/g.js`\n"
+	// Package 200, inputs 130, a/f.js 400: the Intent is 730; small-part is 530, large-part 1230.
+	in := scopeBase(intent, head, 1000)
+	shpEq(t, "intent", in.estimate(), 730)
+	shpEq(t, "small", in.partEstimate(in.parts[0]), 530)
+	shpEq(t, "large", in.partEstimate(in.parts[1]), 1230)
+	lines := scopeLines(in)
+	want := []string{
+		`Scope check: part "large-part" is estimated at 1230 bytes of mandatory review material (changed files 2 in areas 1; its own package is not counted), over the 1000-byte review ceiling (tools.InputBudgetBytes).`,
+		"- README.md: 100 bytes (review input)",
+		"- docs/testing-rules.md: 30 bytes (review input)",
+		"- a/f.js: 400 bytes (changed file, area a)",
+		"- a/g.js: 700 bytes (changed file, area a)",
+		scopeGuidance,
 	}
-	// The package is 200 bytes; every stage carries that estimate whatever the named files weigh.
-	in := scopeBase(intent, head, 200)
-	in.stages = stages
-	units := in.units()
-	shpEq(t, "units", len(units), 2)
-	shpEq(t, "one", scopeNames(units[0].named), "a/f.js,c/h.js")
-	shpEq(t, "two", scopeNames(units[1].named), "a/f.js,b/g.js,c/h.js")
+	shpEq(t, "lines", strings.Join(lines, "\n"), strings.Join(want, "\n"))
+	in.ceiling = 729
+	lines = scopeLines(in)
+	shpContains(t, "Intent first", lines[0], "Scope check: the Intent is estimated at 730 bytes")
+	shpEq(t, "units", strings.Count(strings.Join(lines, "\n"), "Scope check:"), 2)
+}
+
+func TestScopeStagesDoNotDivideTheEstimate(t *testing.T) {
+	head := map[string]int{"a/f.js": 400, "b/g.js": 400}
+	intent := "Files `a/f.js` and `b/g.js`.\n\n## Stages\n\n- one: Change `a/f.js`\n- two: Change `b/g.js`\n"
+	// Package 200, inputs 30, both files 800: 1030 whatever the stages say.
+	in := scopeBase(intent, head, 1030)
 	if lines := scopeLines(in); lines != nil {
 		t.Fatalf("fits: %v", lines)
 	}
-	in.bound = 199
+	in.ceiling = 1029
 	lines := scopeLines(in)
-	text := strings.Join(lines, "\n")
-	shpEq(t, "both stages", strings.Count(text, "Scope check:"), 2)
-	shpContains(t, "stage one", lines[0], `Scope check: stage "one" is estimated at 200 bytes of one review (scenarios 3, acceptance harnesses 1, named files 2 in areas 2)`)
-	shpContains(t, "stage two", text, `Scope check: stage "two" is estimated at 200 bytes of one review (scenarios 3, acceptance harnesses 1, named files 3 in areas 3)`)
-	shpEq(t, "no named file item line", strings.Contains(text, "named file,"), false)
-	// With a plan the whole Intent is not a unit.
-	shpEq(t, "no whole Intent unit", strings.Contains(text, "the Intent is estimated"), false)
-	in.stages = nil
-	lines = scopeLines(in)
-	shpEq(t, "whole Intent without a plan", strings.Count(strings.Join(lines, "\n"), "Scope check:"), 1)
-	shpContains(t, "whole Intent without a plan", lines[0], "Scope check: the Intent is estimated at 200 bytes")
+	shpEq(t, "one unit", strings.Count(strings.Join(lines, "\n"), "Scope check:"), 1)
+	shpContains(t, "whole Intent", lines[0], "Scope check: the Intent is estimated at 1030 bytes")
+	shpContains(t, "both files", lines[0], "changed files 2 in areas 2)")
 }
 
 func TestScopePackageCountsTheDeclaredModelAndOutlineRows(t *testing.T) {
@@ -131,17 +174,25 @@ func TestScopePackageCountsTheDeclaredModelAndOutlineRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sh := &shaping{repo: f.Repo, root: f.Root, slug: shpSlug, ev: ev}
+	sh := &shaping{s: f.S, repo: f.Repo, root: f.Root, slug: shpSlug, ev: ev}
 	text, out, refused := sh.scopeRefusal()
 	shpEq(t, "refused", refused, true)
 	shpEq(t, "kind", out.kind, outInvalid)
-	estimate := len(intent) + len(feature) + len(shpSteps) + len(shpModel)
+	readme, err := os.ReadFile(filepath.Join(f.Root, "README.md"))
+	if err != nil {
+		readme = nil
+	}
+	rules := len(agent.Prompt(agent.TestingRules))
+	estimate := len(intent) + len(feature) + len(shpSteps) + len(shpModel) + len(readme) + rules + tools.InputBudgetBytes
 	want := []string{
-		fmt.Sprintf("Scope check: the Intent is estimated at %d bytes of one review (scenarios 5, acceptance harnesses 1, named files 1 in areas 1), over the %d-byte bound of one review (tools.InputBudgetBytes).", estimate, tools.InputBudgetBytes),
+		fmt.Sprintf("Scope check: the Intent is estimated at %d bytes of mandatory review material (scenarios 5, acceptance harnesses 1, changed files 1 in areas 1), over the %d-byte review ceiling (tools.InputBudgetBytes).", estimate, tools.InputBudgetBytes),
 		fmt.Sprintf("- %s: %d bytes (Intent package)", project.IntentMDPath(shpSlug), len(intent)),
 		fmt.Sprintf("- %s: %d bytes (Intent package)", project.FeaturePath(shpSlug), len(feature)),
 		fmt.Sprintf("- features/steps/is-even__steps.js: %d bytes (Intent package)", len(shpSteps)),
 		fmt.Sprintf("- %s: %d bytes (Intent package)", model, len(shpModel)),
+		fmt.Sprintf("- README.md: %d bytes (review input)", len(readme)),
+		fmt.Sprintf("- docs/testing-rules.md: %d bytes (review input)", rules),
+		fmt.Sprintf("- big.js: %d bytes (changed file, area .)", tools.InputBudgetBytes),
 		scopeGuidance,
 	}
 	shpEq(t, "refusal", text, strings.Join(want, "\n"))
@@ -150,7 +201,8 @@ func TestScopePackageCountsTheDeclaredModelAndOutlineRows(t *testing.T) {
 func TestScopeRefusalIsRecordedBeforeTheDecisionCheckAndEndsNotReady(t *testing.T) {
 	parallel(t)
 	f := newShpFx(t)
-	f.write("big.js", "//"+strings.Repeat("x", tools.InputBudgetBytes)+"\n")
+	bigFile := "//" + strings.Repeat("x", tools.InputBudgetBytes) + "\n"
+	f.write("big.js", bigFile)
 	f.git("add", "-A")
 	f.git("commit", "-qm", "big file")
 	f.useExternalShape()
@@ -172,10 +224,9 @@ func TestScopeRefusalIsRecordedBeforeTheDecisionCheckAndEndsNotReady(t *testing.
 		text, _, _ := strings.Cut(x.inputs[i].Feedback, "\n\nCumulative proposal manifest: ")
 		return text
 	}
-	estimate := len(intent) + len(feature) + len(shpSteps)
-	shpContains(t, "first", feedback(1), fmt.Sprintf("Scope check: the Intent is estimated at %d bytes of one review", estimate))
+	shpContains(t, "first", feedback(1), "Scope check: the Intent is estimated at ")
+	shpContains(t, "changed file", feedback(1), fmt.Sprintf("- big.js: %d bytes (changed file, area .)", len(bigFile)))
 	shpContains(t, "guidance", feedback(1), scopeGuidance)
-	shpEq(t, "no named file item line", strings.Contains(feedback(1), "named file,"), false)
 	if strings.Contains(feedback(1), "Unchanged:") {
 		t.Fatal("first refusal has the Unchanged note")
 	}
