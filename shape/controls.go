@@ -166,6 +166,18 @@ func controlsScenarios(scenarios []project.Scenario, name string) []int {
 	return out
 }
 
+// controlsWitness are the indices of the scenarios a wrong implementation runs against: the
+// scenarios its scenario field names that contain its step, every example of an outline that has it.
+func controlsWitness(scenarios []project.Scenario, w controlsImpl, feature []string) []int {
+	var out []int
+	for _, k := range controlsScenarios(scenarios, w.scenario) {
+		if len(controlsStepLines(scenarios[k], w.step, feature)) > 0 {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
 // controlsStepLines are the feature lines of the steps of sc that step names, as the feature
 // writes them (or with an outline's placeholders replaced).
 func controlsStepLines(sc project.Scenario, step string, feature []string) []int {
@@ -492,9 +504,23 @@ func writeOverlay(tree string, files map[string]string) error {
 	return nil
 }
 
+// controlsFeatureSelector is the acceptance feature argument of a run: the feature path, with
+// ":<line>" appended for each witness scenario when the run is narrowed to a witness.
+func controlsFeatureSelector(featurePath string, witness []project.Scenario, narrow bool) string {
+	if !narrow {
+		return featurePath
+	}
+	for _, sc := range witness {
+		featurePath += fmt.Sprintf(":%d", sc.Line)
+	}
+	return featurePath
+}
+
 // controlsRun runs the candidate's acceptance once in a fresh copy of the candidate tree with
-// the files of each overlay written over it, in order, before the time cap deadline.
-func (sh *shaping) controlsRun(ctx context.Context, scenarios []project.Scenario, deadline time.Time, overlays ...map[string]string) (controlsRunResult, error) {
+// the files of each overlay written over it, in order, before the time cap deadline. The run
+// executes only the scenarios of expected when narrow is set, else the whole feature, and must
+// report each of expected exactly once.
+func (sh *shaping) controlsRun(ctx context.Context, expected []project.Scenario, narrow bool, deadline time.Time, overlays ...map[string]string) (controlsRunResult, error) {
 	var res controlsRunResult
 	base := sys.TmpPath("kogen-wrong-implementation")
 	defer os.RemoveAll(base)
@@ -566,7 +592,7 @@ func (sh *shaping) controlsRun(ctx context.Context, scenarios []project.Scenario
 		nodeOptions += " " + existing
 	}
 	if _, ran, err := command(sh.cfg.Acceptance.Run, map[string]string{
-		"KOGEN_ACCEPTANCE_FEATURES": project.FeaturePath(sh.slug),
+		"KOGEN_ACCEPTANCE_FEATURES": controlsFeatureSelector(project.FeaturePath(sh.slug), expected, narrow),
 		"KOGEN_ACCEPTANCE_REPORT":   report,
 		"NODE_OPTIONS":              nodeOptions,
 	}); err != nil || !ran {
@@ -576,7 +602,7 @@ func (sh *shaping) controlsRun(ctx context.Context, scenarios []project.Scenario
 	if err != nil {
 		return res, nil
 	}
-	res.cases, res.complete = readControlsReport(text, scenarios)
+	res.cases, res.complete = readControlsReport(text, expected)
 	return res, nil
 }
 
@@ -656,10 +682,11 @@ func controlsPropertyLine(p propertyReport, reason string) string {
 }
 
 // controlsJudgeAll are the problem lines of the properties no wrong implementation is evidence
-// for, given the complete run results of every implementation (index 0 is the correct one).
+// for, given the run results of every implementation (index 0 is the correct one, which ran the
+// whole feature; each wrong one ran only its witness).
 func controlsJudgeAll(props []controlsProp, cf *controlsFile, scenarios []project.Scenario, feature []string, runs []controlsRunResult, stepFiles []string) []string {
 	var lines []string
-	for pi, p := range props {
+	for _, p := range props {
 		inP := map[int]bool{}
 		for _, k := range p.scenarios {
 			inP[k] = true
@@ -668,7 +695,7 @@ func controlsJudgeAll(props []controlsProp, cf *controlsFile, scenarios []projec
 		var reasons []string
 		for wi, w := range cf.wrong {
 			var instances []int
-			for _, k := range controlsScenarios(scenarios, w.scenario) {
+			for _, k := range controlsWitness(scenarios, w, feature) {
 				if inP[k] {
 					instances = append(instances, k)
 				}
@@ -693,21 +720,8 @@ func controlsJudgeAll(props []controlsProp, cf *controlsFile, scenarios []projec
 				}
 			}
 			if bestRule == 0 {
-				// Rule 6: every scenario of the other checked properties passed.
-				for qi, q := range props {
-					if qi == pi {
-						continue
-					}
-					for _, k := range q.scenarios {
-						if !inP[k] && run.cases[scenarios[k].Line].status() != "passed" && reason == "" {
-							reason = fmt.Sprintf("wrong implementation \"%s\" also fails scenario \"%s\", which exercises another property and not this one", w.name, normalizeWhitespace(scenarios[k].Name))
-						}
-					}
-				}
-				if reason == "" {
-					satisfied = true
-					break
-				}
+				satisfied = true
+				break
 			}
 			reasons = append(reasons, reason)
 		}
@@ -761,7 +775,7 @@ func controlsUnreachable(props []controlsProp, scenarios []project.Scenario, fea
 func wrongHeadline(n int, slug string, seconds int) string {
 	return fmt.Sprintf("Wrong-implementation check: %d problem(s) with whether acceptance rejects a wrong implementation of each property the request asks for; nothing was published. "+
 		"For each property the request or the answers ask for that a step can observe, %s/controls.json supplies a correct implementation, with which every scenario of the property must pass, and wrong implementations, each naming a scenario and the step of it that must reject it. "+
-		"At least one wrong implementation of each property must fail that step with an AssertionError thrown by a step file the Intent lists under Acceptance, after the earlier steps of that scenario passed, while every scenario of the other properties still passes. "+
+		"At least one wrong implementation of each property must fail that step with an AssertionError thrown by a step file the Intent lists under Acceptance, after the earlier steps of that scenario passed. "+
 		"Kogen runs the candidate's acceptance once per implementation in an isolated copy, at most %d runs and %d seconds per candidate. "+
 		"Make the steps assert the property, or supply a plausible wrong implementation that only gets the property wrong; resubmitting this candidate unchanged is refused again.",
 		n, project.IntentDir(slug), controlsMaxRuns, seconds)
@@ -800,7 +814,7 @@ func (sh *shaping) wrongImplementationCheck(ctx context.Context, hash string) (c
 
 	started := 0
 	begin := time.Now()
-	lines, err := sh.controlsLines(ctx, intent, scenarios, feature, stepFiles, props, timeCap, &started)
+	lines, controls, err := sh.controlsLines(ctx, intent, scenarios, feature, stepFiles, props, timeCap, &started)
 	if err != nil {
 		return contractConfirmed{}, err
 	}
@@ -815,19 +829,57 @@ func (sh *shaping) wrongImplementationCheck(ctx context.Context, hash string) (c
 		recorded = []string{}
 	}
 	sh.ev.Record(map[string]any{"event": "wrong_implementation_check", "package": hash, "result": result, "runs": started,
-		"seconds": int(time.Since(begin).Seconds()), "problems": recorded})
+		"seconds": int(time.Since(begin).Seconds()), "problems": recorded, "controls": controls})
 	return confirmed, nil
 }
 
-// controlsLines are the problem lines of the wrong-implementation check, nil when it is clean.
-func (sh *shaping) controlsLines(ctx context.Context, intent *project.Intent, scenarios []project.Scenario, feature, stepFiles []string, props []controlsProp, timeCap time.Duration, started *int) ([]string, error) {
+// controlsEvidence is the target step and assertion evidence of a wrong implementation that was run.
+type controlsEvidence struct {
+	Name       string `json:"name"`
+	Scenario   string `json:"scenario"`
+	Step       string `json:"step"`
+	FailedStep string `json:"failed_step"`
+	Assertion  string `json:"assertion"`
+	Location   string `json:"location"`
+}
+
+// controlsEvidenceOf is the evidence of a wrong implementation from its witness run: the first
+// unpassed step of the first witness scenario the judgement accepts, else of the first witness
+// scenario; the failure fields are empty when no step failed.
+func controlsEvidenceOf(w controlsImpl, scenarios []project.Scenario, feature []string, run controlsRunResult, stepFiles []string) controlsEvidence {
+	ev := controlsEvidence{Name: w.name, Scenario: w.scenario, Step: w.step}
+	witness := controlsWitness(scenarios, w, feature)
+	var chosen *controlsCase
+	for i, k := range witness {
+		c := run.cases[scenarios[k].Line]
+		if i == 0 {
+			chosen = c
+		}
+		if rule, _ := controlsJudge(w, scenarios[k], c, controlsStepLines(scenarios[k], w.step, feature), feature, run, stepFiles); rule == 0 {
+			chosen = c
+			break
+		}
+	}
+	if first := chosen.firstUnpassed(); first != nil {
+		ev.FailedStep = controlsStepLabel(first, feature)
+		ev.Assertion = controlsFirstLine(first.message)
+		if first.stack != "" {
+			ev.Location, _ = controlsFrame(first.stack, run.roots, stepFiles)
+		}
+	}
+	return ev
+}
+
+// controlsLines are the problem lines of the wrong-implementation check, nil when it is clean,
+// and the evidence of each wrong implementation that was run.
+func (sh *shaping) controlsLines(ctx context.Context, intent *project.Intent, scenarios []project.Scenario, feature, stepFiles []string, props []controlsProp, timeCap time.Duration, started *int) ([]string, []controlsEvidence, error) {
 	rel := project.IntentDir(sh.slug) + "/controls.json"
 	raw, err := os.ReadFile(filepath.Join(sh.root, rel))
 	if errors.Is(err, fs.ErrNotExist) {
-		return []string{fmt.Sprintf(`- controls.json: %s does not exist; write it as {"correct":{"files":{"<path>":"<content>"}},"wrong":[{"name":"<name>","scenario":"<scenario>","step":"<step line>","files":{"<path>":"<content>"}}]}`, rel)}, nil
+		return []string{fmt.Sprintf(`- controls.json: %s does not exist; write it as {"correct":{"files":{"<path>":"<content>"}},"wrong":[{"name":"<name>","scenario":"<scenario>","step":"<step line>","files":{"<path>":"<content>"}}]}`, rel)}, []controlsEvidence{}, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	rules := controlsRules{acceptance: intent.Acceptance, protect: sh.cfg.Protect}
 	if sh.cfg.Acceptance != nil {
@@ -835,22 +887,23 @@ func (sh *shaping) controlsLines(ctx context.Context, intent *project.Intent, sc
 	}
 	cf, problems := parseControls(raw, scenarios, feature, rules)
 	if len(problems) > 0 {
-		return problems, nil
+		return problems, []controlsEvidence{}, nil
 	}
 	n := 1 + len(cf.wrong)
 	if n > controlsMaxRuns {
 		return []string{fmt.Sprintf("- run cap: this candidate needs %d runs (the correct implementation and %d wrong ones), above the cap of %d runs per candidate; nothing was run. Supply at most %d wrong implementations.",
-			n, len(cf.wrong), controlsMaxRuns, controlsMaxRuns-1)}, nil
+			n, len(cf.wrong), controlsMaxRuns, controlsMaxRuns-1)}, []controlsEvidence{}, nil
 	}
 	seconds := int(timeCap / time.Second)
 	deadline := time.Now().Add(timeCap)
+	evidence := []controlsEvidence{}
 	timeLine := func(completed int) []string {
 		return []string{fmt.Sprintf("- time cap: the runs exceeded the total time cap of %d seconds per candidate after %d of %d runs completed; the check stopped. Make the implementations or the steps faster.", seconds, completed, n)}
 	}
 	runs := make([]controlsRunResult, 0, n)
 	for i := 0; i < n; i++ {
 		if time.Until(deadline) <= 0 {
-			return timeLine(i), nil
+			return timeLine(i), evidence, nil
 		}
 		impl, overlays := "correct implementation", []map[string]string{cf.correct}
 		if i > 0 {
@@ -859,19 +912,31 @@ func (sh *shaping) controlsLines(ctx context.Context, intent *project.Intent, sc
 		}
 		sh.progress(fmt.Sprintf("kogen: wrong-implementation check: run %d of %d (%s)", i+1, n, impl))
 		*started++
-		run, err := sh.controlsRun(ctx, scenarios, deadline, overlays...)
+		// The correct implementation runs the whole feature, the only full guard; each wrong
+		// implementation runs only its witness.
+		expected, narrow := scenarios, false
+		if i > 0 {
+			narrow = true
+			expected = nil
+			for _, k := range controlsWitness(scenarios, cf.wrong[i-1], feature) {
+				expected = append(expected, scenarios[k])
+			}
+		}
+		run, err := sh.controlsRun(ctx, expected, narrow, deadline, overlays...)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if run.cutOff {
-			return timeLine(i), nil
+			return timeLine(i), evidence, nil
 		}
 		runs = append(runs, run)
 		if i == 0 {
 			if lines := controlsUnreachable(props, scenarios, feature, run); len(lines) > 0 {
-				return lines, nil
+				return lines, evidence, nil
 			}
+		} else {
+			evidence = append(evidence, controlsEvidenceOf(cf.wrong[i-1], scenarios, feature, run, stepFiles))
 		}
 	}
-	return controlsJudgeAll(props, cf, scenarios, feature, runs, stepFiles), nil
+	return controlsJudgeAll(props, cf, scenarios, feature, runs, stepFiles), evidence, nil
 }

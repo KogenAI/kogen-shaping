@@ -192,12 +192,16 @@ func TestControlsJudgeAll(t *testing.T) {
 	if lines := controlsJudgeAll(props, cf, scenarios, feature, []controlsRunResult{correct, w1, w2}, stepFiles); len(lines) != 0 {
 		t.Fatalf("lines = %v", lines)
 	}
-	t.Run("rule 6 names the first scenario of another property that fails", func(t *testing.T) {
+	t.Run("a wrong implementation is judged on its witness alone", func(t *testing.T) {
+		// w1 ran only the add scenario, so the examples of mul are not in its run.
+		witnessOnly := run(map[int]*controlsCase{2: failFirst(3)})
+		if lines := controlsJudgeAll(props, cf, scenarios, feature, []controlsRunResult{correct, witnessOnly, w2}, stepFiles); len(lines) != 0 {
+			t.Fatalf("lines = %v", lines)
+		}
+		// A scenario of another property that fails in its run is not a reason to refuse it.
 		both := run(map[int]*controlsCase{2: failFirst(3), 9: passedCase(6), 10: failFirst(6)})
-		lines := controlsJudgeAll(props, cf, scenarios, feature, []controlsRunResult{correct, both, w2}, stepFiles)
-		want := `- add (kept) | request: add | problem: wrong implementation "w1" also fails scenario "Mul 3 times 3", which exercises another property and not this one`
-		if len(lines) != 1 || lines[0] != want {
-			t.Fatalf("lines = %q, want %q", lines, want)
+		if lines := controlsJudgeAll(props, cf, scenarios, feature, []controlsRunResult{correct, both, w2}, stepFiles); len(lines) != 0 {
+			t.Fatalf("lines = %v", lines)
 		}
 	})
 	t.Run("an incomplete wrong run and a property no wrong implementation names", func(t *testing.T) {
@@ -425,7 +429,7 @@ func TestWrongImplementationRealRuns(t *testing.T) {
 			status, head := f.git("status", "--porcelain", "--ignored"), f.git("rev-parse", "HEAD")
 			index := f.git("ls-files", "-s")
 			started := 0
-			lines, err := sh.controlsLines(context.Background(), sh.ready.Intent, mustScenarios(t, tt.c.feature), strings.Split(tt.c.feature, "\n"), sh.ready.Intent.StepFiles(),
+			lines, _, err := sh.controlsLines(context.Background(), sh.ready.Intent, mustScenarios(t, tt.c.feature), strings.Split(tt.c.feature, "\n"), sh.ready.Intent.StepFiles(),
 				sh.checkedControlProps(mustScenarios(t, tt.c.feature)), 120*time.Second, &started)
 			if err != nil {
 				t.Fatal(err)
@@ -482,7 +486,7 @@ func TestWrongImplementationCaps(t *testing.T) {
 		f, sh := controlsReal(t, candidate)
 		started := 0
 		begin := time.Now()
-		lines, err := sh.controlsLines(context.Background(), sh.ready.Intent, mustScenarios(t, candidate.feature), strings.Split(candidate.feature, "\n"), sh.ready.Intent.StepFiles(),
+		lines, _, err := sh.controlsLines(context.Background(), sh.ready.Intent, mustScenarios(t, candidate.feature), strings.Split(candidate.feature, "\n"), sh.ready.Intent.StepFiles(),
 			sh.checkedControlProps(mustScenarios(t, candidate.feature)), 2*time.Second, &started)
 		if err != nil {
 			t.Fatal(err)
@@ -501,7 +505,7 @@ func TestWrongImplementationCaps(t *testing.T) {
 	t.Run("a run that would start with no time left does not start", func(t *testing.T) {
 		_, sh := controlsReal(t, candidate)
 		started := 0
-		lines, err := sh.controlsLines(context.Background(), sh.ready.Intent, mustScenarios(t, candidate.feature), strings.Split(candidate.feature, "\n"), sh.ready.Intent.StepFiles(),
+		lines, _, err := sh.controlsLines(context.Background(), sh.ready.Intent, mustScenarios(t, candidate.feature), strings.Split(candidate.feature, "\n"), sh.ready.Intent.StepFiles(),
 			sh.checkedControlProps(mustScenarios(t, candidate.feature)), time.Nanosecond, &started)
 		if err != nil || len(lines) != 1 || !strings.Contains(lines[0], "after 0 of 3 runs completed") || started > 1 {
 			t.Fatalf("lines = %q, %d runs started, err %v", lines, started, err)
@@ -516,11 +520,134 @@ func TestWrongImplementationCaps(t *testing.T) {
 		}
 		f, sh := controlsReal(t, many)
 		started := 0
-		lines, err := sh.controlsLines(context.Background(), sh.ready.Intent, mustScenarios(t, many.feature), strings.Split(many.feature, "\n"), sh.ready.Intent.StepFiles(),
+		lines, _, err := sh.controlsLines(context.Background(), sh.ready.Intent, mustScenarios(t, many.feature), strings.Split(many.feature, "\n"), sh.ready.Intent.StepFiles(),
 			sh.checkedControlProps(mustScenarios(t, many.feature)), time.Minute, &started)
 		want := "- run cap: this candidate needs 9 runs (the correct implementation and 8 wrong ones), above the cap of 8 runs per candidate; nothing was run. Supply at most 7 wrong implementations."
 		if err != nil || len(lines) != 1 || lines[0] != want || started != 0 || strings.Contains(f.Stderr.String(), "wrong-implementation check") {
 			t.Fatalf("lines = %q, %d runs started, err %v", lines, started, err)
+		}
+	})
+}
+
+// controlsWitnessProbe wraps the fake acceptance runner so that each run keeps the feature
+// selector it was given and its Cucumber report.
+func controlsWitnessProbe(f *shpFx, sh *shaping) {
+	sh.cfg.Acceptance.Run = fmt.Sprintf("echo \"$KOGEN_ACCEPTANCE_FEATURES\" >> '%[1]s/selectors'; sh accept.sh; s=$?; n=$(wc -l < '%[1]s/selectors' | tr -d ' '); cp \"$KOGEN_ACCEPTANCE_REPORT\" '%[1]s/report-'$n'.ndjson' 2>/dev/null; exit $s", f.Aux)
+}
+
+// controlsExecuted are the names of the scenarios each run started, from the kept reports.
+func controlsExecuted(t *testing.T, f *shpFx) [][]string {
+	t.Helper()
+	var out [][]string
+	for n := 1; ; n++ {
+		raw, err := os.ReadFile(filepath.Join(f.Aux, fmt.Sprintf("report-%d.ndjson", n)))
+		if err != nil {
+			return out
+		}
+		names := map[string]string{}
+		started := []string{}
+		for _, line := range strings.Split(string(raw), "\n") {
+			var m struct {
+				Pickle   *struct{ ID, Name string }
+				TestCase *struct{ ID, PickleID string }
+				Started  *struct{ TestCaseID string }
+			}
+			m.Started = nil
+			var doc map[string]json.RawMessage
+			if json.Unmarshal([]byte(line), &doc) != nil {
+				continue
+			}
+			json.Unmarshal(doc["pickle"], &m.Pickle)
+			json.Unmarshal(doc["testCase"], &m.TestCase)
+			json.Unmarshal(doc["testCaseStarted"], &m.Started)
+			switch {
+			case m.Pickle != nil:
+				names["pickle:"+m.Pickle.ID] = m.Pickle.Name
+			case m.TestCase != nil:
+				names["case:"+m.TestCase.ID] = names["pickle:"+m.TestCase.PickleID]
+			case m.Started != nil:
+				started = append(started, names["case:"+m.Started.TestCaseID])
+			}
+		}
+		out = append(out, started)
+	}
+}
+
+func TestWrongImplementationRunsOnlyWitnesses(t *testing.T) {
+	exact, subStep := "Then is-even: add of 2 and 3 is 5", "Then is-even: sub of 5 and 3 is 2"
+	correct := map[string]string{"calc.js": controlsCalc("add", "sub")}
+	t.Run("the whole feature once, then each witness", func(t *testing.T) {
+		f, sh := controlsReal(t, controlsCandidate{feature: controlsCalcFeature(exact), steps: controlsExactDef, correct: correct, wrong: controlsWrongs(exact, controlsCalc("sub"))})
+		controlsWitnessProbe(f, sh)
+		confirmed, err := sh.wrongImplementationCheck(context.Background(), "h1")
+		if err != nil || !confirmed.empty() {
+			t.Fatalf("confirmed = %+v, err %v", confirmed, err)
+		}
+		want := [][]string{{"Add keeps working", "Sub keeps working"}, {"Add keeps working"}, {"Sub keeps working"}}
+		if got := controlsExecuted(t, f); fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Fatalf("executed %v, want %v", got, want)
+		}
+		selectors, _ := os.ReadFile(filepath.Join(f.Aux, "selectors"))
+		feature := project.FeaturePath(shpSlug)
+		if got, want := string(selectors), feature+"\n"+feature+":2\n"+feature+":4\n"; got != want {
+			t.Fatalf("selectors %q, want %q", got, want)
+		}
+	})
+	t.Run("every example of an outline", func(t *testing.T) {
+		feature := "Feature: Calc\n  Scenario: Add keeps working\n    " + exact + "\n  Scenario Outline: Sub keeps working\n    Then is-even: sub of <a> and <b> is <c>\n    Examples:\n      | a | b | c |\n      | 5 | 3 | 2 |\n      | 9 | 4 | 5 |\n"
+		f, sh := controlsReal(t, controlsCandidate{feature: feature, steps: controlsExactDef, correct: correct, wrong: []controlsWrong{
+			{"add removed", "Add keeps working", exact, map[string]string{"calc.js": controlsCalc("sub")}},
+			{"sub removed", "Sub keeps working", "Then is-even: sub of <a> and <b> is <c>", map[string]string{"calc.js": controlsCalc("add")}}}})
+		controlsWitnessProbe(f, sh)
+		confirmed, err := sh.wrongImplementationCheck(context.Background(), "h1")
+		if err != nil || !confirmed.empty() {
+			t.Fatalf("confirmed = %+v, err %v", confirmed, err)
+		}
+		want := [][]string{{"Add keeps working", "Sub keeps working", "Sub keeps working"}, {"Add keeps working"}, {"Sub keeps working", "Sub keeps working"}}
+		if got := controlsExecuted(t, f); fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Fatalf("executed %v, want %v", got, want)
+		}
+	})
+	t.Run("a wrong witness that does not fail its target step is refused", func(t *testing.T) {
+		loose := "Then is-even: add of 2 and 3 gives an answer"
+		f, sh := controlsReal(t, controlsCandidate{feature: controlsCalcFeature(loose), steps: controlsExactDef + controlsLooseDef, correct: correct, wrong: controlsWrongs(loose, controlsCalc("sub"))})
+		controlsWitnessProbe(f, sh)
+		confirmed, err := sh.wrongImplementationCheck(context.Background(), "h1")
+		want := `- add keeps working (kept) | request: add | problem: wrong implementation "add removed" passes scenario "Add keeps working"`
+		if err != nil || len(confirmed.wrong) != 1 || confirmed.wrong[0] != want {
+			t.Fatalf("confirmed = %+v, err %v", confirmed, err)
+		}
+	})
+	t.Run("a wrong implementation that also breaks another property is not refused for it", func(t *testing.T) {
+		f, sh := controlsReal(t, controlsCandidate{feature: controlsCalcFeature(exact), steps: controlsExactDef, correct: correct, wrong: controlsWrongs(exact, "exports.calc = () => undefined;\n")})
+		confirmed, err := sh.wrongImplementationCheck(context.Background(), "h1")
+		if err != nil || !confirmed.empty() {
+			t.Fatalf("confirmed = %+v, err %v", confirmed, err)
+		}
+		_ = f
+	})
+	t.Run("the event records the evidence of each control", func(t *testing.T) {
+		loose := "Then is-even: add of 2 and 3 gives an answer"
+		f, sh := controlsReal(t, controlsCandidate{feature: controlsCalcFeature(loose), steps: controlsExactDef + controlsLooseDef, correct: correct, wrong: controlsWrongs(loose, controlsCalc("sub"))})
+		sh.wrongImplementationCheck(context.Background(), "h1")
+		events := shpNamed(f.events(), "wrong_implementation_check")
+		if len(events) != 1 {
+			t.Fatalf("events = %v", events)
+		}
+		var got, want any
+		got = events[0]["controls"]
+		json.Unmarshal([]byte(`[{"name":"add removed","scenario":"Add keeps working","step":"`+loose+`","failed_step":"","assertion":"","location":""},`+
+			`{"name":"sub removed","scenario":"Sub keeps working","step":"`+subStep+`","failed_step":"`+subStep+`","assertion":"Expected values to be strictly equal:","location":"features/steps/is-even__steps.js:4:10"}]`), &want)
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Fatalf("controls\n%v\nwant\n%v", got, want)
+		}
+	})
+	t.Run("no control is recorded when none ran", func(t *testing.T) {
+		f, sh := controlsReal(t, controlsCandidate{feature: controlsCalcFeature(exact), steps: controlsExactDef, correct: map[string]string{"calc.js": controlsCalc("sub")}, wrong: controlsWrongs(exact, controlsCalc("sub"))})
+		sh.wrongImplementationCheck(context.Background(), "h1")
+		events := shpNamed(f.events(), "wrong_implementation_check")
+		if len(events) != 1 || fmt.Sprint(events[0]["controls"]) != "[]" || events[0]["runs"] != float64(1) {
+			t.Fatalf("events = %v", events)
 		}
 	})
 }
