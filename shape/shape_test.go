@@ -1196,7 +1196,9 @@ func TestShapeProbeMinimalEnvironmentWiring(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := filepath.Join(f.Home, ".kogen", "credentials")
-	f.Env = append(f.Env, "STUDIO_TOKEN=studio-secret", "OPENAI_API_KEY=openai-secret", "UNRELATED_SECRET=unrelated-secret", "BASH_ENV=/nonexistent", "LC_ALL=C")
+	// Mise's tool directory is intentionally preserved by probes. Keep it
+	// separate from the synthetic credential home this test forbids leaking.
+	f.Env = append(f.Env, "MISE_DATA_DIR="+filepath.Join(f.Aux, "mise"), "STUDIO_TOKEN=studio-secret", "OPENAI_API_KEY=openai-secret", "UNRELATED_SECRET=unrelated-secret", "BASH_ENV=/nonexistent", "LC_ALL=C")
 	f.newSession()
 	exit, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Slug: shpSlug, Request: "Add calc.is_even(n).", Client: f.Client, Tools: verify.Tools{Node: node}})
 	if err != nil || exit != 5 {
