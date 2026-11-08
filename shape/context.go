@@ -473,6 +473,14 @@ func contextBlocks(p promptInput) ([]any, error) {
 	}
 	fmt.Fprintf(&b, "automatic baseline: every file in `%s/`, every path listed under the Intent's `Acceptance:` (including step files), %s.\n", project.IntentDir(p.slug), configFiles)
 	fmt.Fprintf(&b, "automatic paths currently present or listed: %s\n", InspectStrings(automatic))
+	recovery, err := recoveryOwnedPaths(p.root, p.slug, p.cfg)
+	if err != nil {
+		return nil, err
+	}
+	if len(recovery) > 0 {
+		fmt.Fprintf(&b, "Draft paths editable through Shape recovery: %s\n", InspectStrings(sortedKeys(recovery)))
+		b.WriteString("This is recovery of a retained, unapproved draft. Its own Intent artifacts and slug-owned acceptance helpers may be repaired through propose_files and submit; the automatic baseline freezes the finished package for Build only after approval. Do not report a protected-edit blocker for repairing this unapproved draft. Configured protect patterns, project configuration and other Intents' artifacts remain protected. Read and resubmit every declared owned acceptance helper, even when unchanged, before submitting corrections: proposals from a prior invocation are not adopted automatically.\n")
+	}
 	b.WriteString("Approval freezes this baseline. It is not an exception or authorization to change a protected path. Inspect the implementation edits required to deliver the requested outcome; do not infer a conflict by scanning request prose. If a required protected edit cannot be avoided without changing the requested outcome, submit the exclusive `blocked` report with actual protected paths and a reason. Never submit a ready package conditional on a protected-edit approval mechanism: no such override exists.\n\n")
 	b.WriteString("Full contract inclusions: exact request, Q&A, README, testing rules and protection/automatic baseline are authoritative and are not clipped.\n")
 	return provider.ContractBlocks(b.String(), p.selected), nil

@@ -2152,11 +2152,19 @@ func (sh *shaping) validateBlocked(blocked any) (submission, []string, error) {
 	if err != nil {
 		return submission{}, nil, err
 	}
+	recovery, err := recoveryOwnedPaths(sh.root, sh.slug, sh.cfg)
+	if err != nil {
+		return submission{}, nil, err
+	}
+	protected = slices.DeleteFunc(protected, func(path string) bool { return recovery[path] })
 	var out []string
 	var unprotected, anyProtected bool
 	for _, p := range list {
 		if isText(p) {
-			if slices.Contains(protected, p.(string)) {
+			if recovery[p.(string)] {
+				unprotected = true
+				problems = append(problems, "blocked path "+p.(string)+" belongs to this unapproved draft; repair it through propose_files and submit, resubmitting every declared owned acceptance helper even when unchanged")
+			} else if slices.Contains(protected, p.(string)) {
 				anyProtected = true
 			} else {
 				unprotected = true
