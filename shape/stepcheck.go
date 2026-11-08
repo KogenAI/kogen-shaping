@@ -121,6 +121,13 @@ func (sh *shaping) stepSelfcheck(ctx context.Context) (string, error) {
 				items = append(items, verify.StepItem{Check: "ownership", Target: d.Pattern, File: d.File, Detail: "definition must start with " + sh.slug + ": "})
 			}
 		}
+		for _, d := range raw.Defs {
+			if d.Used && slices.Contains(own, d.File) {
+				if it, refused := stepLimitItem(d); refused {
+					items = append(items, it)
+				}
+			}
+		}
 	}
 	obs, err := sh.observerItems(ctx, intent)
 	if err != nil {
