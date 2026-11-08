@@ -115,7 +115,16 @@ var decisionRoundRe = regexp.MustCompile(`\(decision: (D\d+), round \d+\)`)
 // attempt instead; correct only that number when every other byte agrees.
 // Changed choices, constraints, evidence and uncertainty still reach the gate.
 func (sh *shaping) normalizeDecisionRounds(intent string) string {
-	for _, line := range decisionLines(intent) {
+	loc := decisionsHeading.FindStringIndex(intent)
+	if loc == nil {
+		return intent
+	}
+	end := len(intent)
+	if next := nextHeading.FindStringIndex(intent[loc[1]:]); next != nil {
+		end = loc[1] + next[0]
+	}
+	section := intent[loc[1]:end]
+	for _, line := range strings.Split(section, "\n") {
 		matches := decisionRoundRe.FindAllStringSubmatchIndex(line, -1)
 		if len(matches) != 1 {
 			continue
@@ -129,8 +138,8 @@ func (sh *shaping) normalizeDecisionRounds(intent string) string {
 		marker := decisionRoundRe.FindString(canonical)
 		corrected := line[:m[0]] + marker + line[m[1]:]
 		if corrected == canonical && corrected != line {
-			intent = strings.Replace(intent, line, corrected, 1)
+			section = strings.Replace(section, line, corrected, 1)
 		}
 	}
-	return intent
+	return intent[:loc[1]] + section + intent[end:]
 }

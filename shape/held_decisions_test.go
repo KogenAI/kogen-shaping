@@ -43,6 +43,12 @@ func TestCarryDecisionNormalizesAttemptAsRound(t *testing.T) {
 			}
 		})
 	}
+	// A verbatim copy outside Decisions is not ledger metadata to edit.
+	draft := "# Examples\n" + submitted + "\n\n## Decisions\n" + submitted + "\n\n## Tests\n" + submitted + "\n"
+	want := "# Examples\n" + submitted + "\n\n## Decisions\n" + d.intentLine() + "\n\n## Tests\n" + submitted + "\n"
+	if got := sh.normalizeDecisionRounds(draft); got != want {
+		t.Fatalf("round repair changed text outside Decisions: %q", got)
+	}
 }
 
 // A checker can paraphrase the body while copying the exact decision identity

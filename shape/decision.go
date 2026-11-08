@@ -20,7 +20,7 @@ const decisionInstructions = `You check the stated decisions of one candidate In
 Give one item for every line of the candidate's "## Decisions" section and for every explicit result the intent states for a concrete input in its prose or examples. For each item give:
 - statement: text copied exactly from intent.md (for a Decisions line, the whole line);
 - request_quotes: the passages of the request that support or contradict it, each copied exactly from the request (none when the request is silent);
-- verdict: follows (the request or a recorded answer supports the value), contradicts (the request states a different value) or unsupported (neither supports it);
+- verdict: follows (the request, a recorded answer, or an evidenced or assumed Decision supports the value), contradicts (the request states a different value) or unsupported (none supports it);
 - intent_value, request_value and difference: the two values and what makes them differ, for contradicts only;
 - why: one short reason.
 Compare values, not notation: before comparing, normalise digit grouping (1,000 and 1000), percentages and fractions (50% and 0.5), units of the same quantity (2 minutes and 120 seconds), date layouts, the order of a list whose order does not matter, and letter case where case does not matter.
@@ -28,6 +28,7 @@ A statement that restates the request's value in another notation follows the re
 Feasibility records are observed evidence, not product decisions requiring request quotes. Their measurements, probe results and observer-control outputs are checked by the feasibility machinery, separately from this check. The candidate view below omits that section; the full Intent remains available to the other checks.
 Give contradicts only when the values still differ after that normalisation, such as a different number, a wrongly converted unit or a different order where order matters; then give intent_value (the value as the statement writes it), request_value (the value as a request quote writes it) and difference (what makes them differ). For follows and unsupported give these three as empty strings.
 A Decision line may be marked as an assumption with (assumption: <what the user must confirm>) placed before its trailing tag; a marked line keeps its trailing (source: request) or (source: answer N). A recorded assumption is acceptable when the request is silent, but does not override an explicit request conflict.
+For a concrete result in prose or examples, read the corresponding Decisions before judging support. A consistent restatement of an evidenced or assumed Decision follows; it does not need a second copy of the marker on every prose line. Existing repository formats and access messages supported by those Decisions do not need to be specified again by the user. Still report explicit request conflicts, including a Decision narrowing a required set of outcomes, even when that Decision has evidence or an assumption.
 Answer by calling ` + SubmitDecisionCheckTool + `.`
 
 // assumptionRule is the feedback line that says exactly how to mark an assumption.
