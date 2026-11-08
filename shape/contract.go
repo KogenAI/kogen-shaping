@@ -61,6 +61,7 @@ var contractConfirmationInstructions = strings.Join([]string{
 	"For each numbered finding, inspect the cited expectation and contract yourself. Answer confirmed only when a correct implementation of the Intent cannot pass the expectation because of the cited contract; otherwise answer refuted. Give one verdict per finding with its number and a short why.",
 	"For an environment finding, answer confirmed only when the cited fresh-copy output shows that the step failed because the copy was not prepared for it, not because the requested behaviour is missing.",
 	"For a property problem, answer confirmed only when the Request or the Questions and answers ask for that property and the candidate has the stated problem; otherwise answer refuted.",
+	"A persistent assertion failure in a scenario that also covers a kept property does not alone show that property is broken. For a kept_assertion problem, inspect the actual failed assertion: confirm only when it tests the kept property itself. Refute when it tests new behaviour that is not implemented yet, even if another assertion in the same scenario preserves a bound or format.",
 }, "\n")
 
 // contractReadOnly are the inspection tools of both calls.
@@ -673,18 +674,26 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 	// Kept assertions must agree with the unchanged tree. Repeat the entire existing
 	// readiness observation once, only when a counted kept scenario is assertion-red.
 	kept := map[string]bool{}
-	for _, p := range props {
+	keptOwners := map[string][]int{}
+	for i, p := range props {
 		if p.kind == "kept" && p.observable && propertyCounts(p, sh.request, questions) {
 			for _, name := range ev.declaredScenarios(p.scenarios) {
 				kept[name] = true
+				if !slices.Contains(keptOwners[name], i) {
+					keptOwners[name] = append(keptOwners[name], i)
+				}
 				for _, sc := range scenarios {
 					if sc.Outline != nil && normalizeWhitespace(sc.Outline.Name) == name {
 						kept[normalizeWhitespace(sc.Name)] = true
+						if !slices.Contains(keptOwners[normalizeWhitespace(sc.Name)], i) {
+							keptOwners[normalizeWhitespace(sc.Name)] = append(keptOwners[normalizeWhitespace(sc.Name)], i)
+						}
 					}
 				}
 			}
 		}
 	}
+	var keptProblems []propertyProblem
 	first := keptAssertionFailures(sh.ready, kept)
 	if len(first) > 0 && sh.lastObservationsPath != "" {
 		sh.progress("kogen: repeating kept assertion observation (execution 2 of 2 maximum)")
@@ -697,7 +706,11 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 		var lines []string
 		for scenario := range first {
 			if detail, ok := second[scenario]; ok {
-				lines = append(lines, fmt.Sprintf("- %s (line %d): %s", scenario.name, scenario.line, normalizeWhitespace(detail)))
+				line := fmt.Sprintf("scenario %q (line %d) has the same assertion red in both observations: %s. Derive kept expected values from unchanged code or the scenario's own fixture; distinguish assertions about new behaviour.", scenario.name, scenario.line, normalizeWhitespace(detail))
+				lines = append(lines, line)
+				for _, owner := range keptOwners[scenario.name] {
+					keptProblems = append(keptProblems, propertyProblem{prop: owner, reason: "kept_assertion", scenario: scenario.name, text: line})
+				}
 			}
 		}
 		slices.Sort(lines)
@@ -712,10 +725,14 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 		if err := os.WriteFile(reference, []byte(sh.lastObservations+"\nKept assertion repeat: "+outcome+"; cap 2 executions.\n"), 0o666); err != nil {
 			return contractConfirmed{}, err
 		}
-		if len(lines) > 0 {
-			lines = append([]string{"Derive expected values from unchanged code or the scenario's own fixture, not another fixture or the request's prose; do not change or drop scenarios automatically."}, lines...)
-			return contractConfirmed{contradictions: lines}, nil
-		}
+		// A scenario can exercise several properties. Its failure is an observation,
+		// not proof that its kept property failed; confirmation checks that scope.
+		slices.SortFunc(keptProblems, func(a, b propertyProblem) int {
+			if a.prop != b.prop {
+				return a.prop - b.prop
+			}
+			return strings.Compare(a.text, b.text)
+		})
 	}
 	items := make([]contractItem, len(findings))
 	var evidenced []string
@@ -738,7 +755,7 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 	for i, p := range props {
 		counted[i] = propertyCounts(p, sh.request, questions)
 	}
-	problems := ev.propertyProblems(props, sh.request, questions)
+	problems := append(ev.propertyProblems(props, sh.request, questions), keptProblems...)
 	for _, pr := range problems {
 		evidenced = append(evidenced, propertyConfirmLine(len(evidenced)+1, props[pr.prop], pr))
 	}
