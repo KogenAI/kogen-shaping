@@ -65,7 +65,7 @@ func TestShapeRecoveryContextKeepsFrozenProtectionSeparate(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := blocks[0].(map[string]any)["text"].(string)
-	for _, want := range []string{"unapproved draft", "resubmit every declared owned acceptance helper", "Configured protect patterns, project configuration and other Intents' artifacts remain protected", "Draft paths editable through Shape recovery:"} {
+	for _, want := range []string{"unapproved draft", "Other declared helpers must be read and resubmitted", "Configured protect patterns, project configuration and other Intents' artifacts remain protected", "Draft paths editable through Shape recovery:"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("recovery context omits %q: %s", want, text)
 		}

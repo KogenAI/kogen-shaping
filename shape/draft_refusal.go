@@ -1,6 +1,7 @@
 package shape
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -9,10 +10,71 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-loop/sys"
 )
+
+// custodyBytes never follows a symlink below the project root. An ignored
+// proposal copy is evidence only when it and the current file are regular text.
+func custodyBytes(root, path string) ([]byte, bool) {
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil || !normalPath(path) {
+		return nil, false
+	}
+	full := filepath.Join(realRoot, path)
+	resolved, err := filepath.EvalSymlinks(full)
+	if err != nil || resolved != full {
+		return nil, false
+	}
+	st, err := os.Lstat(full)
+	if err != nil || !st.Mode().IsRegular() {
+		return nil, false
+	}
+	data, err := os.ReadFile(full)
+	return data, err == nil && utf8.Valid(data)
+}
+
+// restoreDraftHelpers carries accepted ownership across the documented retry.
+// It restores no readiness or approval: the complete candidate is checked again.
+func (sh *shaping) restoreDraftHelpers() ([]string, error) {
+	owned, err := recoveryOwnedPaths(sh.root, sh.slug, sh.cfg)
+	if err != nil || len(owned) == 0 || sh.cfg.Acceptance == nil {
+		return nil, err
+	}
+	var restored []string
+	for _, path := range sortedKeys(owned) {
+		if !scopedStepPath(sh.cfg.Acceptance.StepsDir, sh.slug, path) {
+			continue
+		}
+		if sh.repo == nil {
+			continue
+		}
+		private := proposedDir(sh.slug) + path
+		tracked, err := sh.trackedAtHead(private)
+		if err != nil {
+			return nil, err
+		}
+		if tracked {
+			continue // Repository content cannot attest private proposal custody.
+		}
+		current, currentOK := custodyBytes(sh.root, path)
+		prior, priorOK := custodyBytes(sh.root, private)
+		if !currentOK || !priorOK || !bytes.Equal(current, prior) {
+			continue
+		}
+		if sh.proposed == nil {
+			sh.proposed = map[string]string{}
+		}
+		sh.proposed[path] = string(current)
+		restored = append(restored, path)
+	}
+	if len(restored) > 0 && sh.ev != nil {
+		sh.ev.Record(map[string]any{"event": "draft_helpers_restored", "paths": restored})
+	}
+	return restored, nil
+}
 
 // recoveryOwnedPaths distinguishes an unapproved Shape draft from the baseline
 // that a later approval freezes for Build. Configured protection always wins.

@@ -695,6 +695,10 @@ func (sh *shaping) shape(ctx context.Context, st *state) (int, error) {
 	sh.started = time.Now()
 	t0 := sh.started
 	role := sh.role
+	restored, err := sh.restoreDraftHelpers()
+	if err != nil {
+		return 0, err
+	}
 
 	defs := ShaperToolDefinitions(sh.mainTools()...)
 	defs = append(defs, ShaperToolDefinitions(ProposeFilesTool, SubmitTool)...)
@@ -708,7 +712,7 @@ func (sh *shaping) shape(ctx context.Context, st *state) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	blocks, err := contextBlocks(promptInput{root: sh.root, slug: sh.slug, cfg: sh.cfg, state: st, protected: protected, selected: selected, ledger: sh.ledger, current: sh.checkoutDigest})
+	blocks, err := contextBlocks(promptInput{root: sh.root, slug: sh.slug, cfg: sh.cfg, state: st, protected: protected, selected: selected, ledger: sh.ledger, current: sh.checkoutDigest, restored: restored})
 	if err != nil {
 		return 0, err
 	}
@@ -1595,6 +1599,9 @@ func (sh *shaping) acceptFiles(ctx context.Context, submitted []proposedFile) (s
 			sh.proposed[p] = repairCarriedDecisionDraft(draft, current)
 		}
 		sh.carriedRepair = nil
+	}
+	if err := sh.keepProposals(); err != nil {
+		return "", outcome{}, err
 	}
 	sh.packageKey = sh.mergedPackage()
 	sh.unchangedOf = sh.refusedPackages[sh.packageKey]
