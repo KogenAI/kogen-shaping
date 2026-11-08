@@ -58,3 +58,32 @@ func TestRepairCarriedDecisionDraftPreservesMetadata(t *testing.T) {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 }
+
+func TestCarriedRepairIncludesNewDecisions(t *testing.T) {
+	parallel(t)
+	d := map[string]any{"decision": "Safe diagnostics", "evidence": []any{"calc.js"}, "constraints": []any{"no bytes"}}
+	line := "- Safe diagnostics (decision: D1, round 1) (constraint: no bytes) (evidence: calc.js) (source: request)"
+	next := shpFilesWithDecisions("- Safe diagnostics (source: request)")
+	next["decisions"] = []any{map[string]any{"decision": "Keep token routes", "uncertainty": "retain existing routes", "constraints": []any{"stdin only"}}}
+	f := newShpFx(t,
+		shpAnswer(dlRead("calc.js")), shpSubmit("a1", dlAsk("Which wording?", d)), shpUI(1),
+		shpSubmit("b1", shpFilesWithDecisions("- Safe diagnostics (source: request)")),
+		shpSubmit("b2", next), shpAck("b3"))
+	if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 5 {
+		t.Fatalf("first: exit %d, err %v", exit, err)
+	}
+	if exit, err := f.shape("1: a"); err != nil || exit != 0 {
+		t.Fatalf("revision: exit %d, err %v\n%s", exit, err, f.Stderr)
+	}
+	published := f.read(".kogen/intents/is-even/intent.md")
+	if !strings.Contains(published, line) || !strings.Contains(published, "- Safe diagnostics (source: request)") {
+		t.Fatalf("published draft lost decisions: %s", published)
+	}
+	if !strings.Contains(published, "- Keep token routes (decision: D2, round 2) (constraint: stdin only) (assumption: retain existing routes) (source: request)") {
+		t.Fatalf("new recorded decision lost: %s", published)
+	}
+	refused := shpNamed(f.events(), "submission_refused")
+	if len(refused) != 1 || refused[0]["gate"] != "carried_decisions" {
+		t.Fatalf("refusals: %v", refused)
+	}
+}

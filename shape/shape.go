@@ -1581,7 +1581,14 @@ func (sh *shaping) acceptFiles(ctx context.Context, submitted []proposedFile) (s
 	if len(sh.carriedRepair) > 0 {
 		p := project.IntentMDPath(sh.slug)
 		if draft, ok := sh.proposed[p]; ok {
-			sh.proposed[p] = repairCarriedDecisionDraft(draft, sh.carriedRepair)
+			// This submission may have recorded or revised decisions before
+			// reaching files. Repair from the current ledger, not the prior
+			// refusal's snapshot, so newly accepted decisions are carried too.
+			var current []string
+			for _, d := range sh.ledger.standing() {
+				current = append(current, fmt.Sprintf("- %s (round %d) is not in Decisions; keep it as: %s", d.ID, d.Round, d.intentLine()))
+			}
+			sh.proposed[p] = repairCarriedDecisionDraft(draft, current)
 		}
 		sh.carriedRepair = nil
 	}
