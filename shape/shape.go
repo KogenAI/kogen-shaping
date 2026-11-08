@@ -1738,6 +1738,14 @@ func (sh *shaping) checkSubmission(ctx context.Context, files []string) (string,
 		sh.refused("literal_check", lines[1:])
 		return strings.Join(lines, "\n"), outcome{kind: outInvalid, problems: lines[1:]}, nil
 	}
+	problems, err := sh.exampleCheck(ctx)
+	if err != nil {
+		return "", outcome{}, err
+	}
+	if len(problems) > 0 {
+		sh.refused("example_check", problems)
+		return "Examples contradict the rules:\n" + strings.Join(problems, "\n"), outcome{kind: outInvalid, problems: problems}, nil
+	}
 	sh.progress("kogen: checking step code")
 	feedback, err := sh.stepSelfcheck(ctx)
 	if err != nil {

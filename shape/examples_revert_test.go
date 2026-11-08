@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -33,10 +34,11 @@ Then(/^is-even: the output is (.*)$/, function (expected) { assert.equal(require
 	ack := shpSubmit("ack", map[string]any{"files": []any{map[string]any{"path": ".kogen/intents/is-even/acceptance.feature", "content": feature}}})
 	f := newShpFx(t, shpSubmit("submit", files), ack)
 	f.Prov.route = func(req map[string]any) *shpStep {
-		if strings.Contains(shpBody(req), "submit_example_check") {
-			return &shpStep{status: 400, code: "unexpected_example_check"}
+		if !slices.Contains(shpToolNames(req), exampleTool) {
+			return nil
 		}
-		return nil
+		result := shpAnswer(shpCall("examples", exampleTool, map[string]any{"items": []any{map[string]any{"scenario": "Formatted output", "expected": `"status":0,"out":"61610a0a"`, "derived": `{"status":0,"out":"61610a0a"}`, "verdict": "contradicts", "why": "raw spelling"}}}))
+		return &result
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -56,15 +58,21 @@ Then(/^is-even: the output is (.*)$/, function (expected) { assert.equal(require
 	if f.runs() < 2 {
 		t.Fatal("readiness did not run")
 	}
-	for _, r := range f.Prov.requests() {
-		if strings.Contains(shpBody(r), "submit_example_check") {
-			t.Fatal("unexpected example check request")
+	checked := false
+	for _, e := range f.events() {
+		if e["event"] == "example_check" {
+			checked = true
+			items := e["items"].([]any)
+			if items[0].(map[string]any)["verdict"] != "follows" {
+				t.Fatalf("wrong verdict: %v", e)
+			}
+		}
+		if e["event"] == "submission_refused" && e["gate"] == "example_check" {
+			t.Fatalf("unexpected refusal %v", e)
 		}
 	}
-	for _, e := range f.events() {
-		if e["event"] == "example_check" || (e["event"] == "submission_refused" && e["gate"] == "example_check") {
-			t.Fatalf("unexpected event %v", e)
-		}
+	if !checked {
+		t.Fatal("missing example check")
 	}
 	record := ".kogen/local/shaping/is-even/example-contradictions.json"
 	if f.exists(record) {

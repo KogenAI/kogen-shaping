@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -88,7 +89,13 @@ func (p *shpProvider) serve(w http.ResponseWriter, r *http.Request) {
 		p.mu.Lock()
 	}
 	if !routed {
-		if decisionRequest(req) {
+		if slices.Contains(shpToolNames(req), exampleTool) {
+			call := shpCall("example-check", exampleTool, map[string]any{"items": []any{}})
+			step = shpAnswer(call)
+			if p.contractWire != nil {
+				step = p.contractWire(call)
+			}
+		} else if decisionRequest(req) {
 			call := shpCall("decision-check", SubmitDecisionCheckTool, map[string]any{"items": []any{}})
 			step = shpAnswer(call)
 			if p.contractWire != nil {
@@ -233,7 +240,7 @@ func (p *shpProvider) literalRequests() []map[string]any {
 func (p *shpProvider) requests() []map[string]any {
 	var out []map[string]any
 	for _, r := range p.allRequests() {
-		if contractKind(r) == "" && !decisionRequest(r) && !literalRequest(r) {
+		if contractKind(r) == "" && !decisionRequest(r) && !literalRequest(r) && !slices.Contains(shpToolNames(r), exampleTool) {
 			out = append(out, r)
 		}
 	}
