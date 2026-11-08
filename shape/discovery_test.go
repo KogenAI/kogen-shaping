@@ -144,11 +144,11 @@ func TestValidateQuestionsRefusesMalformedOptions(t *testing.T) {
 		{"empty label", []any{q("A?", []any{opt("x", true), opt("\t")})}, []string{prefix(1, "A?") + "option b has an empty label"}},
 		{"repeated label", []any{q("A?", []any{opt("x", true), opt("y"), opt(" x "), opt("x")})}, []string{prefix(1, "A?") + "option c repeats the label of option a", prefix(1, "A?") + "option d repeats the label of option a"}},
 		{"case differs", []any{q("A?", []any{opt("x", true), opt("X")})}, nil},
-		{"none recommended", []any{q("A?", []any{opt("x"), opt("y", false)})}, []string{prefix(1, "A?") + "no option is marked recommended"}},
+		{"none recommended", []any{q("A?", []any{opt("x"), opt("y", false)})}, nil},
 		{"two recommended", []any{q("A?", []any{opt("x", true), opt("y"), opt("z", true)})}, []string{prefix(1, "A?") + "2 options are marked recommended (a, c)"}},
 		{"three recommended", []any{q("A?", []any{opt("x", true), opt("y", true), opt("z", true)})}, []string{prefix(1, "A?") + "3 options are marked recommended (a, b, c)"}},
 		{"order", []any{q("A?", []any{opt("x"), opt("x")}), q("B?", []any{opt("x", true), opt("y", true)}), q("C?", []any{opt("x", true), opt("y")})},
-			[]string{prefix(1, "A?") + "option b repeats the label of option a", prefix(1, "A?") + "no option is marked recommended", prefix(2, "B?") + "2 options are marked recommended (a, b)"}},
+			[]string{prefix(1, "A?") + "option b repeats the label of option a", prefix(2, "B?") + "2 options are marked recommended (a, b)"}},
 		{"well formed", []any{q("A?", []any{opt("x", true), opt("y")}), withKind(q("B?", []any{opt("x"), opt("y", true)}), "handoff")}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

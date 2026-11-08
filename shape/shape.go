@@ -140,6 +140,9 @@ func shapeRun(ctx context.Context, s *sys.Session, in ShapeInput) (exit int, err
 	}
 	var ledger *decisionLedger
 	if st == nil {
+		if err := os.Remove(filepath.Join(stateDir, questionsFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return 0, err
+		}
 		if _, err := os.Stat(filepath.Join(root, project.IntentDir(slug))); err == nil {
 			refusal, err := readDraftRefusal(root, slug)
 			if err != nil {
@@ -2221,7 +2224,7 @@ func explicitRejectedKind(kind any) bool {
 }
 
 // optionsRule closes the problem lines of a question whose options are malformed.
-const optionsRule = "every question needs at least two options with distinct, non-empty labels and exactly one option marked recommended"
+const optionsRule = "every question needs at least two options with distinct, non-empty labels and at most one option marked recommended"
 
 // optionProblemsOf lists what is wrong with the options of a question that passed validOptions.
 func optionProblemsOf(q map[string]any) []string {
@@ -2257,8 +2260,6 @@ func optionProblemsOf(q map[string]any) []string {
 		}
 	}
 	switch {
-	case len(recommended) == 0:
-		problems = append(problems, "no option is marked recommended")
 	case len(recommended) > 1:
 		problems = append(problems, fmt.Sprintf("%d options are marked recommended (%s)", len(recommended), strings.Join(recommended, ", ")))
 	}

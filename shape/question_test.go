@@ -147,7 +147,7 @@ func TestShapeQuestionCheckRequestAndPublication(t *testing.T) {
 	if err != nil || exit != 5 {
 		t.Fatalf("exit %d, err %v", exit, err)
 	}
-	shpContains(t, "stdout", f.Stdout.String(), "2. Which wording?\n   a) keep (recommended)\n   b) shorter\n")
+	shpContains(t, "stdout", f.Stdout.String(), "2. Which wording?\n   a) keep\n   b) shorter\n")
 	if !f.exists(".kogen/local/shaping/is-even/questions.json") {
 		t.Fatal("questions.json is written for questions that reach the user")
 	}
@@ -172,10 +172,10 @@ func TestShapeQuestionCheckRequestAndPublication(t *testing.T) {
 		t.Fatalf("tool %v, want %v", got, want)
 	}
 	shpEq(t, "first input", qcText(first), "Slug: is-even\n\n# Request\n\nAdd calc.is_even(n).\n\n# Earlier questions and answers\n\nnone\n\n# Questions\n\n"+
-		"1. Sign in to the provider\n   a) Yes (recommended)\n   b) No\n   kind: handoff\n2. Which wording?\n   a) keep (recommended)\n   b) shorter")
+		"1. Sign in to the provider\n   a) Yes\n   b) No\n   kind: handoff\n2. Which wording?\n   a) keep\n   b) shorter")
 	shpEq(t, "second input", qcText(checks[1]), "Slug: is-even\n\n# Request\n\nAdd calc.is_even(n).\n\n# Earlier questions and answers\n\n"+
 		"Round 1:\n1. Sign in to the provider\n   a) Yes\n   b) No\n   answer: 1: done\n2. Which wording?\n   a) keep\n   b) shorter\n   answer: 2: b\n\n# Questions\n\n"+
-		"1. Which icon?\n   a) star (recommended)\n   b) heart")
+		"1. Which icon?\n   a) star\n   b) heart")
 	if first["prompt_cache_key"] == nil || first["prompt_cache_key"] == f.Prov.requests()[0]["prompt_cache_key"] {
 		t.Fatal("the question check has its own conversation identity")
 	}
@@ -216,7 +216,7 @@ func TestShapeQuestionCheckRefusesTheWholeSubmission(t *testing.T) {
 	}, "\n")
 	shpEq(t, "feedback", shpOutputs(reqs[1])["q1"], wantFeedback)
 	// The refusal saved no round and printed nothing; the UI/UX question went through afterwards.
-	shpEq(t, "stdout", f.Stdout.String(), "Questions for is-even:\n1. Which wording?\n   a) keep (recommended)\n   b) shorter\n"+
+	shpEq(t, "stdout", f.Stdout.String(), "Questions for is-even:\n1. Which wording?\n   a) keep\n   b) shorter\n"+
 		"Answer one per line as <n>: <letter or your words>, e.g. printf '1: a\\n' | kogen intent shape is-even -\nOr enter all: recommended to use every question's recommended option.\n")
 	var state struct {
 		Rounds []map[string]any `json:"rounds"`
@@ -381,7 +381,7 @@ func TestShapeQuestionCheckCitedEvidence(t *testing.T) {
 		if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 5 {
 			t.Fatalf("exit %d, err %v", exit, err)
 		}
-		shpEq(t, "input", qcText(qcChecks(f.Prov.requests())[0]), header+"1. Which wording? (evidence: ; )\n   a) yes (recommended)\n   b) no")
+		shpEq(t, "input", qcText(qcChecks(f.Prov.requests())[0]), header+"1. Which wording? (evidence: ; )\n   a) yes\n   b) no")
 	})
 	t.Run("native reads and probes are shown, the rest with their reason", func(t *testing.T) {
 		parallel(t)
@@ -411,7 +411,7 @@ func TestShapeQuestionCheckCitedEvidence(t *testing.T) {
 		if i < 0 {
 			t.Fatalf("input %q", text)
 		}
-		shpEq(t, "questions", text[:i], header+"1. "+question+"\n   a) yes (recommended)\n   b) no")
+		shpEq(t, "questions", text[:i], header+"1. "+question+"\n   a) yes\n   b) no")
 		shpEq(t, "evidence", regexp.MustCompile(`wall: [0-9.]+ s`).ReplaceAllString(text[i:], "wall: WALL s"), wantTail)
 	})
 }
@@ -523,7 +523,7 @@ func TestExternalShapeQuestionCheck(t *testing.T) {
 		if !strings.HasSuffix(task.Dir, "/executor-question-1") || task.Role != executor.RoleShape {
 			t.Fatalf("task %+v", task)
 		}
-		shpEq(t, "text", task.Brief.Stable, questionInstructions+"\n\n"+"Slug: is-even\n\n# Request\n\nAdd calc.is_even(n).\n\n# Earlier questions and answers\n\nnone\n\n# Questions\n\n1. Which wording?\n   a) keep (recommended)\n   b) shorter")
+		shpEq(t, "text", task.Brief.Stable, questionInstructions+"\n\n"+"Slug: is-even\n\n# Request\n\nAdd calc.is_even(n).\n\n# Earlier questions and answers\n\nnone\n\n# Questions\n\n1. Which wording?\n   a) keep\n   b) shorter")
 		shpEq(t, "dynamic", task.Brief.Dynamic, "")
 		var schema, want map[string]any
 		if json.Unmarshal(task.Schema, &schema) != nil || json.Unmarshal([]byte(qcToolJSON), &want) != nil || !reflect.DeepEqual(schema, want["parameters"]) {

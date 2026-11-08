@@ -335,11 +335,8 @@ func shpQuestion(text string, options ...string) map[string]any {
 	}
 	{
 		var list []any
-		for i, o := range options {
+		for _, o := range options {
 			opt := map[string]any{"label": o}
-			if i == 0 {
-				opt["recommended"] = true
-			}
 			list = append(list, opt)
 		}
 		q["options"] = list
@@ -347,7 +344,7 @@ func shpQuestion(text string, options ...string) map[string]any {
 	return q
 }
 
-// shpKindQuestion is a well-formed question of a kind: two options, the first recommended.
+// shpKindQuestion is a well-formed question of a kind.
 func shpKindQuestion(kind, text string) map[string]any {
 	q := shpQuestion(text, "Yes", "No")
 	q["kind"] = kind
@@ -373,10 +370,10 @@ func TestShapeQuestionsPathPrintsNumberedQuestionsAndWritesNothing(t *testing.T)
 	}
 	shpEq(t, "stdout", f.Stdout.String(), "Questions for is-even:\n"+
 		"1. What should is_even do with a non-integer?\n"+
-		"   a) raise TypeError (recommended)\n"+
+		"   a) raise TypeError\n"+
 		"   b) return False\n"+
 		"2. How should it be named?\n"+
-		"   a) snake_case (recommended)\n"+
+		"   a) snake_case\n"+
 		"   b) camelCase\n"+
 		`Answer one per line as <n>: <letter or your words>, e.g. printf '1: a\n2: a\n' | kogen intent shape is-even -`+"\n"+
 		"Or enter all: recommended to use every question's recommended option.\n")
@@ -419,6 +416,13 @@ func TestShapeAnswersContinueShapingAndTheDecisionRecordsItsSource(t *testing.T)
 	shpContains(t, "request 2", body, "What should is_even do with a non-integer?")
 	shpContains(t, "request 2", body, "answer: 1: a")
 	shpContains(t, "request 2", body, "Add calc.is_even(n).")
+	for _, req := range f.Prov.requests() {
+		if decisionRequest(req) {
+			text := qcText(req)
+			shpContains(t, "decision check context", text, "# Earlier questions and answers\n\nRound 1:")
+			shpContains(t, "decision check answer", text, "answer: 1: a")
+		}
+	}
 	shpContains(t, "intent", f.read(".kogen/intents/is-even/intent.md"), "(source: answer 1)")
 	if f.exists(".kogen/local/approvals/is-even.json") || f.exists(".kogen/local/shaping/is-even/state.json") {
 		t.Fatal("no approval, no pending state")
@@ -435,10 +439,16 @@ func TestShapeAnswersContinueShapingAndTheDecisionRecordsItsSource(t *testing.T)
 	shpEq(t, "request recorded is the first request", doc["request"].(map[string]any)["text"], any("Add calc.is_even(n)."))
 }
 
+func recommendedHandoff(text string) map[string]any {
+	q := shpKindQuestion("handoff", text)
+	q["options"].([]any)[0].(map[string]any)["recommended"] = true
+	return q
+}
+
 func TestShapeAllRecommendedAnswersEveryQuestion(t *testing.T) {
 	parallel(t)
 	f := newShpFx(t,
-		shpSubmit("q1", map[string]any{"questions": []any{shpQuestion("First?", "yes", "no"), shpQuestion("Second?", "left", "right")}}), shpUI(2),
+		shpSubmit("q1", map[string]any{"questions": []any{recommendedHandoff("Sign in?"), recommendedHandoff("Confirm security?")}}), shpQuestionCheck("qc", "handoff", "handoff"),
 		shpSubmit("c1", shpFilesWithDecisions("- First. (source: answer 1)", "- Second. (source: answer 2)")),
 		shpAck("c2"))
 	if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 5 {
@@ -503,10 +513,10 @@ func TestShapeRefusesAQuestionWithoutOptionsBeforeAskingAndAllRecommendedAnswers
 	reqs := f.Prov.requests()
 	shpEq(t, "question checks", len(qcChecks(reqs)), 1)
 	shpContains(t, "feedback", shpOutputs(reqs[1])["q1"], "invalid submission:\nquestion 1 ("+text+"): no options\n"+optionsRule+"\n")
-	shpEq(t, "stdout", f.Stdout.String(), "Questions for is-even:\n1. "+text+"\n   a) snake_case (recommended)\n   b) camelCase\n"+
+	shpEq(t, "stdout", f.Stdout.String(), "Questions for is-even:\n1. "+text+"\n   a) snake_case\n   b) camelCase\n"+
 		`Answer one per line as <n>: <letter or your words>, e.g. printf '1: a\n' | kogen intent shape is-even -`+"\n"+
 		"Or enter all: recommended to use every question's recommended option.\n")
-	if exit, err := f.shape("all: recommended"); err != nil || exit != 0 {
+	if exit, err := f.shape("1: a"); err != nil || exit != 0 {
 		t.Fatalf("exit %d, err %v\n%s", exit, err, f.Stdout)
 	}
 }
@@ -1244,8 +1254,8 @@ func TestShapeQuestionsFileListsKindsOptionsAndRecommendations(t *testing.T) {
 	f := newShpFx(t, shpSubmit("q1", map[string]any{"questions": []any{
 		map[string]any{"question": "Sign in to the provider in your browser", "kind": "handoff", "options": []any{map[string]any{"label": "I have signed in", "recommended": true}, map[string]any{"label": "Pause until I have signed in"}}},
 		shpQuestion("Which wording?", "keep", "shorter"),
-		map[string]any{"question": "Pick one", "options": []any{map[string]any{"label": "x"}, map[string]any{"label": "y", "recommended": true}, map[string]any{"label": "z"}}},
-	}}), shpUI(3))
+		map[string]any{"question": "Pick one", "options": []any{map[string]any{"label": "x"}, map[string]any{"label": "y"}, map[string]any{"label": "z"}}},
+	}}), shpQuestionCheck("qc", "handoff", "ui_ux", "ui_ux"))
 	if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 5 {
 		t.Fatalf("exit %d, err %v", exit, err)
 	}
@@ -1253,8 +1263,8 @@ func TestShapeQuestionsFileListsKindsOptionsAndRecommendations(t *testing.T) {
 	b, _ := json.Marshal(data)
 	shpEq(t, "data", string(b), `{"questions":[`+
 		`{"kind":"handoff","number":1,"options":[{"label":"I have signed in","letter":"a","recommended":true},{"label":"Pause until I have signed in","letter":"b","recommended":false}],"question":"Sign in to the provider in your browser","recommended":"a"},`+
-		`{"kind":"product","number":2,"options":[{"label":"keep","letter":"a","recommended":true},{"label":"shorter","letter":"b","recommended":false}],"question":"Which wording?","recommended":"a"},`+
-		`{"kind":"product","number":3,"options":[{"label":"x","letter":"a","recommended":false},{"label":"y","letter":"b","recommended":true},{"label":"z","letter":"c","recommended":false}],"question":"Pick one","recommended":"b"}`+
+		`{"kind":"product","number":2,"options":[{"label":"keep","letter":"a","recommended":false},{"label":"shorter","letter":"b","recommended":false}],"question":"Which wording?","recommended":null},`+
+		`{"kind":"product","number":3,"options":[{"label":"x","letter":"a","recommended":false},{"label":"y","letter":"b","recommended":false},{"label":"z","letter":"c","recommended":false}],"question":"Pick one","recommended":null}`+
 		`],"slug":"is-even"}`)
 }
 
@@ -1283,7 +1293,7 @@ func TestShapeQuestionsFileFollowsThePendingRoundAndGoesWhenReady(t *testing.T) 
 	shpEq(t, "remaining number", left[0].(map[string]any)["number"], any(float64(1)))
 	shpEq(t, "requests", len(shpShaperRequests(f.Prov.requests())), 1)
 
-	if exit, err := f.shape("all: recommended"); err != nil || exit != 0 {
+	if exit, err := f.shape("1: a"); err != nil || exit != 0 {
 		t.Fatalf("exit %d, err %v\n%s", exit, err, f.Stdout)
 	}
 	if f.exists(".kogen/local/shaping/is-even/questions.json") || f.exists(".kogen/local/shaping/is-even/state.json") {

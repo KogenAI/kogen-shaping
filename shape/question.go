@@ -376,6 +376,19 @@ func (sh *shaping) questionGate(ctx context.Context, questions []map[string]any)
 			event["decision"] = settled.ID
 		}
 		events[i] = event
+		if it.class == "ui_ux" {
+			before := len(refused)
+			for _, raw := range questions[i]["options"].([]any) {
+				option := raw.(map[string]any)
+				if option["recommended"] == true {
+					evidenced = false
+					refused = append(refused, fmt.Sprintf("- %s: %s; decide this recommended answer without asking, record it as a Decision with an (assumption: ...) marker and (source: request), then continue shaping", questions[i]["question"], option["label"]))
+				}
+			}
+			if len(refused) > before {
+				continue
+			}
+		}
 		if it.class == "ui_ux" || it.class == "handoff" {
 			asked++
 			evidenced = false

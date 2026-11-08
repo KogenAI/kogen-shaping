@@ -15,18 +15,18 @@ import (
 // SubmitDecisionCheckTool is the one tool of the decision check call.
 const SubmitDecisionCheckTool = "submit_decision_check"
 
-const decisionInstructions = `You check the stated decisions of one candidate Intent against the feature request that it answers. You see only the request text and the candidate intent.md. Read-only: do not use any tool except ` + SubmitDecisionCheckTool + `.
+const decisionInstructions = `You check the stated decisions of one candidate Intent against the feature request that it answers. You see the request, earlier questions and answers, and the candidate intent.md. Consider recorded answers and assumptions as support for decisions absent from the initial request, but still report genuine conflicts with the request. Read-only: do not use any tool except ` + SubmitDecisionCheckTool + `.
 
 Give one item for every line of the candidate's "## Decisions" section and for every explicit result the intent states for a concrete input in its prose or examples. For each item give:
 - statement: text copied exactly from intent.md (for a Decisions line, the whole line);
 - request_quotes: the passages of the request that support or contradict it, each copied exactly from the request (none when the request is silent);
-- verdict: follows (the request states the same value), contradicts (the request states a different value) or unsupported (the request does not state it);
+- verdict: follows (the request or a recorded answer supports the value), contradicts (the request states a different value) or unsupported (neither supports it);
 - intent_value, request_value and difference: the two values and what makes them differ, for contradicts only;
 - why: one short reason.
 Compare values, not notation: before comparing, normalise digit grouping (1,000 and 1000), percentages and fractions (50% and 0.5), units of the same quantity (2 minutes and 120 seconds), date layouts, the order of a list whose order does not matter, and letter case where case does not matter.
 A statement that restates the request's value in another notation follows the request.
 Give contradicts only when the values still differ after that normalisation, such as a different number, a wrongly converted unit or a different order where order matters; then give intent_value (the value as the statement writes it), request_value (the value as a request quote writes it) and difference (what makes them differ). For follows and unsupported give these three as empty strings.
-A Decision line may be marked as an assumption with (assumption: <what the user must confirm>) placed before its trailing tag; a marked line keeps its trailing (source: request) or (source: answer N).
+A Decision line may be marked as an assumption with (assumption: <what the user must confirm>) placed before its trailing tag; a marked line keeps its trailing (source: request) or (source: answer N). A recorded assumption is acceptable when the request is silent, but does not override an explicit request conflict.
 Answer by calling ` + SubmitDecisionCheckTool + `.`
 
 // assumptionRule is the feedback line that says exactly how to mark an assumption.
@@ -167,7 +167,7 @@ func decisionOutcome(items []decisionItem, request, intent string) (map[string]a
 		counts[it.verdict]++
 		events[i] = map[string]any{"statement": it.statement, "request_quotes": it.quotes, "verdict": it.verdict,
 			"intent_value": it.intentValue, "request_value": it.requestValue, "difference": it.difference, "why": it.why}
-		if it.verdict == "follows" || markedStatement(intent, it.statement) {
+		if it.verdict == "follows" || (it.verdict == "unsupported" && markedStatement(intent, it.statement)) {
 			continue
 		}
 		quoted := make([]string, len(it.quotes))
@@ -192,7 +192,11 @@ func decisionOutcome(items []decisionItem, request, intent string) (map[string]a
 // decisionCheck makes one fresh read-only call on the candidate intent.md and returns the
 // feedback lines, nil when the candidate may go on.
 func (sh *shaping) decisionCheck(ctx context.Context, intent string) ([]string, error) {
-	input := "Slug: " + sh.slug + "\n\n# Request\n\n" + sh.request + "\n\n# Candidate intent.md\n\n" + intent
+	earlier := sh.earlier
+	if earlier == "" {
+		earlier = "none"
+	}
+	input := "Slug: " + sh.slug + "\n\n# Request\n\n" + sh.request + "\n\n# Earlier questions and answers\n\n" + earlier + "\n\n# Candidate intent.md\n\n" + intent
 	var args map[string]any
 	sh.decisionChecks++
 	if sh.ext != nil {
@@ -267,7 +271,7 @@ func markedStatement(intent, statement string) bool {
 	var lineOf []int
 	pendingSpace := false
 	for i, line := range lines {
-		marked[i] = strings.Contains(line, "(assumption:") || strings.Contains(line, "(evidence:")
+		marked[i] = strings.Contains(line, "(assumption:") || strings.Contains(line, "(evidence:") || strings.Contains(line, "(source: answer ")
 		for j := 0; j < len(line); j++ {
 			if c := line[j]; c == ' ' || c == '\t' || c == '\r' {
 				pendingSpace = true

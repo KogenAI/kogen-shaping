@@ -60,7 +60,7 @@ func TestShapeInvalidQuestionOptionsGetCorrectionFeedbackAndAreNeverPersisted(t 
 		shpQuestion("Any preference?"),
 		shpQuestion("Which display?", "Wide", "Narrow"),
 		map[string]any{"question": "Which order?", "options": []any{
-			map[string]any{"label": "Newest", "recommended": true},
+			map[string]any{"label": "Newest", "recommended": false},
 			map[string]any{"label": "Oldest", "recommended": false},
 			map[string]any{"label": "Other"},
 		}},
@@ -91,7 +91,7 @@ func TestShapeInvalidQuestionOptionsGetCorrectionFeedbackAndAreNeverPersisted(t 
 	if err != nil || exit != 5 {
 		t.Fatalf("exit %d, err %v", exit, err)
 	}
-	shpContains(t, "stdout", f.Stdout.String(), "Newest (recommended)")
+	shpContains(t, "stdout", f.Stdout.String(), "Newest")
 
 	b, err := os.ReadFile(state)
 	if err != nil {

@@ -333,7 +333,7 @@ func TestClaudeLineupShapeSubmission(t *testing.T) {
 			t.Fatalf("exit %d, err %v", exit, err)
 		}
 		shpEq(t, "stdout", f.Stdout.String(), "Questions for is-even:\n"+
-			"1. What should is_even do with a non-integer?\n   a) raise TypeError (recommended)\n   b) return False\n2. How should it be named?\n   a) snake_case (recommended)\n   b) camelCase\n"+
+			"1. What should is_even do with a non-integer?\n   a) raise TypeError\n   b) return False\n2. How should it be named?\n   a) snake_case\n   b) camelCase\n"+
 			`Answer one per line as <n>: <letter or your words>, e.g. printf '1: a\n2: a\n' | kogen intent shape is-even -`+"\n"+
 			"Or enter all: recommended to use every question's recommended option.\n")
 		shapeAbsent(t, f)
