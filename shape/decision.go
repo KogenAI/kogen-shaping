@@ -25,6 +25,7 @@ Give one item for every line of the candidate's "## Decisions" section and for e
 - why: one short reason.
 Compare values, not notation: before comparing, normalise digit grouping (1,000 and 1000), percentages and fractions (50% and 0.5), units of the same quantity (2 minutes and 120 seconds), date layouts, the order of a list whose order does not matter, and letter case where case does not matter.
 A statement that restates the request's value in another notation follows the request.
+Feasibility records are observed evidence, not product decisions requiring request quotes. Their measurements, probe results and observer-control outputs are checked by the feasibility machinery, separately from this check. The candidate view below omits that section; the full Intent remains available to the other checks.
 Give contradicts only when the values still differ after that normalisation, such as a different number, a wrongly converted unit or a different order where order matters; then give intent_value (the value as the statement writes it), request_value (the value as a request quote writes it) and difference (what makes them differ). For follows and unsupported give these three as empty strings.
 A Decision line may be marked as an assumption with (assumption: <what the user must confirm>) placed before its trailing tag; a marked line keeps its trailing (source: request) or (source: answer N). A recorded assumption is acceptable when the request is silent, but does not override an explicit request conflict.
 Answer by calling ` + SubmitDecisionCheckTool + `.`
@@ -196,7 +197,7 @@ func (sh *shaping) decisionCheck(ctx context.Context, intent string) ([]string, 
 	if earlier == "" {
 		earlier = "none"
 	}
-	input := "Slug: " + sh.slug + "\n\n# Request\n\n" + sh.request + "\n\n# Earlier questions and answers\n\n" + earlier + "\n\n# Candidate intent.md\n\n" + intent
+	input := "Slug: " + sh.slug + "\n\n# Request\n\n" + sh.request + "\n\n# Earlier questions and answers\n\n" + earlier + "\n\n# Candidate intent.md\n\n" + decisionIntent(intent)
 	var args map[string]any
 	sh.decisionChecks++
 	if sh.ext != nil {
@@ -303,4 +304,38 @@ func markedStatement(intent, statement string) bool {
 		}
 		from = start + 1
 	}
+}
+
+// decisionIntent projects only this check's scope. Feasibility remains in the
+// published package and is still read by readiness and the contract reviewer.
+// Respect fenced examples: a heading inside one is contract text, not a section.
+func decisionIntent(intent string) string {
+	var out []string
+	evidence := false
+	var fence byte
+	width := 0
+	for _, line := range strings.Split(intent, "\n") {
+		text := strings.TrimSpace(line)
+		if fence == 0 && strings.HasPrefix(text, "## ") {
+			evidence = strings.TrimSpace(strings.TrimPrefix(text, "## ")) == "Feasibility"
+			if evidence {
+				out = append(out, "## Feasibility", "[Evidence checked separately.]")
+			}
+		}
+		if !evidence {
+			out = append(out, line)
+		}
+		if len(text) >= 3 && (text[0] == '`' || text[0] == '~') {
+			n := 0
+			for n < len(text) && text[n] == text[0] {
+				n++
+			}
+			if fence == 0 && n >= 3 {
+				fence, width = text[0], n
+			} else if fence == text[0] && n >= width && strings.TrimSpace(text[n:]) == "" {
+				fence, width = 0, 0
+			}
+		}
+	}
+	return strings.Join(out, "\n")
 }
