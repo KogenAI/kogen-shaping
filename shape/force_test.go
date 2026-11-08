@@ -12,11 +12,11 @@ import (
 )
 
 // The no-tool answer policy of native Shape and Refine: an answer with zero tool calls makes the
-// next inference require the terminal submission tool at API level (where the route can), is
+// next inference require a tool call at API level (where the route can), is
 // counted apart from invalid submissions, and is bounded by its own ceiling. The tests run the
 // real entry points against a scripted local provider.
 
-const forceTarget = "submit"
+const forceTarget = "any"
 
 func forceTargetOf(owner string) string {
 	if owner == "refine" {
@@ -44,7 +44,7 @@ func forceEventsOf(f any) []map[string]any {
 }
 
 // forceVerify checks the enforcement record against what the provider actually received: the
-// requests at forcedAt carry the named terminal tool (when the route supports it), every other
+// requests at forcedAt require any Shape tool or the named Refine terminal tool (when supported), every other
 // request keeps the ordinary automatic choice, each forced_submit_turn event describes its
 // request with the counters at that time, and the exit event has the final counters.
 func forceVerify(t *testing.T, w *forceWire, owner string, events, reqs []map[string]any, supported bool, forcedAt []int, counters [][2]int, final [2]int) {
@@ -68,7 +68,11 @@ func forceVerify(t *testing.T, w *forceWire, owner string, events, reqs []map[st
 	for i, req := range reqs {
 		want := w.auto
 		if supported && at[i] {
-			want = w.forced(target)
+			if owner == "shape" {
+				want = "required"
+			} else {
+				want = w.forced(target)
+			}
 		}
 		if !reflect.DeepEqual(req["tool_choice"], want) {
 			t.Fatalf("request %d tool_choice %v, want %v", i+1, req["tool_choice"], want)
@@ -271,7 +275,7 @@ func TestShapeForceNoToolBound(t *testing.T) {
 	})
 	// Discovery without a submission is not a no-tool answer, and a submission starts a new
 	// no-tool count: read, prose, refusal, prose (answered by the recovery inference), prose, then
-	// the forced submit is accepted.
+	// a required tool call submits an accepted package.
 	t.Run("a submission starts a new count", func(t *testing.T) {
 		parallel(t)
 		both := map[string]any{"questions": []any{shpQuestion("Q?")}, "files": shpFiles()["files"]}
@@ -492,7 +496,7 @@ func TestShapeForceWireCompatibility(t *testing.T) {
 		writeGolden(t, forceGoldenPath(), actual, "  ")
 	}
 
-	// Only the inference after a tool-free answer requires the terminal tool; discovery without
+	// Only the inference after a tool-free answer requires a tool call; discovery without
 	// a submission does not, and the answer to a forced request restores the automatic choice.
 	for _, w := range []*forceWire{responsesWire, chatWire} {
 		t.Run(w.name+"/shape", func(t *testing.T) {

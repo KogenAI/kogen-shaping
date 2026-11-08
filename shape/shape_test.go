@@ -617,7 +617,7 @@ func TestShapeSubmissionEnvelopeProblems(t *testing.T) {
 	}
 }
 
-func TestShapeWithoutSubmitIsAskedToEndWithSubmit(t *testing.T) {
+func TestShapeWithoutSubmitIsAskedToContinueWithTools(t *testing.T) {
 	parallel(t)
 	text := shpAnswer(map[string]any{"type": "message", "id": "m", "role": "assistant", "content": []any{map[string]any{"type": "output_text", "text": "done"}}})
 	f := newShpFx(t, text, text, text)
@@ -626,7 +626,7 @@ func TestShapeWithoutSubmitIsAskedToEndWithSubmit(t *testing.T) {
 	shpEq(t, "lines", strings.Join(e.Lines, "\n"), "the shaper ended without calling submit\nlast tool-free answer: done")
 	reqs := f.Prov.requests()
 	shpEq(t, "requests", len(reqs), 3)
-	shpContains(t, "request 2", shpBody(reqs[1]), "End by calling submit with either questions or files.")
+	shpContains(t, "request 2", shpBody(reqs[1]), shapeReminder)
 	shpContains(t, "replayed message", shpBody(reqs[1]), "\ndone\n")
 }
 

@@ -4,5 +4,7 @@ github.com/KogenAI/kogen-executor v0.0.0-20261105010505-8d465842f9df h1:ZyDgxjdz
 github.com/KogenAI/kogen-executor v0.0.0-20261105010505-8d465842f9df/go.mod h1:qjm/u2kVwQdMxIPTbNdExSqanEcPs8UpBUFldsotEDg=
 github.com/KogenAI/kogen-loop v0.0.0-20261105005409-31036b2c02e8 h1:FHmM4ohzS7si6JRIsOg/9mxVIV03ceLAwKFjXboAZPU=
 github.com/KogenAI/kogen-loop v0.0.0-20261105005409-31036b2c02e8/go.mod h1:yPduvTAVdxH5egqW82Uis/ZhemRb5gNSdzTll/f6bG0=
+github.com/KogenAI/kogen-loop v0.0.0-20261108232955-38a325870c5e h1:N+aqVFspw5evb3LG+1yx5B7zs8uOqIWSAilBpezz4Ks=
+github.com/KogenAI/kogen-loop v0.0.0-20261108232955-38a325870c5e/go.mod h1:yPduvTAVdxH5egqW82Uis/ZhemRb5gNSdzTll/f6bG0=
 github.com/KogenAI/kogen-verification v0.0.0-20261105003813-ac4f6a9a4877 h1:CP621ikt9tS0kUwL/16WPFGXoCDjDD4ogKRWYZ4fVjw=
 github.com/KogenAI/kogen-verification v0.0.0-20261105003813-ac4f6a9a4877/go.mod h1:a434oUbU/VdUlUld0N+kUL4k7ZaEdVummnkHaPyDCiU=
