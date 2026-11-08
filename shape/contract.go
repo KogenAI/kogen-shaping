@@ -44,11 +44,12 @@ const (
 var contractReviewInstructions = strings.Join([]string{
 	"You check one candidate Intent before any Build is spent on it. Find acceptance expectations that no correct implementation of the Intent can pass.",
 	"Read-only: use only read_file, list_files and search_text, then call " + SubmitContractReviewTool + " once.",
-	"An expectation is an assertion, an expected value or output, or a call with its arguments, in the candidate acceptance.feature or in a step file the Intent lists under Acceptance. Report a finding only when the expectation contradicts the candidate intent.md (a rule, table, example or boundary it states) or the behaviour of repository code or text that the candidate does not change and the Intent keeps unchanged (for example an output envelope, a required argument, or a file another command writes).",
+	"An expectation is an assertion, an expected value or output, or a call with its arguments, in the candidate acceptance.feature or in a step file the Intent lists under Acceptance. Report a finding only when the expectation contradicts the candidate intent.md (a rule, table, example or boundary it states) or another acceptance expectation in this candidate, or the original Request, or the behaviour of repository code or text that the candidate does not change and the Intent keeps unchanged (for example an output envelope, a required argument, or a file another command writes).",
+	"Compare expectations across all scenarios against the same finished implementation and the Request, including a file required to change in one scenario and stay unchanged in another. Different fixture inputs can validly give different results; do not report those as conflicts. For a cross-scenario finding name both scenarios in why and quote the conflicting expectation as contract; for a request conflict use contract.path <request> and quote the Request exactly.",
 	"The readiness observations show how the unchanged tree behaved and which steps never ran. A scenario that fails only because the requested feature is missing is not a finding. Do not report style, coverage, weak tests, preferences or anything a correct implementation could satisfy.",
 	"Separately, report an environment finding for a scenario that failed in the readiness observations because Kogen's fresh copy was not prepared for the step, not because the requested behaviour is missing. Examples are a store, schema or other state that neither the steps nor the configured setup create, or Git history, ignored files or other state that only the shaping checkout has. An environment finding gives scenario (the scenario name exactly as in acceptance.feature), output (copied exactly from that scenario's failure in the readiness observations) and why.",
 	"When unsure, report nothing.",
-	`For each finding give scenario (the scenario name exactly as in acceptance.feature), expectation (its path and the exact text copied from that file), contract (the path of intent.md or of the unchanged repository file, and the exact text copied from it that the expectation contradicts) and why (what a correct implementation does instead). Answer {"findings":[],"environment":[],"properties":[]} when there is none.`,
+	`For each finding give scenario (the scenario name exactly as in acceptance.feature), expectation (its path and the exact text copied from that file), contract (the path of intent.md, another candidate acceptance or step file, <request>, or the unchanged repository file, and the exact text copied from it that the expectation contradicts) and why (what a correct implementation does instead). Answer {"findings":[],"environment":[],"properties":[]} when there is none.`,
 	"Separately, identify the properties the Request and the Questions and answers ask for: a quality, a bound, a comparison with the old behaviour, or a behaviour that must be kept. Take them from the Request and the answers themselves, not from what the candidate declares. A plain input/output request (a command, call or input with its expected output) asks for none: answer properties [].",
 	"For each property give property (a short name), request (the exact text copied from the Request or the Questions and answers that asks for it), kind (kept for a behaviour that must be kept, new otherwise), observable (false only when no automatic step can observe it, such as a subjective quality), scenarios (the names, exactly as in acceptance.feature, of the scenarios that exercise it; for a property that is not observable, the scenarios that claim it holds, also through a figure, log line or document sentence standing in for it), decision (for a property that is not observable, the exact text of the candidate intent.md Decisions line that records it as needing human evaluation; otherwise empty) and issues.",
 	"An issue is a scenario of the property whose evidence does not establish it, with problem, scenario, quote and why. Its problem is missing when a new property's scenario is red on the unchanged tree only because a file, module, function, command or test it needs does not exist yet (quote: that failure, copied exactly from the readiness observations), or test_count when the step's only evidence is that tests the Build writes exist or pass in some number and the step does not itself assert the property (quote: that code, copied exactly from the step file). A step that first gives the missing piece a do-nothing form and then fails on the property's behaviour has no issue.",
@@ -295,6 +296,7 @@ type contractEvidence struct {
 	expectations map[string]string // path to the content on disk: acceptance.feature and the listed step files
 	intentPath   string
 	intent       string
+	request      string
 	// failures are the failure details of the scenarios that failed in this candidate's readiness
 	// result, by normalized scenario name.
 	failures map[string][]string
@@ -316,6 +318,12 @@ func (e contractEvidence) evidenced(f contractFinding) bool {
 	}
 	if f.contract.path == e.intentPath {
 		return containsNormalized(e.intent, f.contract.quote)
+	}
+	if f.contract.path == "<request>" {
+		return containsNormalized(e.request, f.contract.quote)
+	}
+	if text, ok := e.expectations[f.contract.path]; ok {
+		return containsNormalized(text, f.contract.quote)
 	}
 	head, ok := e.tracked(f.contract.path)
 	return ok && containsNormalized(head, f.contract.quote)
@@ -585,7 +593,7 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 	sections := [][2]string{{"Candidate intent.md", string(intentBytes)}, {"Candidate acceptance.feature", string(featureBytes)}}
 	ev := contractEvidence{
 		expectations: map[string]string{feature: string(featureBytes)}, featurePath: feature,
-		intentPath: project.IntentMDPath(sh.slug), intent: string(intentBytes),
+		intentPath: project.IntentMDPath(sh.slug), intent: string(intentBytes), request: sh.request,
 	}
 	for _, p := range intent.StepFiles() {
 		text, err := os.ReadFile(filepath.Join(sh.root, p))

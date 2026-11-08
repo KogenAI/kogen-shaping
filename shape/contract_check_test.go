@@ -70,7 +70,7 @@ func TestContractEvidenceRule(t *testing.T) {
 		{"contract quote missing from intent.md", func(f *contractFinding) { f.contract.quote = "returns False" }, false},
 		{"tracked file contract", func(f *contractFinding) { f.contract = contractQuote{"cli/code.go", "func Code() { return 1 }"} }, true},
 		{"tracked file quote missing", func(f *contractFinding) { f.contract = contractQuote{"cli/code.go", "return 2"} }, false},
-		{"untracked or package file contract", func(f *contractFinding) { f.contract = contractQuote{ccFeaturePath, "Given is-even: the number 4"} }, false},
+		{"candidate feature contract", func(f *contractFinding) { f.contract = contractQuote{ccFeaturePath, "Given is-even: the number 4"} }, true},
 		{"empty why", func(f *contractFinding) { f.why = " " }, false},
 	}
 	for _, c := range cases {
