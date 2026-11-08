@@ -10,7 +10,8 @@ import (
 )
 
 // noToolLimit is the finite protection against repeated prose: a native shaping conversation
-// stops at this many answers without any tool call. It is separate from the invalid-submission
+// stops at this many consecutive answers without any tool call (Refine retains its
+// cumulative bound). It is separate from the invalid-submission
 // budget.
 const noToolLimit = 3
 
@@ -153,15 +154,15 @@ func noToolStop(last lastSubmission, answer string) outcome {
 	var detail string
 	switch last.kind {
 	case outInvalid:
-		detail = fmt.Sprintf("the shaper answered without calling any tool %d times since its last submission (no-tool limit); that submission (attempt %d) was refused at gate %s", noToolLimit, last.attempt, last.gate)
+		detail = fmt.Sprintf("the shaper answered without calling any tool %d consecutive times (no-tool limit); its last submission (attempt %d) was refused at gate %s", noToolLimit, last.attempt, last.gate)
 		lines = append(lines, fmt.Sprintf("last refusal (attempt %d, gate %s):", last.attempt, last.gate))
 		lines = append(lines, last.problems...)
 		lines = append(lines, last.earliest...)
 	case outObservations:
-		detail = fmt.Sprintf("the shaper answered without calling any tool %d times since its last submission (no-tool limit); that submission (attempt %d) returned readiness failures that were not acknowledged", noToolLimit, last.attempt)
+		detail = fmt.Sprintf("the shaper answered without calling any tool %d consecutive times (no-tool limit); its last submission (attempt %d) returned readiness failures that were not acknowledged", noToolLimit, last.attempt)
 		lines = append(lines, fmt.Sprintf("last submission (attempt %d): readiness failures returned for acknowledgment, see %s", last.attempt, last.path))
 	default:
-		detail = fmt.Sprintf("the shaper answered without calling any tool %d times (no-tool limit); no submission was made", noToolLimit)
+		detail = fmt.Sprintf("the shaper answered without calling any tool %d consecutive times (no-tool limit); no submission was made", noToolLimit)
 	}
 	first, _, _ := strings.Cut(answer, "\n")
 	if first == "" {

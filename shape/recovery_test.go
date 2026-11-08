@@ -48,7 +48,7 @@ func TestShapeStopsAddEarliestRefusalOnlyWhenItDiffers(t *testing.T) {
 		parallel(t)
 		f := w.newShape(t, w.shapeSubmit("c1", unsourced), w.shapeSubmit("c2", unsourced), w.prose("a"), w.prose("b"), w.prose("Done."))
 		_, err := f.shape("Add calc.is_even(n).")
-		e := shpWantError(t, err, "shape", "invalid_output", "that submission (attempt 2) was refused at gate intent", 1)
+		e := shpWantError(t, err, "shape", "invalid_output", "its last submission (attempt 2) was refused at gate intent", 1)
 		shpEq(t, "lines", strings.Join(e.Lines, "|"), "the shaper ended without calling submit|last refusal (attempt 2, gate intent):|decisions: - Non-integers raise TypeError. must end with `(source: request)` or `(source: answer <n>)`|last tool-free answer: Done.")
 		shpContains(t, "feedback", shpOutputs(f.Prov.requests()[2])["c2"], "\nUnchanged: this package is identical to the one refused at attempt 1;")
 		shpEq(t, "recovery events", len(shpNamed(f.events(), "recovery_turn")), 0)
@@ -57,7 +57,7 @@ func TestShapeStopsAddEarliestRefusalOnlyWhenItDiffers(t *testing.T) {
 		parallel(t)
 		f := w.newShape(t, w.shapeSubmit("c1", intentOnly), w.shapeSubmit("c2", shpFiles()), w.shapeSubmit("c3", both), w.prose("a"), w.prose("b"), w.prose("Done."))
 		_, err := f.shape("Add calc.is_even(n).")
-		e := shpWantError(t, err, "shape", "invalid_output", "that submission (attempt 3) was refused at gate validation", 1)
+		e := shpWantError(t, err, "shape", "invalid_output", "its last submission (attempt 3) was refused at gate validation", 1)
 		shpEq(t, "lines", strings.Join(e.Lines, "|"), "the shaper ended without calling submit|last refusal (attempt 3, gate validation):|"+
 			"submit takes exactly one of a non-empty questions list, a non-empty files list, or a blocked report|received: questions (list of 1), files (list of 3)|last tool-free answer: Done.")
 	})

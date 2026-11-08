@@ -253,7 +253,7 @@ func TestShapeForceNoToolBound(t *testing.T) {
 		parallel(t)
 		f := w.newShape(t, w.prose("one"), w.prose("two"), w.prose("three"), w.shapeSubmit("c1", shpFiles()))
 		exit, err := f.shape("Add calc.is_even(n).")
-		e := shpWantError(t, err, "shape", "invalid_output", "the shaper answered without calling any tool 3 times (no-tool limit); no submission was made", 1)
+		e := shpWantError(t, err, "shape", "invalid_output", "the shaper answered without calling any tool 3 consecutive times (no-tool limit); no submission was made", 1)
 		shpEq(t, "exit", exit, 1)
 		shpEq(t, "problem", strings.Join(e.Lines, "|"), "the shaper ended without calling submit|last tool-free answer: three")
 		reqs := f.Prov.requests()
@@ -298,7 +298,7 @@ func TestShapeForceNoToolBound(t *testing.T) {
 		refusal := func(id string) shpStep { return w.shapeSubmit(id, outside) }
 		f := w.newShape(t, w.prose("a"), w.prose("b"), refusal("c1"), w.prose("c"), w.prose("d"), refusal("c2"), w.prose("e"), w.prose("f"), w.prose("Last words.\nmore"))
 		exit, err := f.shape("Add calc.is_even(n).")
-		e := shpWantError(t, err, "shape", "invalid_output", "the shaper answered without calling any tool 3 times since its last submission (no-tool limit); that submission (attempt 2) was refused at gate validation", 1)
+		e := shpWantError(t, err, "shape", "invalid_output", "the shaper answered without calling any tool 3 consecutive times (no-tool limit); its last submission (attempt 2) was refused at gate validation", 1)
 		shpEq(t, "exit", exit, 1)
 		shpEq(t, "requests", len(f.Prov.requests()), 9)
 		shpEq(t, "lines", strings.Join(e.Lines, "|"), "the shaper ended without calling submit|last refusal (attempt 2, gate validation):|"+
@@ -310,7 +310,7 @@ func TestShapeForceNoToolBound(t *testing.T) {
 		parallel(t)
 		f := w.newShape(t, w.shapeSubmit("c1", shpFiles()), w.prose("a"), w.prose("b"), w.prose("Done here."))
 		exit, err := f.shape("Add calc.is_even(n).")
-		e := shpWantError(t, err, "shape", "invalid_output", "the shaper answered without calling any tool 3 times since its last submission (no-tool limit); that submission (attempt 1) returned readiness failures that were not acknowledged", 1)
+		e := shpWantError(t, err, "shape", "invalid_output", "the shaper answered without calling any tool 3 consecutive times (no-tool limit); its last submission (attempt 1) returned readiness failures that were not acknowledged", 1)
 		shpEq(t, "exit", exit, 1)
 		shpEq(t, "lines", strings.Join(e.Lines, "|"), "the shaper ended without calling submit|last submission (attempt 1): readiness failures returned for acknowledgment, see .kogen/local/shaping/is-even/observations-1.txt|last tool-free answer: Done here.")
 		shpEq(t, "requests", len(f.Prov.requests()), 4)
@@ -322,7 +322,7 @@ func TestShapeForceNoToolBound(t *testing.T) {
 		reasoning := shpAnswer(map[string]any{"type": "reasoning", "id": "rs", "summary": []any{}})
 		f := w.newShape(t, w.prose("  Plan: token=abc123secret then submit.\n"), reasoning, w.prose(long))
 		_, err := f.shape("Add calc.is_even(n).")
-		shpWantError(t, err, "shape", "invalid_output", "the shaper answered without calling any tool 3 times (no-tool limit); no submission was made", 1)
+		shpWantError(t, err, "shape", "invalid_output", "the shaper answered without calling any tool 3 consecutive times (no-tool limit); no submission was made", 1)
 		got := shpNamed(f.events(), "tool_free_answer")
 		shpEq(t, "answers", len(got), 3)
 		first := got[0]
@@ -424,12 +424,13 @@ func forceResets(t *testing.T, w *forceWire) {
 		seedPadding(f)
 		f.Prov.route = forceResetRoute(w, w.shapeSubmit("c0", both), "padding.txt", 1)
 		_, err := f.shape("Add calc.is_even(n).")
-		shpWantError(t, err, "shape", "invalid_output", "the shaper answered without calling any tool 3 times since its last submission (no-tool limit); that submission (attempt 1) was refused at gate validation", 1)
+		shpWantError(t, err, "shape", "invalid_output", "the shaper answered without calling any tool 3 consecutive times (no-tool limit); its last submission (attempt 1) was refused at gate validation", 1)
 		reqs := f.Prov.requests()
 		// The first prose answer after the refusal is followed by a recovery inference; the long
-		// prose answer is the second, so the reset request is forced and the next answer ends the run.
-		forced := len(reqs) - 1
-		forceVerify(t, w, "shape", f.events(), reqs, true, []int{forced}, [][2]int{{2, 1}}, [2]int{3, 1})
+		// prose answer follows actual reads, so it starts a new idle streak. The reset
+		// request stays forced; three consecutive idle answers, not the earlier prose, end the run.
+		forced := len(reqs) - 2
+		forceVerify(t, w, "shape", f.events(), reqs, true, []int{forced, forced + 1}, [][2]int{{2, 1}, {3, 1}}, [2]int{4, 1})
 		forceCheckReset(t, f.events(), reqs, f.Prov.rawRequests(), "shape", 2)
 	})
 	t.Run("reset/refine", func(t *testing.T) {

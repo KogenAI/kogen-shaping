@@ -890,6 +890,9 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 	// sinceSubmit counts the tool-free answers since the shaper's last submit call; last is
 	// that submission when it did not end the conversation.
 	sinceSubmit := 0
+	// Preparation tool calls break an idle streak, but do not erase audit totals
+	// or grant another first-answer recovery allowance after the same submission.
+	noToolStreak := 0
 	var last lastSubmission
 	var lastAnswer string
 	for {
@@ -925,12 +928,16 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 			root: sh.root, ev: sh.ev, progress: sh.progress,
 			render: func(items []any) map[string]any { r := req; r.Input = items; return sh.client.Body(r) },
 			state: func(head windowRef, count int, snapshot map[string]any, observations []any) map[string]any {
-				return turns.extend(map[string]any{
+				state := turns.extend(map[string]any{
 					"history": map[string]any{"head": head.value(), "count": count}, "manifest": manifest,
 					"declared_steps": nonNilStrings(sh.declaredSteps), "inspected": sh.inspected,
 					"documentation": snapshot, "invalid_submissions": turns.invalid, "readiness": windowReadyRecord(sh.ready),
 					"assistant_observations": observations,
 				})
+				if noToolStreak > 0 {
+					state["consecutive_no_tool_turns"] = noToolStreak
+				}
+				return state
 			},
 		}, input)
 		if err != nil {
@@ -955,8 +962,11 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 		input = append(input, tools.Replay(resp.Items)...)
 		toolFree := turns.answered(len(calls))
 		if toolFree {
+			noToolStreak++
 			sinceSubmit++
 			lastAnswer = sh.recordToolFreeAnswer(resp.Items, turns.noTool, redactor)
+		} else {
+			noToolStreak = 0
 		}
 
 		var outputs []any
@@ -1023,7 +1033,7 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 		case result.kind == outBlocked, result.kind == outQuestions, result.kind == outReady:
 			return result, usage, nil
 		case toolFree:
-			if sinceSubmit >= noToolLimit {
+			if noToolStreak >= noToolLimit {
 				return noToolStop(last, lastAnswer), usage, nil
 			}
 			sh.ev.NextAttempt()
