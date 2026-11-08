@@ -1,0 +1,11 @@
+{
+  "None": false,
+  "Path": ".kogen/models/k-shape-refine-retry-keeps-corrections/model.qnt",
+  "Invariants": [
+    "Retained",
+    "Atomic"
+  ],
+  "Seed": "1",
+  "Samples": "100",
+  "Steps": "10"
+}

@@ -533,6 +533,7 @@ func TestShapeInvalidSubmitIsRetriedWithFeedbackAndKeepsEarlierProposals(t *test
 	// The corrected intent.md alone completed the package: the earlier feature and steps stayed.
 	shpContains(t, "manifest", shpBody(reqs[1]), "features/steps/is-even__steps.js")
 	shpEq(t, "feature", f.read(".kogen/intents/is-even/acceptance.feature"), shpFeature)
+	shpEq(t, "steps", f.read("features/steps/is-even__steps.js"), shpSteps)
 	shpEq(t, "intent", f.read(".kogen/intents/is-even/intent.md"), shpScopedIntentMD)
 	shpContains(t, "readiness feedback", shpOutputs(reqs[2])["c2"], "Readiness observations")
 	shpContains(t, "acknowledgment guidance", shpOutputs(reqs[2])["c2"], "After inspecting legitimate missing-feature red")

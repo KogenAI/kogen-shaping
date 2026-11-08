@@ -83,6 +83,9 @@ func TestShapeExternalPrecheckIsNotCounted(t *testing.T) {
 		shpContains(t, "manifest", x.inputs[2].Feedback, "Cumulative proposal manifest:")
 		shpEq(t, "refused", strings.Join(shpRefused(f), " "), "1:intent")
 		shpEq(t, "pre-checks", len(shpNamed(f.events(), "submission_precheck")), 1)
+		shpEq(t, "published intent", f.read(preIntentPath), shpScopedIntentMD)
+		shpEq(t, "published feature", f.read(preFeaturePath), shpFeature)
+		shpEq(t, "published steps", f.read("features/steps/is-even__steps.js"), shpSteps)
 		noNativeRequests(t, f)
 	})
 	t.Run("pre-checks do not spend the budget", func(t *testing.T) {
