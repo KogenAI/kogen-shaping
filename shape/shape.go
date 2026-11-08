@@ -1645,7 +1645,7 @@ func (sh *shaping) acceptFiles(ctx context.Context, submitted []proposedFile) (s
 	}
 	for _, p := range intent.StepFiles() {
 		if !scopedStepPath(stepsDir, sh.slug, p) {
-			ownership = append(ownership, p+": use "+stepsDir+"/"+sh.slug+"__<suffix>.js with a nonempty suffix")
+			ownership = append(ownership, p+": use "+stepsDir+"/"+sh.slug+"__<suffix>.js with a nonempty suffix; put helper files in "+stepsDir+"/"+sh.slug+"__<suffix>/ (for example "+stepsDir+"/"+sh.slug+"__driver/main.go), list them under Acceptance and submit their contents")
 		} else if _, ok := sh.proposed[p]; !ok {
 			ownership = append(ownership, p+": submit this Intent's own step artifact; do not adopt existing step files")
 		}

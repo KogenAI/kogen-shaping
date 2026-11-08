@@ -780,6 +780,9 @@ func (r *refine) context() ([]any, error) {
 	b.WriteString("Configured protected files: " + refineInspect(protected, quoted) + "\n")
 	b.WriteString("No config, protected, shared or other Intent files may change. Existing Acceptance paths and model presence/path must remain unchanged.\n")
 	fmt.Fprintf(&b, "New step files use `%s__<suffix>.js` with a nonempty suffix, and step sentences and definitions use the literal prefix `%s: `. Never adopt another Intent's files or bindings. Existing unchanged packages need not be renamed.\n", r.slug, r.slug)
+	if r.cfg.Acceptance != nil && r.cfg.Acceptance.StepsDir != "" {
+		fmt.Fprintf(&b, "Acceptance helpers in other languages belong under `%s/%s__<suffix>/`; list them under Acceptance and submit their contents. Files in the Intent directory cannot be listed as Acceptance step artifacts.\n", r.cfg.Acceptance.StepsDir, r.slug)
+	}
 	b.WriteString("Setup: " + refineInspect(r.cfg.Setup, quoted) + "\n")
 	b.WriteString("Checks: " + refineInspect(checks, same) + "\n")
 	b.WriteString("Fixers: " + refineInspect(r.cfg.Fix, quoted) + "\n")
