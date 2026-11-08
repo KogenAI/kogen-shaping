@@ -1578,6 +1578,10 @@ func (sh *shaping) acceptFiles(ctx context.Context, submitted []proposedFile) (s
 	for _, f := range submitted {
 		sh.proposed[f.path] = f.content
 	}
+	p := project.IntentMDPath(sh.slug)
+	if draft, ok := sh.proposed[p]; ok {
+		sh.proposed[p] = sh.normalizeDecisionRounds(draft)
+	}
 	if len(sh.carriedRepair) > 0 {
 		p := project.IntentMDPath(sh.slug)
 		if draft, ok := sh.proposed[p]; ok {

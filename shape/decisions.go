@@ -108,3 +108,29 @@ func repairCarriedDecisionDraft(draft string, problems []string) string {
 	}
 	return trimmed + strings.Join(missing, "\n") + suffix + draft[end:]
 }
+
+var decisionRoundRe = regexp.MustCompile(`\(decision: (D\d+), round \d+\)`)
+
+// Round numbers belong to Kogen's ledger. A model may use its submission
+// attempt instead; correct only that number when every other byte agrees.
+// Changed choices, constraints, evidence and uncertainty still reach the gate.
+func (sh *shaping) normalizeDecisionRounds(intent string) string {
+	for _, line := range decisionLines(intent) {
+		matches := decisionRoundRe.FindAllStringSubmatchIndex(line, -1)
+		if len(matches) != 1 {
+			continue
+		}
+		m := matches[0]
+		d, ok := sh.ledger.standingByID(line[m[2]:m[3]])
+		if !ok {
+			continue
+		}
+		canonical := d.intentLine()
+		marker := decisionRoundRe.FindString(canonical)
+		corrected := line[:m[0]] + marker + line[m[1]:]
+		if corrected == canonical && corrected != line {
+			intent = strings.Replace(intent, line, corrected, 1)
+		}
+	}
+	return intent
+}

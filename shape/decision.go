@@ -144,6 +144,12 @@ func decisionOutcome(items []decisionItem, request, intent string) (map[string]a
 	var problems []string
 	for i := range items {
 		it := &items[i]
+		reported := it.statement
+		if !containsNormalized(intent, it.statement) {
+			if line := referencedDecision(intent, it.statement); line != "" {
+				it.statement = line
+			}
+		}
 		supported := containsNormalized(intent, it.statement)
 		for _, q := range it.quotes {
 			supported = supported && containsNormalized(request, q)
@@ -168,6 +174,9 @@ func decisionOutcome(items []decisionItem, request, intent string) (map[string]a
 		counts[it.verdict]++
 		events[i] = map[string]any{"statement": it.statement, "request_quotes": it.quotes, "verdict": it.verdict,
 			"intent_value": it.intentValue, "request_value": it.requestValue, "difference": it.difference, "why": it.why}
+		if reported != it.statement {
+			events[i].(map[string]any)["reported_statement"] = reported
+		}
 		if it.verdict == "follows" || (it.verdict == "unsupported" && markedStatement(intent, it.statement)) {
 			continue
 		}
@@ -188,6 +197,31 @@ func decisionOutcome(items []decisionItem, request, intent string) (map[string]a
 	}
 	head := fmt.Sprintf("Decision check: %d stated decisions are not supported by the request; follow the request, cite the repository evidence that decides it with (evidence: ...), or mark the decision as an assumption the user must confirm:", len(problems))
 	return event, append([]string{head, assumptionRule}, problems...)
+}
+
+// A finding can paraphrase a Decision despite the exact-copy
+// instruction. Its unique ledger identity and complete annotation suffix still
+// identify the choice. Ground the finding in the actual line before checking
+// values, quotes or markers; retain the reported text separately in the event.
+func referencedDecision(intent, statement string) string {
+	refs := decisionRoundRe.FindAllStringIndex(statement, -1)
+	if len(refs) != 1 || !strings.HasPrefix(statement, "- ") {
+		return ""
+	}
+	suffix := statement[refs[0][0]:]
+	var found string
+	for _, line := range decisionLines(intent) {
+		if strings.Contains(line, statement[refs[0][0]:refs[0][1]]) {
+			if found != "" {
+				return ""
+			}
+			found = line
+		}
+	}
+	if found != "" && strings.HasSuffix(found, suffix) {
+		return found
+	}
+	return ""
 }
 
 // decisionCheck makes one fresh read-only call on the candidate intent.md and returns the
