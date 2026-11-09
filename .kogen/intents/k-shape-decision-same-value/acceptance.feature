@@ -5,7 +5,7 @@ Feature: The decision check treats the same value written in another notation as
   named and still different after normalising notation. Each case is a synthetic request and Intent
   pair shaped natively with a scripted shaper and a scripted decision-check model.
 
-  Scenario Outline: A same-value restatement follows the request with no feedback and no extra model request
+  Scenario Outline: A same-value restatement follows the request without a refusal or a second decision check
     When k-shape-decision-same-value: the "<case>" case is shaped
     Then k-shape-decision-same-value: exactly 1 decision check request is made
     And k-shape-decision-same-value: the decision check recorded "follows" for the first submission

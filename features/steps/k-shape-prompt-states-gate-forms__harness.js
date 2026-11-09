@@ -82,7 +82,7 @@ var kspgCases = func() map[string]kspgCase {
 	c := map[string]kspgCase{
 		"prompt": {request: kspgRequest, intent: shpScopedIntentMD},
 		"decision-marker-on-line": {request: kspgRequest,
-			intent: kspgDecisions("- Even numbers are found with the remainder of division by 2 (evidence: README.md) (source: request)", kspgZero),
+			intent: kspgDecisions("- Even numbers are found with the remainder of division by 2 (assumption: confirm the remainder rule) (source: request)", kspgZero),
 			checks: []map[string]any{
 				kspgItem("Even numbers are found with the remainder of division by 2", "", "unsupported", "", ""),
 				kspgItem("Zero counts as even", "", "unsupported", "", "")}},

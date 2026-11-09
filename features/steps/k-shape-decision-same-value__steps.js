@@ -67,13 +67,13 @@ const checks = {
   publishedFirst(o) {
     assert.equal(o.published, true, `the Intent was not published\n${shown(o)}`);
     assert.ok(intentHas(o, o.first), `the published intent.md does not carry the first submission's Decisions line ${JSON.stringify(o.first)}\n${shown(o)}`);
-    assert.equal(o.shaper, 1, `the Intent was not published from the first submission: ${o.shaper} shaper requests, want 1\n${shown(o)}`);
+    assert.equal(o.shaper, 2, `the first submission should require one readiness acknowledgment: ${o.shaper} shaper requests, want 2\n${shown(o)}`);
   },
   publishedCorrected(o) {
     assert.ok(o.second, `case ${o.case} has no corrected submission`);
     assert.equal(o.published, true, `the Intent was not published\n${shown(o)}`);
     assert.ok(intentHas(o, o.second), `the published intent.md does not carry the corrected Decisions line ${JSON.stringify(o.second)}\n${shown(o)}`);
-    assert.equal(o.shaper, 2, `the Intent was not published from the corrected (second) submission: ${o.shaper} shaper requests, want 2\n${shown(o)}`);
+    assert.equal(o.shaper, 3, `the corrected submission should require one readiness acknowledgment: ${o.shaper} shaper requests, want 3\n${shown(o)}`);
   },
   decisionRequests(o, n) {
     assert.equal(o.decision, n, `${o.decision} decision check request(s) (requests offering submit_decision_check), want ${n}\n${shown(o)}`);
@@ -124,13 +124,13 @@ function controls(kind) {
   const unsLine = `statement: ${U1000} | request_quotes: "${U}" | verdict: unsupported | why: synthetic scripted item`;
   const known = {
     same: {case: 'uploads-1000', request: U, first: U1000, second: '', exit: 0, err: '<nil>', published: true, intent: intent(U1000),
-      shaper: 1, decision: 1, feedback: [], first_feedback: '', body: `You check the stated decisions.\n${S1}\n${S2}\n${S3}\n${input(U1000)}`, input: input(U1000),
+      shaper: 2, decision: 1, feedback: [], first_feedback: '', body: `You check the stated decisions.\n${S1}\n${S2}\n${S3}\n${input(U1000)}`, input: input(U1000),
       events: [event(item(U1000, 'follows'))], stderr: ''},
     different: {case: 'uploads-10000', request: U, first: U10k, second: U1k, exit: 0, err: '<nil>', published: true, intent: intent(U1k),
-      shaper: 2, decision: 2, feedback: [head + diffLine], first_feedback: head + diffLine, body: '', input: input(U10k),
+      shaper: 3, decision: 2, feedback: [head + diffLine], first_feedback: head + diffLine, body: '', input: input(U10k),
       events: [event({...item(U10k, 'contradicts'), intent_value: '10,000', request_value: '1,000'}), event(item(U1k, 'follows'))], stderr: ''},
     unnamed: {case: 'uploads-1000-contradicts-without-values', request: U, first: U1000, second: U1k, exit: 0, err: '<nil>', published: true, intent: intent(U1k),
-      shaper: 2, decision: 2, feedback: [head + unsLine], first_feedback: head + unsLine, body: '', input: input(U1000),
+      shaper: 3, decision: 2, feedback: [head + unsLine], first_feedback: head + unsLine, body: '', input: input(U1000),
       events: [event(item(U1000, 'unsupported')), event(item(U1k, 'follows'))], stderr: ''},
   };
   const good = [
@@ -160,7 +160,7 @@ function controls(kind) {
     [changed('same', unchangedTree), s => checks.recorded(s.same, 'follows')],
     [changed('same', unchangedTree), s => checks.carries(s.same)],
     [changed('same', unchangedTree), s => checks.instructions(s.same, S1)],
-    [changed('same', o => { o.shaper = 2; }), s => checks.publishedFirst(s.same)],
+    [changed('same', o => { o.shaper = 3; }), s => checks.publishedFirst(s.same)],
     [changed('same', o => { o.published = false; }), s => checks.publishedFirst(s.same)],
     [changed('same', o => { o.intent = intent(U1k); }), s => checks.publishedFirst(s.same)],
     [changed('same', o => { o.decision = 2; }), s => checks.decisionRequests(s.same, 1)],
@@ -176,7 +176,7 @@ function controls(kind) {
     [changed('different', o => { o.first_feedback = o.first_feedback.replace(' | request_value: 1,000', '\nrequest_value: 1,000'); }), s => checks.refused(s.different, 'verdict: contradicts', 'intent_value: 10,000', 'request_value: 1,000')],
     [changed('different', o => { o.first_feedback = o.first_feedback.replace(HEADLINE, 'Readiness: '); }), s => checks.refused(s.different, 'verdict: contradicts', 'intent_value: 10,000', 'request_value: 1,000')],
     [changed('different', o => { o.events[0].items[0].verdict = 'unsupported'; }), s => checks.recorded(s.different, 'contradicts')],
-    [changed('different', o => { o.shaper = 3; }), s => checks.publishedCorrected(s.different)],
+    [changed('different', o => { o.shaper = 4; }), s => checks.publishedCorrected(s.different)],
     [changed('unnamed', o => { o.first_feedback = o.first_feedback.replace('verdict: unsupported', 'verdict: contradicts'); }), s => checks.firstLacks(s.unnamed, 'contradicts')],
     [changed('unnamed', o => { o.first_feedback = o.first_feedback.replace('verdict: unsupported', 'verdict: contradicts'); }), s => checks.refused(s.unnamed, 'verdict: unsupported', `statement: ${U1000}`, `request_quotes: "${U}"`)],
     [changed('unnamed', unchangedTree), s => checks.firstLacks(s.unnamed, 'contradicts')],
