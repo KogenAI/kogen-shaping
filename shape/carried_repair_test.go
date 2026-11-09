@@ -25,14 +25,13 @@ func TestRepairCarriedDecisionDraft(t *testing.T) {
 	}
 }
 
-func TestShapeRepairsRepeatedCarriedOmission(t *testing.T) {
+func TestShapeCarriesStandingDecisionOnFirstSubmission(t *testing.T) {
 	parallel(t)
 	d := map[string]any{"decision": "Safe diagnostics", "evidence": []any{"calc.js"}, "constraints": []any{"no bytes"}}
 	line := "- Safe diagnostics (decision: D1, round 1) (constraint: no bytes) (evidence: calc.js) (source: request)"
 	f := newShpFx(t,
 		shpAnswer(dlRead("calc.js")), shpSubmit("a1", dlAsk("Which wording?", d)), shpUI(1),
-		shpSubmit("b1", shpFilesWithDecisions("- Safe diagnostics (source: request)")),
-		shpSubmit("b2", shpFilesWithDecisions("- Safe diagnostics (source: request)")), shpAck("b3"))
+		shpSubmit("b1", shpFilesWithDecisions("- Safe diagnostics (source: request)")), shpAck("b2"))
 	if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 5 {
 		t.Fatalf("first: exit %d, err %v", exit, err)
 	}
@@ -44,7 +43,7 @@ func TestShapeRepairsRepeatedCarriedOmission(t *testing.T) {
 		t.Fatalf("published draft lost decisions: %s", published)
 	}
 	refused := shpNamed(f.events(), "submission_refused")
-	if len(refused) != 1 || refused[0]["gate"] != "carried_decisions" {
+	if len(refused) != 0 {
 		t.Fatalf("refusals: %v", refused)
 	}
 }
@@ -63,7 +62,7 @@ func TestRepairCarriedDecisionDraftPreservesMetadata(t *testing.T) {
 	}
 }
 
-func TestCarriedRepairIncludesNewDecisions(t *testing.T) {
+func TestShapeCarriesNewDecisionOnFirstSubmission(t *testing.T) {
 	parallel(t)
 	d := map[string]any{"decision": "Safe diagnostics", "evidence": []any{"calc.js"}, "constraints": []any{"no bytes"}}
 	line := "- Safe diagnostics (decision: D1, round 1) (constraint: no bytes) (evidence: calc.js) (source: request)"
@@ -71,8 +70,7 @@ func TestCarriedRepairIncludesNewDecisions(t *testing.T) {
 	next["decisions"] = []any{map[string]any{"decision": "Keep token routes", "uncertainty": "retain existing routes", "constraints": []any{"stdin only"}}}
 	f := newShpFx(t,
 		shpAnswer(dlRead("calc.js")), shpSubmit("a1", dlAsk("Which wording?", d)), shpUI(1),
-		shpSubmit("b1", shpFilesWithDecisions("- Safe diagnostics (source: request)")),
-		shpSubmit("b2", next), shpAck("b3"))
+		shpSubmit("b1", next), shpAck("b2"))
 	if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 5 {
 		t.Fatalf("first: exit %d, err %v", exit, err)
 	}
@@ -87,7 +85,7 @@ func TestCarriedRepairIncludesNewDecisions(t *testing.T) {
 		t.Fatalf("new recorded decision lost: %s", published)
 	}
 	refused := shpNamed(f.events(), "submission_refused")
-	if len(refused) != 1 || refused[0]["gate"] != "carried_decisions" {
+	if len(refused) != 0 {
 		t.Fatalf("refusals: %v", refused)
 	}
 }

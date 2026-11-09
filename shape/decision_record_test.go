@@ -280,33 +280,26 @@ func TestShapeDecisionLedgerUnreadable(t *testing.T) {
 	}
 }
 
-// TestShapeCarriedDecisionsGate: an Intent must carry the line of each decision that stands.
-func TestShapeCarriedDecisionsGate(t *testing.T) {
+func TestShapeCarriedDecisionsGateRejectsNonStandingIdentities(t *testing.T) {
 	parallel(t)
-	d1 := map[string]any{"decision": "Safe diagnostics", "evidence": []any{"calc.js"}, "constraints": []any{"no bytes"}}
-	line := "- Safe diagnostics (decision: D1, round 1) (constraint: no bytes) (evidence: calc.js) (source: request)"
-	f := newShpFx(t,
-		shpAnswer(dlRead("calc.js")), shpSubmit("a1", dlAsk("Which wording?", d1)), shpUI(1),
-		shpSubmit("b1", shpFilesWithDecisions("- Safe diagnostics (source: request)")),
-		shpSubmit("b2", shpFilesWithDecisions(line)), shpAck("b3"))
-	if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 5 {
-		t.Fatalf("exit %d, err %v", exit, err)
+	f := newShpFx(t)
+	sh := f.shaping()
+	old := recordedDecision{ID: "D1", Round: 1, Decision: "Keep the old message", SupersededBy: "D2"}
+	current := recordedDecision{ID: "D2", Round: 2, Decision: "Use the new message"}
+	sh.ledger = &decisionLedger{Decisions: []recordedDecision{old, current}}
+	for _, tc := range []struct{ name, extra, want string }{
+		{"unrecorded", "- Use an invented record (decision: D3, round 1) (source: request)", "D3 is not a recorded decision that stands"},
+		{"superseded", old.intentLine(), "D1 is not a recorded decision that stands"},
+		{"multiple", "- Use both (decision: D2, round 2) (decision: D1, round 1) (source: request)", "one recorded decision per line"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			draft := "## Decisions\n" + current.intentLine() + "\n" + tc.extra + "\n"
+			feedback, _, refused := sh.carriedDecisionsGate(draft)
+			if !refused || !strings.Contains(feedback, tc.want) {
+				t.Fatalf("decision gate accepted %q: %q", tc.extra, feedback)
+			}
+		})
 	}
-	if exit, err := f.shape("1: a"); err != nil || exit != 0 {
-		t.Fatalf("exit %d, err %v\n%s", exit, err, f.Stderr)
-	}
-	var feedback string
-	for _, r := range shpShaperRequests(f.Prov.requests()) {
-		if out, ok := shpOutputs(r)["b1"]; ok {
-			feedback = out
-		}
-	}
-	shpEq(t, "feedback", feedback, strings.Join([]string{
-		strings.Replace(carriedDecisionsHeadline, "%d", "1", 1),
-		"- D1 (round 1) is not in Decisions; keep it as: " + line,
-	}, "\n"))
-	refused := shpNamed(f.events(), "submission_refused")
-	shpEq(t, "gate", refused[len(refused)-1]["gate"].(string), "carried_decisions")
 }
 
 // TestShapeDecisionRecordExternal: the external shaper's receipts are checkout texts, its commands
@@ -383,7 +376,7 @@ func TestShapeDecidedQuestions(t *testing.T) {
 		}
 	}
 	shpContains(t, "decided feedback", feedback1, "\n- question 1 (decided): Attach bytes? | why: a decided question | D1 (round 1) settles it: Safe diagnostics; do not ask it again. "+
-		"Complete the choice from D1, its constraints and its evidence, and keep it in the Intent's Decisions as: - Safe diagnostics (decision: D1, round 1) (constraint: no bytes) (evidence: calc.js) (source: request)")
+		"Complete the choice from D1, its constraints and its evidence. Kogen carries the standing line into the Intent's Decisions: - Safe diagnostics (decision: D1, round 1) (constraint: no bytes) (evidence: calc.js) (source: request)")
 	shpContains(t, "unknown decision", feedback2, "\n- question 1 (technical): Attach bytes or not? | why: a decided question | decide it from what the repository and the request establish")
 	checks := qcChecks(f.Prov.requests())
 	shpEq(t, "question checks", len(checks), 4)
@@ -442,30 +435,18 @@ func TestShapeFilesRecordAndCarryDecisions(t *testing.T) {
 	d2 := map[string]any{"decision": "Second", "evidence": []any{"calc.js"}, "constraints": []any{"one", "two"}}
 	first := "- First (decision: D1, round 1) (evidence: calc.js) (source: request)"
 	second := "- Second (decision: D2, round 2) (constraint: one) (constraint: two) (evidence: calc.js) (source: request)"
-	missing := shpFilesWithDecisions(first)
-	missing["decisions"] = []any{d2}
-	dropped := shpFilesWithDecisions(first + "\n" + strings.Replace(second, " (constraint: two)", "", 1))
+	partial := strings.Replace(second, " (constraint: two)", "", 1)
+	dropped := shpFilesWithDecisions(first + "\n" + partial)
 	dropped["decisions"] = []any{d2}
-	good := shpFilesWithDecisions(first + "\n" + second)
-	good["decisions"] = []any{d2}
-	f := newShpFx(t, shpAnswer(dlRead("calc.js")), shpSubmit("a", dlAsk("Which wording?", d1)), shpUI(1), shpSubmit("missing", missing), shpSubmit("dropped", dropped), shpSubmit("good", good), shpAck("ack"))
+	f := newShpFx(t, shpAnswer(dlRead("calc.js")), shpSubmit("a", dlAsk("Which wording?", d1)), shpUI(1), shpSubmit("dropped", dropped), shpAck("ack"))
 	if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 5 {
 		t.Fatalf("first: %d %v", exit, err)
 	}
 	if exit, err := f.shape("1: a"); err != nil || exit != 0 {
 		t.Fatalf("second: %d %v\n%s", exit, err, f.Stderr)
 	}
-	var feedback string
-	for _, r := range shpShaperRequests(f.Prov.requests()) {
-		if out, ok := shpOutputs(r)["missing"]; ok {
-			feedback = out
-		}
-	}
-	if !strings.Contains(feedback, second) {
-		t.Errorf("missing feedback: %s", feedback)
-	}
 	published := f.read(".kogen/intents/is-even/intent.md")
-	if !strings.Contains(published, second) {
+	if !strings.Contains(published, second) || strings.Count(published, "(decision: D2, round 2)") != 1 {
 		t.Errorf("published draft missing carried decision: %s", published)
 	}
 	ledger := dlLedger(t, f)

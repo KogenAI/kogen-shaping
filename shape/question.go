@@ -407,7 +407,7 @@ func (sh *shaping) questionGate(ctx context.Context, questions []map[string]any)
 		sh.countRefusal(it.class)
 		guidance := questionInstruction(instruction)
 		if it.class == "decided" {
-			guidance = fmt.Sprintf("%s (round %d) settles it: %s; do not ask it again. Complete the choice from %s, its constraints and its evidence, and keep it in the Intent's Decisions as: %s",
+			guidance = fmt.Sprintf("%s (round %d) settles it: %s; do not ask it again. Complete the choice from %s, its constraints and its evidence. Kogen carries the standing line into the Intent's Decisions: %s",
 				settled.ID, settled.Round, settled.Decision, settled.ID, settled.intentLine())
 		}
 		refused = append(refused, fmt.Sprintf("- question %d (%s): %s | why: %s | %s", it.number, it.class, textOf(questions[i]["question"]), it.why, guidance))

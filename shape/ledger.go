@@ -286,7 +286,7 @@ func (l *decisionLedger) checkInputText(current digestOf) string {
 	return "\n\n# Recorded decisions\n\n" + strings.Join(blocks, "\n\n")
 }
 
-const contextDecisionsHeading = "\n# Your recorded decisions (each stands until a revision that cites evidence this round read or ran replaces it; keep every one that stands in the Intent's Decisions exactly as its Intent line shows)\n\n"
+const contextDecisionsHeading = "\n# Your recorded decisions\n\nKogen writes the standing lines into the Intent's Decisions. Follow their constraints and leave ledger identities to Kogen. Each decision stands until a revision cites evidence this round read or ran.\n\n"
 
 // contextText is the shaper's context section of the recorded decisions, "" for an empty ledger.
 func (l *decisionLedger) contextText(current digestOf) string {
@@ -649,30 +649,49 @@ func (sh *shaping) decisionRecordGate(submitted []sourcedDecision) (string, outc
 
 // ---- the Intent carries the decisions that stand ----
 
-const carriedDecisionsHeadline = "Recorded decisions: %d recorded decision(s) that stand are missing from the Intent's Decisions; nothing was published. " +
+const carriedDecisionsHeadline = "Recorded decisions: %d ledger issue(s) in the Intent's Decisions; nothing was published. " +
 	"A recorded decision stands until a revision that cites evidence this round read or ran replaces it, and its line is kept exactly, before its source tag, so its evidence and constraints stay in force:"
 
-// carriedDecisionsGate refuses a written candidate whose Decisions leave out a decision that stands.
+// carriedDecisionsGate verifies ledger identities after the candidate's fixers have run.
 func (sh *shaping) carriedDecisionsGate(intent string) (string, outcome, bool) {
 	standing := sh.ledger.standing()
-	if len(standing) == 0 {
-		return "", outcome{}, false
+	canonical := map[string]string{}
+	for _, d := range standing {
+		canonical[decisionLineKey(d.intentLine())] = d.ID
 	}
 	have := map[string]bool{}
-	for _, line := range decisionLines(intent) {
-		have[sourceTagRe.ReplaceAllString(strings.TrimRight(line, "\r"), "")] = true
-	}
 	var problems []string
+	for _, line := range decisionLines(intent) {
+		key := decisionLineKey(line)
+		if id, ok := canonical[key]; ok {
+			if have[key] {
+				problems = append(problems, "- "+id+" appears more than once as a recorded decision")
+			}
+			have[key] = true
+			continue
+		}
+		refs := decisionRoundRe.FindAllStringSubmatch(line, -1)
+		switch len(refs) {
+		case 0:
+		case 1:
+			if _, ok := sh.ledger.standingByID(refs[0][1]); !ok {
+				problems = append(problems, "- "+refs[0][1]+" is not a recorded decision that stands; remove its identity or submit a sourced decision")
+			} else {
+				problems = append(problems, "- "+refs[0][1]+" does not match its recorded line")
+			}
+		default:
+			problems = append(problems, "- use one recorded decision per line: "+line)
+		}
+	}
 	for _, d := range standing {
 		line := d.intentLine()
-		if !have[sourceTagRe.ReplaceAllString(line, "")] {
+		if !have[decisionLineKey(line)] {
 			problems = append(problems, fmt.Sprintf("- %s (round %d) is not in Decisions; keep it as: %s", d.ID, d.Round, line))
 		}
 	}
 	if len(problems) == 0 {
 		return "", outcome{}, false
 	}
-	sh.carriedRepair = true
 	sh.refused("carried_decisions", problems)
 	text := strings.Join(append([]string{fmt.Sprintf(carriedDecisionsHeadline, len(problems))}, problems...), "\n")
 	return text, outcome{kind: outInvalid, problems: problems}, true

@@ -78,6 +78,9 @@ func unresolvedLines(root, slug string) []string {
 // repairCarriedDecisionDraft restores exact standing ledger lines.
 // A draft line claiming a restored ID keeps its text, but the ID belongs to the ledger.
 func repairCarriedDecisionDraft(draft string, standing []recordedDecision) string {
+	if len(standing) == 0 {
+		return draft
+	}
 	loc := decisionsHeading.FindStringIndex(draft)
 	if loc == nil {
 		return draft
@@ -87,23 +90,26 @@ func repairCarriedDecisionDraft(draft string, standing []recordedDecision) strin
 		end = loc[1] + next[0]
 	}
 	byID := map[string]string{}
+	canonicalLines := map[string]bool{}
 	for _, d := range standing {
-		byID[d.ID] = d.intentLine()
+		line := d.intentLine()
+		byID[d.ID] = line
+		canonicalLines[decisionLineKey(line)] = true
 	}
 	have := map[string]bool{}
 	lines := strings.Split(draft[loc[1]:end], "\n")
 	for i, line := range lines {
+		key := decisionLineKey(line)
+		if canonicalLines[key] && !have[key] {
+			have[key] = true
+			continue
+		}
 		refs := decisionRoundRe.FindAllStringSubmatchIndex(line, -1)
 		if len(refs) != 1 {
 			continue
 		}
 		ref := refs[0]
-		canonical, ok := byID[line[ref[2]:ref[3]]]
-		if !ok {
-			continue
-		}
-		if !have[canonical] && sourceTagRe.ReplaceAllString(line, "") == sourceTagRe.ReplaceAllString(canonical, "") {
-			have[canonical] = true
+		if _, ok := byID[line[ref[2]:ref[3]]]; !ok {
 			continue
 		}
 		lines[i] = strings.TrimSuffix(line[:ref[0]], " ") + line[ref[1]:]
@@ -111,9 +117,8 @@ func repairCarriedDecisionDraft(draft string, standing []recordedDecision) strin
 	var missing []string
 	for _, d := range standing {
 		line := byID[d.ID]
-		if !have[line] {
+		if !have[decisionLineKey(line)] {
 			missing = append(missing, line)
-			have[line] = true
 		}
 	}
 	section := draft[:loc[1]] + strings.Join(lines, "\n")
@@ -126,6 +131,10 @@ func repairCarriedDecisionDraft(draft string, standing []recordedDecision) strin
 		trimmed += "\n"
 	}
 	return trimmed + strings.Join(missing, "\n") + suffix + draft[end:]
+}
+
+func decisionLineKey(line string) string {
+	return sourceTagRe.ReplaceAllString(strings.TrimRight(line, "\r"), "")
 }
 
 var decisionRoundRe = regexp.MustCompile(`\(decision: (D\d+), round \d+\)`)
