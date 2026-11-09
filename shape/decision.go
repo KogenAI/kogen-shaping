@@ -235,13 +235,17 @@ func referencedDecision(intent, statement string) string {
 // decisionCheck makes one fresh read-only call on the candidate intent.md and returns the
 // feedback lines, nil when the candidate may go on.
 func (sh *shaping) decisionCheck(ctx context.Context, intent string) ([]string, error) {
-	earlier := sh.earlier
-	if earlier == "" {
-		earlier = "none"
-	}
 	evidence, err := sh.decisionEvidence(intent)
 	if err != nil {
 		return nil, err
+	}
+	return sh.decisionCheckWithEvidence(ctx, intent, evidence)
+}
+
+func (sh *shaping) decisionCheckWithEvidence(ctx context.Context, intent, evidence string) ([]string, error) {
+	earlier := sh.earlier
+	if earlier == "" {
+		earlier = "none"
 	}
 	input := "Slug: " + sh.slug + "\n\n# Request\n\n" + sh.request + "\n\n# Earlier questions and answers\n\n" + earlier + "\n\n# Candidate intent.md\n\n" + decisionIntent(intent) + evidence
 	var args map[string]any

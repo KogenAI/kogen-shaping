@@ -634,13 +634,20 @@ type shaping struct {
 	pending           *shapeRefusal
 	// lastObservationsPath is the observations file of the last readiness check, relative to the root.
 	lastObservationsPath string
-	lastFresh            bool       // the last certify ran readiness
-	staticLast           *staticRun // the last run of the static gate, reused for the identical candidate
-	lastObservations     string     // the readiness observations of that check; "" when green
+	lastFresh            bool             // the last certify ran readiness
+	staticLast           *staticRun       // the last run of the static gate, reused for the identical candidate
+	lastObservations     string           // the readiness observations of that check; "" when green
+	readinessReview      *readinessReview // same-invocation proof awaiting acknowledgment
 
 	// providerErr, when set, ends a check that a provider error stopped (Refine's checks, which
 	// run through a shaping bound to its scratch checkout); nil: the shaping's own ending.
 	providerErr func(*sys.Error) error
+}
+
+type readinessReview struct {
+	ready        *verify.Ready
+	packageHash  string
+	evidenceHash string
 }
 
 // toolSpan runs one native main-conversation tool call and adds its time to the shaper's tools.
@@ -1798,7 +1805,18 @@ func (sh *shaping) checkSubmission(ctx context.Context, files []string) (string,
 	} else if refused {
 		return text, out, nil
 	}
-	lines, err := sh.decisionCheck(ctx, string(written))
+	evidence, err := sh.decisionEvidence(string(written))
+	if err != nil {
+		return "", outcome{}, err
+	}
+	evidenceHash := ContentHash([]byte(evidence))
+	if review := sh.readinessReview; review != nil && review.ready == sh.ready &&
+		review.packageHash == hash && review.evidenceHash == evidenceHash && sh.rd.Current(sh.s, sh.slug, sh.ready) {
+		sh.ev.Record(map[string]any{"event": "readiness_review_reused", "package": hash})
+		return "accepted: unchanged checked observations acknowledged", outcome{kind: outReady}, nil
+	}
+	sh.readinessReview = nil
+	lines, err := sh.decisionCheckWithEvidence(ctx, string(written), evidence)
 	if err != nil {
 		return "", outcome{}, err
 	}
@@ -1893,10 +1911,14 @@ func (sh *shaping) checkSubmission(ctx context.Context, files []string) (string,
 		if sh.ready != beforeContract {
 			if sh.ready.Failures() {
 				reference := filepath.Join(sh.root, sh.lastObservationsPath)
-				return verify.Acknowledgment(sh.slug, sh.ready, reference), outcome{kind: outObservations}, nil
+				text, result = verify.Acknowledgment(sh.slug, sh.ready, reference), outcome{kind: outObservations}
+			} else {
+				return "accepted: the Intent is ready", outcome{kind: outReady}, nil
 			}
-			return "accepted: the Intent is ready", outcome{kind: outReady}, nil
 		}
+	}
+	if result.kind == outObservations && sh.contractChecked[hash] {
+		sh.readinessReview = &readinessReview{ready: sh.ready, packageHash: hash, evidenceHash: evidenceHash}
 	}
 	return text, result, nil
 }

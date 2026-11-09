@@ -46,10 +46,10 @@ func TestAShapeConversationKeepsOneCacheIdentityForEveryRequest(t *testing.T) {
 	if checks := cacheKeys(f.Prov.contractRequests()); len(checks) != 1 || checks[0] != events[1]["id"] {
 		t.Fatalf("the contract review wire key %q, saved %v", checks, events[1])
 	}
-	if checks := cacheKeys(f.Prov.decisionRequests()); len(checks) != 2 || len(decisions) != 2 || checks[0] != decisions[0] || checks[1] != decisions[1] || checks[0] == checks[1] || checks[0] == keys[0] {
+	if checks := cacheKeys(f.Prov.decisionRequests()); len(checks) != 1 || len(decisions) != 1 || checks[0] != decisions[0] || checks[0] == keys[0] {
 		t.Fatalf("the decision check wire keys %q, saved %v", checks, decisions)
 	}
-	if checks := cacheKeys(f.Prov.literalRequests()); len(checks) != 2 || len(literals) != 2 || checks[0] != literals[0] || checks[1] != literals[1] || checks[0] == checks[1] || checks[0] == keys[0] {
+	if checks := cacheKeys(f.Prov.literalRequests()); len(checks) != 1 || len(literals) != 1 || checks[0] != literals[0] || checks[0] == keys[0] || checks[0] == decisions[0] {
 		t.Fatalf("the literal check wire keys %q, saved %v", checks, literals)
 	}
 	// A second invocation is another conversation.

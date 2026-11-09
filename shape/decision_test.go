@@ -172,9 +172,11 @@ func TestExternalShapeDecisionCheck(t *testing.T) {
 	ack := map[string]any{"files": []any{map[string]any{"path": ".kogen/intents/is-even/acceptance.feature", "content": shpFeature}}}
 	x := &shapeExec{t: t,
 		rounds:   []func(int, string) (executor.RoundResult, error){result(shpFiles()), result(shpFiles()), result(shpFiles()), result(ack)},
-		decision: []func(int, string) (executor.RoundResult, error){check("contradicts", "", ""), check("contradicts", "TypeError", "raise TypeError"), check("follows", "", "")}}
-	f.shapeWith(x, "Add calc.is_even(n). Non-integers raise TypeError.")
-	if len(x.decisionStarts) != 4 {
+		decision: []func(int, string) (executor.RoundResult, error){check("contradicts", "", ""), check("contradicts", "TypeError", "raise TypeError"), check("follows", "", ""), check("contradicts", "TypeError", "raise TypeError")}}
+	if exit, err := f.shapeWith(x, "Add calc.is_even(n). Non-integers raise TypeError."); err != nil || exit != 0 {
+		t.Fatalf("acknowledgment reopened a reviewed decision: exit %d, err %v\n%s", exit, err, f.Stderr)
+	}
+	if len(x.decisionStarts) != 3 {
 		t.Fatalf("%d check sessions of %d", len(x.decisionStarts), len(x.starts))
 	}
 	for i, s := range x.decisionStarts {
@@ -192,7 +194,7 @@ func TestExternalShapeDecisionCheck(t *testing.T) {
 	shpContains(t, "feedback", feedback, "Decision check: 1 stated decisions are not supported by the request;")
 	shpContains(t, "feedback line", feedback, "statement: "+decision+` | request_quotes: "Non-integers raise TypeError." | verdict: contradicts | intent_value: TypeError | request_value: raise TypeError | difference: they differ | why: because`)
 	shpContains(t, "unnamed", feedback, "verdict: unsupported | why: because")
-	if n := len(shpNamed(f.events(), "decision_check")); n != 4 {
+	if n := len(shpNamed(f.events(), "decision_check")); n != 3 {
 		t.Fatalf("%d decision_check events", n)
 	}
 	if n := len(f.Prov.allRequests()); n != 0 {

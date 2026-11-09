@@ -718,6 +718,9 @@ func TestShapeRedReadinessReturnsObservationsAndAcknowledgmentReusesThem(t *test
 	}
 	// The acknowledgment reused the checked readiness: the runner ran once for the package.
 	shpEq(t, "acceptance runs (runner check, one dry run)", f.runs(), 2)
+	shpEq(t, "decision reviews", len(f.Prov.decisionRequests()), 1)
+	shpEq(t, "literal reviews", len(f.Prov.literalRequests()), 1)
+	shpEq(t, "readiness acknowledgment reuses reviewed package", len(shpNamed(f.events(), "readiness_review_reused")), 1)
 	shpContains(t, "stdout", f.Stdout.String(), "Scenarios: 2 (2 fail now, 0 pass now)\n")
 }
 
@@ -731,7 +734,43 @@ func TestShapeAChangedPackageAfterRedGetsFreshChecks(t *testing.T) {
 	shpEq(t, "requests", len(f.Prov.requests()), 3)
 	shpContains(t, "second feedback", shpOutputs(f.Prov.requests()[2])["c2"], "Readiness observations")
 	shpEq(t, "runner check plus two dry runs", f.runs(), 3)
+	for name, checks := range map[string][]map[string]any{"decision": f.Prov.decisionRequests(), "literal": f.Prov.literalRequests()} {
+		keys := cacheKeys(checks)
+		if len(keys) != 2 || keys[0] == "" || keys[1] == "" || keys[0] == keys[1] {
+			t.Fatalf("%s reviews did not independently check original and changed packages: %q", name, keys)
+		}
+	}
 	shpContains(t, "step file", f.read("features/steps/is-even__steps.js"), "// changed")
+}
+
+func TestShapeAcknowledgmentRechecksChangedObservedEvidence(t *testing.T) {
+	parallel(t)
+	value := filepath.Join(t.TempDir(), "probe-value")
+	if err := os.WriteFile(value, []byte("first-value\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := "cat '" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+	probe := func(id string) shpStep {
+		return shpAnswer(shpCall(id, ProbeTool, map[string]any{"command": command}))
+	}
+	draft := shpFilesWithDecisions("- Observe the probe value. (evidence: ran `" + command + "`) (source: request)")
+	f := newShpFx(t, probe("p1"), shpSubmit("draft", draft), probe("p2"), shpAck("ack"))
+	f.Prov.route = func(req map[string]any) *shpStep {
+		if strings.Contains(shpOutputs(req)["draft"], "Readiness observations") {
+			if err := os.WriteFile(value, []byte("second-value\n"), 0o600); err != nil {
+				t.Error(err)
+			}
+		}
+		return nil
+	}
+	if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 0 {
+		t.Fatalf("exit %d, err %v\n%s", exit, err, f.Stderr)
+	}
+	checks := f.Prov.decisionRequests()
+	shpEq(t, "decision reviews", len(checks), 2)
+	shpContains(t, "first decision evidence", shpBody(checks[0]), "first-value")
+	shpContains(t, "second decision evidence", shpBody(checks[1]), "second-value")
+	shpEq(t, "changed evidence cannot reuse review", len(shpNamed(f.events(), "readiness_review_reused")), 0)
 }
 
 func TestShapeUndefinedStepGoesBackToTheShaperAndStaysNotReady(t *testing.T) {
@@ -753,6 +792,7 @@ func TestShapeUndefinedStepGoesBackToTheShaperAndStaysNotReady(t *testing.T) {
 	if f.exists(".kogen/local/readiness/is-even.json") {
 		t.Fatal("failed readiness is never recorded")
 	}
+	shpEq(t, "failed readiness cannot supply a review receipt", len(shpNamed(f.events(), "readiness_review_reused")), 0)
 }
 
 func TestShapeAfterANotReadyAttemptTheShaperMayAskQuestions(t *testing.T) {

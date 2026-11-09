@@ -231,7 +231,7 @@ func TestExternalShapeLiteralCheck(t *testing.T) {
 	x := &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){result(shpFiles()), result(shpFiles()), result(ack)},
 		literal: []func(int, string) (executor.RoundResult, error){item("required"), item("informal")}}
 	f.shapeWith(x, request)
-	if len(x.literalStarts) != 3 {
+	if len(x.literalStarts) != 2 {
 		t.Fatalf("%d literal sessions", len(x.literalStarts))
 	}
 	for i, s := range x.literalStarts {
@@ -247,7 +247,7 @@ func TestExternalShapeLiteralCheck(t *testing.T) {
 	shpContains(t, "feedback", feedback, "Literal check: 1 required literal values are not carried exactly by the package;")
 	shpContains(t, "feedback line", feedback, `literal: ZeroDivisionError | source: request | source_quote: "`+quote+`" | status: missing | why: because`)
 	events := shpNamed(f.events(), "literal_check")
-	if len(events) != 3 || events[0]["missing"] != float64(1) || events[1]["informal"] != float64(1) {
+	if len(events) != 2 || events[0]["missing"] != float64(1) || events[1]["informal"] != float64(1) {
 		t.Fatalf("events %v", events)
 	}
 	noNativeRequests(t, f)
