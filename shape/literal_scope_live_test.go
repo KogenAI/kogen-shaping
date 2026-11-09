@@ -31,6 +31,10 @@ func TestLiteralScopeLive(t *testing.T) {
 		{"inspection-procedure", "Add the /ready endpoint. Before submitting the Intent, inspect cli/native.go and run npm test in a scratch probe. The requested product is the /ready endpoint; these commands guide the shaper's work.", "The /ready endpoint returns ready.", false},
 		{"capture-product-missing", "Add a probe parameter named capture_output and a proposal field named from_probe. Preserve these exact public parameter names.", "The new probe uses a parameter named capture_text and proposals use a field named output_ref.", true},
 		{"route-product-changed", "Add the /ready endpoint. Engineering procedure: use probe capture_output=true to prepare the proof.", "The /readiness endpoint returns ready.", true},
+		{"argv-git-operation", "The check subcommand executes git status --porcelain and returns its output.", "if (command === 'check') return execFileSync('git', ['status', '--porcelain']);", false},
+		{"argv-go-operation", "The verify subcommand executes go test ./... -count=1.", "if (command === 'verify') return spawnSync('go', ['test', './...', '-count=1']);", false},
+		{"argv-required-flag-missing", "The check subcommand must execute git status --porcelain.", "if (command === 'check') return execFileSync('git', ['status', '--short']);", true},
+		{"display-command-changed", "The help subcommand displays exactly git status --porcelain.", "if (command === 'help') return 'git status --short'; if (command === 'check') return execFileSync('git', ['status', '--porcelain']);", true},
 	}
 	s := sys.New()
 	repo, err := git.Open(s.Cwd, s.Env)

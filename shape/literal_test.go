@@ -263,3 +263,12 @@ func TestLiteralInstructionsSeparatePreparationFromProduct(t *testing.T) {
 		}
 	}
 }
+
+func TestLiteralInstructionsAllowEquivalentArgvWithoutWeakeningDisplays(t *testing.T) {
+	parallel(t)
+	for _, want := range []string{"equivalent argv or process API", "executable and argument values separately", "missing or changed required argument still fails", "preserve that complete requested display exactly"} {
+		if !strings.Contains(literalInstructions, want) {
+			t.Errorf("literal distinction missing %q", want)
+		}
+	}
+}
