@@ -223,6 +223,12 @@ func referencedDecision(intent, statement string) string {
 	if found != "" && strings.HasSuffix(found, suffix) {
 		return found
 	}
+	// The checker can render an omitted constraint as "(constraint: none)".
+	// Accept this placeholder only when the rest of the reported line is exact.
+	end := refs[0][1]
+	if tail, ok := strings.CutPrefix(statement[end:], " (constraint: none)"); ok && found == statement[:end]+tail {
+		return found
+	}
 	return ""
 }
 

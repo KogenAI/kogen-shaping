@@ -256,3 +256,53 @@ func TestMarkedStatementOnEveryOccupiedLine(t *testing.T) {
 		}
 	}
 }
+
+func TestDecisionOutcomeGroundsInventedEmptyConstraint(t *testing.T) {
+	parallel(t)
+	const decision = "- spec/check.sh is not re-run inside the acceptance scenarios; the configured spec check runs it in full and the text must keep spec/tools/check.mjs passing. (decision: D5, round 1) (evidence: spec/check.sh; spec/tools/check.mjs; .kogen/project.yaml) (assumption: I ran only spec/tools/check.mjs on a scratch copy with the intended edits, which passed (requirements 108, scenarios 210); I did not run the whole check.sh.) (source: request)"
+	const ref = "(decision: D5, round 1)"
+	const request = "(4) spec/check.sh passes in full."
+	reported := strings.Replace(decision, ref, ref+" (constraint: none)", 1)
+	intent := "## Decisions\n" + decision + "\n"
+	item := decisionItem{statement: reported, quotes: []string{request}, verdict: "unsupported",
+		why: "The request requires spec/check.sh to pass in full; the decision delegates that to the configured spec check, which is compatible."}
+
+	event, feedback := decisionOutcome([]decisionItem{item}, request, intent)
+	if len(feedback) != 0 {
+		t.Fatalf("marked source decision was refused: %q", feedback)
+	}
+	got := event["items"].([]any)[0].(map[string]any)
+	if got["statement"] != decision || got["reported_statement"] != reported {
+		t.Fatalf("source or reported statement was lost: %v", got)
+	}
+
+	t.Run("real conflict still refuses", func(t *testing.T) {
+		const requirement = "spec/check.sh must run inside the acceptance scenarios."
+		conflict := item
+		conflict.quotes = []string{requirement}
+		conflict.verdict = "contradicts"
+		conflict.intentValue = "not re-run"
+		conflict.requestValue = "must run"
+		conflict.difference = "different acceptance coverage"
+		_, lines := decisionOutcome([]decisionItem{conflict}, requirement, intent)
+		shpContains(t, "conflict", strings.Join(lines, "\n"), "verdict: contradicts")
+	})
+
+	t.Run("unsupported product decision still refuses", func(t *testing.T) {
+		const unmarked = "- Allow a five-digit short commit. (decision: D5, round 1) (source: request)"
+		unsupported := item
+		unsupported.statement = strings.Replace(unmarked, ref, ref+" (constraint: none)", 1)
+		_, lines := decisionOutcome([]decisionItem{unsupported}, request, "## Decisions\n"+unmarked+"\n")
+		shpContains(t, "unsupported decision", strings.Join(lines, "\n"), "verdict: unsupported")
+	})
+
+	for _, changed := range []string{
+		strings.Replace(reported, "constraint: none", "constraint: always skip verification", 1),
+		strings.Replace(reported, "not re-run", "never run", 1),
+	} {
+		unsupported := item
+		unsupported.statement = changed
+		_, lines := decisionOutcome([]decisionItem{unsupported}, request, intent)
+		shpContains(t, "changed finding", strings.Join(lines, "\n"), "verdict: unsupported")
+	}
+}
