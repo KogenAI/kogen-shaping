@@ -252,3 +252,14 @@ func TestExternalShapeLiteralCheck(t *testing.T) {
 	}
 	noNativeRequests(t, f)
 }
+
+// Preparation instructions must not become product obligations. Identical names
+// remain exact literals when the requested product actually exposes them.
+func TestLiteralInstructionsSeparatePreparationFromProduct(t *testing.T) {
+	parallel(t)
+	for _, want := range []string{"not the procedure used to shape the Intent", "give it status informal", "If the requested product itself exposes that same name or value, it remains required", "add a probe parameter named capture_output"} {
+		if !strings.Contains(literalInstructions, want) {
+			t.Errorf("literal boundary missing %q", want)
+		}
+	}
+}
