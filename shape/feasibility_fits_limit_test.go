@@ -2,11 +2,13 @@ package shape
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/KogenAI/kogen-loop/sys"
 	"github.com/KogenAI/kogen-verification/verify"
 )
 
@@ -30,10 +32,25 @@ func assertNoReadyOnRetry(t *testing.T, f *shpFx) {
 	}
 }
 
+// disableProbeRaceExitDelay keeps the Linux reaper's race runtime exit pause
+// outside the test's contracted probe deadline. The reaper remains race-instrumented.
+func disableProbeRaceExitDelay(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		return
+	}
+	restore := verify.ContractProbeRun(func(s *sys.Session, command, dir string, options sys.Options) (sys.Result, error) {
+		options.Env["GORACE"] = "atexit_sleep_ms=0"
+		return s.RunContext(options.Context, command, dir, options)
+	})
+	t.Cleanup(restore)
+}
+
 func TestShapeFeasibilityFitsLimit(t *testing.T) {
 	if !isolatedTmp(t) {
 		return
 	}
+	disableProbeRaceExitDelay(t)
 	production, restore := verify.ContractProbeDeadline(time.Second, nil)
 	defer restore()
 	if production != 300*time.Second {
@@ -70,6 +87,7 @@ func TestShapeTimelyEvidenceFitsLimit(t *testing.T) {
 	if !isolatedTmp(t) {
 		return
 	}
+	disableProbeRaceExitDelay(t)
 	_, restore := verify.ContractProbeDeadline(2*time.Second, nil)
 	defer restore()
 	f := newShpFx(t, shpSubmit("timely", budgetFiles("sleep 1.2", "sleep 1.2; exit 143")), shpAck("ack"))
