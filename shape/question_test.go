@@ -233,29 +233,25 @@ func TestShapeQuestionCheckRefusesTheWholeSubmission(t *testing.T) {
 	shpEq(t, "refused", check["refused"].(float64), 5)
 }
 
-func TestShapeQuestionRefusalsCountAsInvalidSubmissions(t *testing.T) {
+func TestShapeQuestionRefusalsDoNotSpendPackageAttempts(t *testing.T) {
 	parallel(t)
-	var steps []shpStep
-	for _, id := range []string{"a", "b", "c"} {
-		steps = append(steps, shpSubmit("q"+id, map[string]any{"questions": []any{shpQuestion("Which engine?")}}), shpQuestionCheck("c"+id, "technical"))
-	}
+	steps := refusedTechnicalQuestions(3)
+	steps = append(steps, shpSubmit("valid", shpFiles()), shpAck("ack"))
 	f := newShpFx(t, steps...)
-	exit, err := f.shape("Add calc.is_even(n).")
-	e := shpWantError(t, err, "shape", "invalid_output", "after 3 attempts", 1)
-	shpEq(t, "exit", exit, 1)
-	shpEq(t, "lines", len(e.Lines), 2)
-	shpEq(t, "last line", e.Lines[1], "question check refusals: technical x3")
-	if f.exists(".kogen/local/shaping/is-even/questions.json") || f.Stdout.Len() != 0 {
-		t.Fatal("nothing is asked")
+	if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 0 {
+		t.Fatalf("exit %d: %v", exit, err)
 	}
-	shpEq(t, "refusals", len(shpNamed(f.events(), "submission_refused")), 3)
+	if f.exists(".kogen/local/shaping/is-even/questions.json") {
+		t.Fatal("refused questions were asked")
+	}
+	shpEq(t, "question refusals", len(shpNamed(f.events(), "question_check")), 3)
 }
 
 func TestShapeQuestionRefusalsAreTheLastLineOfANotReadyIntent(t *testing.T) {
 	parallel(t)
 	bad := shpFilesWithDecisions("- Zero is even. (evidence: nothing/here.rb) (source: request)")
 	f := newShpFx(t, shpSubmit("q1", map[string]any{"questions": []any{shpQuestion("Which engine?"), shpQuestion("Charge?")}}), shpQuestionCheck("c1", "technical", "product_policy"),
-		shpSubmit("f1", bad), shpSubmit("f2", bad))
+		shpSubmit("f1", bad), shpSubmit("f2", bad), shpSubmit("f3", bad))
 	exit, err := f.shape("Add calc.is_even(n).")
 	e := shpWantError(t, err, "intent", "not_ready", "", 1)
 	shpEq(t, "exit", exit, 1)
@@ -315,11 +311,12 @@ func TestShapeEnvironmentQuestions(t *testing.T) {
 	})
 	t.Run("environment questions without evidence never end Shape, even repeated", func(t *testing.T) {
 		parallel(t)
-		f := newShpFx(t, shpSubmit("q1", plain), envCheck("c1"), shpSubmit("q2", plain), envCheck("c2"), shpSubmit("q3", plain), envCheck("c3"))
+		f := newShpFx(t, shpSubmit("q1", plain), envCheck("c1"), shpSubmit("q2", plain), envCheck("c2"), shpSubmit("q3", plain), envCheck("c3"), shpSubmit("valid", shpFiles()), shpAck("ack"))
 		exit, err := f.shape("Add calc.is_even(n).")
-		e := shpWantError(t, err, "shape", "invalid_output", "after 3 attempts", 1)
-		shpEq(t, "exit", exit, 1)
-		shpEq(t, "last line", e.Lines[len(e.Lines)-1], "question check refusals: environment x6")
+		if err != nil || exit != 0 {
+			t.Fatalf("exit %d: %v", exit, err)
+		}
+		shpEq(t, "question refusals", len(shpNamed(f.events(), "question_check")), 3)
 	})
 	t.Run("prerequisites with nothing shown never end Shape", func(t *testing.T) {
 		parallel(t)
@@ -348,23 +345,24 @@ func TestShapeEnvironmentQuestions(t *testing.T) {
 		exit, err := f.shape("Add calc.is_even(n).")
 		fault(t, f, exit, err)
 	})
-	t.Run("one evidenced submission on the last attempt ends as spent retries", func(t *testing.T) {
+	t.Run("one evidenced submission after other refused questions still allows a package", func(t *testing.T) {
 		parallel(t)
-		f := newShpFx(t, read, shpSubmit("q1", policy), shpQuestionCheck("c1", "product_policy"), shpSubmit("q2", policy), shpQuestionCheck("c2", "product_policy"), shpSubmit("q3", cited), prerequisite("c3"))
+		f := newShpFx(t, read, shpSubmit("q1", policy), shpQuestionCheck("c1", "product_policy"), shpSubmit("q2", policy), shpQuestionCheck("c2", "product_policy"), shpSubmit("q3", cited), prerequisite("c3"), shpSubmit("valid", shpFiles()), shpAck("ack"))
 		qcCommit(f)
 		exit, err := f.shape("Add calc.is_even(n).")
-		e := shpWantError(t, err, "shape", "invalid_output", "after 3 attempts", 1)
-		shpEq(t, "exit", exit, 1)
-		shpEq(t, "last line", e.Lines[len(e.Lines)-1], "question check refusals: product_policy x2, environment_prerequisite x2")
+		if err != nil || exit != 0 {
+			t.Fatalf("exit %d: %v", exit, err)
+		}
 	})
 	t.Run("another class in the submission is no environment fault", func(t *testing.T) {
 		parallel(t)
 		f := newShpFx(t, read, shpSubmit("q1", cited), shpQuestionCheck("c1", "environment_prerequisite", "technical"), shpSubmit("q2", cited), shpQuestionCheck("c2", "environment_prerequisite", "technical"),
-			shpSubmit("q3", cited), shpQuestionCheck("c3", "environment_prerequisite", "technical"))
+			shpSubmit("q3", cited), shpQuestionCheck("c3", "environment_prerequisite", "technical"), shpSubmit("valid", shpFiles()), shpAck("ack"))
 		qcCommit(f)
 		exit, err := f.shape("Add calc.is_even(n).")
-		shpWantError(t, err, "shape", "invalid_output", "", 1)
-		shpEq(t, "exit", exit, 1)
+		if err != nil || exit != 0 {
+			t.Fatalf("exit %d: %v", exit, err)
+		}
 	})
 }
 

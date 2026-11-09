@@ -29,7 +29,7 @@ func TestShapeDeclaredFileGapsAreAllNamed(t *testing.T) {
 		shpSubmit("c2", preFiles(preFile(preFeaturePath, shpFeature))),
 		shpSubmit("c3", outside), shpSubmit("c4", outside))
 	exit, err := f.shape("Add calc.is_even(n).")
-	shpWantError(t, err, "shape", "invalid_output", "after 3 attempts", 1)
+	shpWantError(t, err, "shape", "incomplete_package", "within 3 attempts", 1)
 	shpEq(t, "exit", exit, 1)
 	reqs := f.Prov.requests()
 	gaps := []string{"acceptance.feature does not exist", preStepGap, "acceptance: features/steps/is-even__more.js does not exist", "model: " + model + " does not exist"}

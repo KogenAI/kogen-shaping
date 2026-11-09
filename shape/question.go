@@ -324,6 +324,9 @@ func numberedLines(text string) string {
 	return strings.Join(lines, "\n")
 }
 
+// Refused questions have their own finite budget; they do not spend package retries.
+const questionRefusalLimit = 8
+
 // classCount is a question class and the number of questions refused in it.
 type classCount struct {
 	class string

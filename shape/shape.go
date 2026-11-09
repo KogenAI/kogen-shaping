@@ -588,19 +588,20 @@ type shaping struct {
 	literalUsage  provider.Usage   // the native literal checks' tokens
 	literalRounds int              // the external literal check sessions' rounds
 
-	earlier           string            // the earlier questions and answers, as the shaper reads them
-	questionChecks    int               // question check calls made
-	questionUsage     provider.Usage    // the native question checks' tokens
-	questionRounds    int               // the external question check sessions' rounds
-	evidencedRefusals int               // evidenced environment-only question submissions in this run
-	questionRefusals  []classCount      // the classes of the questions the question checks refused, in order of first refusal
-	probed            map[string]bool   // the commands of the probe calls of this run
-	probeTexts        map[string]string // the latest answer text of each probed command of this run
-	probeOutputs      map[string]capturedProbeOutput
-	readTexts         map[string]string // the latest answer text of the read_file calls of the main conversation, by cleaned path
-	ranCommand        bool              // the external session completed a Bash call
-	readPaths         map[string]bool   // the cleaned path arguments of the read_file calls of the main conversation
-	listedPaths       map[string]bool   // the cleaned path arguments of the list_files calls of the main conversation
+	earlier             string         // the earlier questions and answers, as the shaper reads them
+	questionChecks      int            // question check calls made
+	questionUsage       provider.Usage // the native question checks' tokens
+	questionRounds      int            // the external question check sessions' rounds
+	evidencedRefusals   int            // evidenced environment-only question submissions in this run
+	refusedQuestionSets int
+	questionRefusals    []classCount      // the classes of the questions the question checks refused, in order of first refusal
+	probed              map[string]bool   // the commands of the probe calls of this run
+	probeTexts          map[string]string // the latest answer text of each probed command of this run
+	probeOutputs        map[string]capturedProbeOutput
+	readTexts           map[string]string // the latest answer text of the read_file calls of the main conversation, by cleaned path
+	ranCommand          bool              // the external session completed a Bash call
+	readPaths           map[string]bool   // the cleaned path arguments of the read_file calls of the main conversation
+	listedPaths         map[string]bool   // the cleaned path arguments of the list_files calls of the main conversation
 
 	contractUsage    provider.Usage               // the native contract review and confirmation calls' tokens
 	contractRounds   int                          // the external contract review and confirmation sessions' rounds
@@ -624,13 +625,14 @@ type shaping struct {
 	unchanged       bool
 	// lastCounted is the refusal of the last counted submission, nil when it was not refused;
 	// priorRefusal is the one before the current submission. sameOf is the attempt whose refusal
-	// the current one repeats; incomplete is whether the current refusal is a completeness
-	// refusal; pending is the pre-check the next submit call consumes.
-	lastCounted  *shapeRefusal
-	priorRefusal *shapeRefusal
-	sameOf       int
-	incomplete   bool
-	pending      *shapeRefusal
+	// the current one repeats. incomplete and incompleteRefusal retain a completeness
+	// refusal until declared gaps are filled; pending is the next call's pre-check.
+	lastCounted       *shapeRefusal
+	priorRefusal      *shapeRefusal
+	sameOf            int
+	incomplete        bool
+	incompleteRefusal *shapeRefusal
+	pending           *shapeRefusal
 	// lastObservationsPath is the observations file of the last readiness check, relative to the root.
 	lastObservationsPath string
 	lastFresh            bool       // the last certify ran readiness
@@ -680,7 +682,8 @@ const (
 	outBlocked
 	outReady
 	outNoTool
-	outPrecheck // a submit call that was pre-checked and not counted
+	outPrecheck        // a submit call that was pre-checked and not counted
+	outQuestionRefused // a well-formed question set refused by its own bounded gate
 )
 
 type outcome struct {
@@ -761,7 +764,12 @@ func (sh *shaping) shape(ctx context.Context, st *state) (int, error) {
 	case outInvalid:
 		if sh.incomplete {
 			e := sys.Fail("shape", "incomplete_package", fmt.Sprintf("blocked: the shaper could not complete the package within %d attempts", submissionRetryLimit(sh.in.SubmissionRetryLimit)), 1)
-			e.Lines = append([]string{fmt.Sprintf("unresolved gap (attempt %d, gate %s):", sh.submissions, sh.lastGate)}, sh.lastRefusal...)
+			gap := sh.incompleteRefusal
+			problems := sh.declaredGaps(sh.proposed)
+			if gap.gate == "validation" {
+				problems = append(slices.Clone(gap.problems), problems...)
+			}
+			e.Lines = append([]string{fmt.Sprintf("unresolved gap (attempt %d, gate %s):", gap.attempt, gap.gate)}, problems...)
 			e.Lines = append(append(e.Lines, sh.earliestLines()...), sh.refusalCountsLines()...)
 			return 0, e
 		}
@@ -1018,6 +1026,10 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 		input = append(input, outputs...)
 
 		switch {
+		case result.kind == outQuestionRefused:
+			sinceSubmit = 0
+			last = lastSubmission{kind: outInvalid, attempt: sh.submissions, gate: sh.lastGate, problems: sh.lastRefusal, earliest: sh.earliestLines()}
+			sh.ev.NextAttempt()
 		case result.kind == outInvalid:
 			turns.invalid++
 			if turns.invalid >= submissionRetryLimit(sh.in.SubmissionRetryLimit) {
@@ -1095,7 +1107,7 @@ func (sh *shaping) converseExternal(ctx context.Context, blocks []any) (outcome,
 			if invalid >= submissionRetryLimit(sh.in.SubmissionRetryLimit) {
 				return out, x, nil
 			}
-		case outObservations, outPrecheck:
+		case outObservations, outPrecheck, outQuestionRefused:
 		case outBlocked, outQuestions, outReady:
 			return out, x, nil
 		}
@@ -1395,8 +1407,14 @@ func (sh *shaping) submit(ctx context.Context, args map[string]any) (string, out
 	}
 	sh.submissions++
 	sh.packageKey, sh.unchangedOf, sh.unchanged = "", 0, false
-	sh.priorRefusal, sh.lastCounted, sh.sameOf, sh.incomplete = sh.lastCounted, nil, 0, false
+	sh.priorRefusal, sh.lastCounted, sh.sameOf = sh.lastCounted, nil, 0
 	text, out, err := sh.submitOne(ctx, args)
+	// Keep an unresolved completeness failure across unrelated invalid calls.
+	// A package that actually supplies the declared files clears it.
+	if sh.incomplete && len(sh.declaredGaps(sh.proposed)) == 0 {
+		sh.incomplete = false
+		sh.incompleteRefusal = nil
+	}
 	if err == nil && out.kind == outObservations {
 		sh.unresolved = nil
 	}
@@ -1464,6 +1482,7 @@ func (sh *shaping) refusedIncomplete(gate string, problems []string) {
 		sh.sameOf = p.attempt
 	}
 	sh.incomplete = true
+	sh.incompleteRefusal = sh.lastCounted
 	sh.pending = sh.lastCounted
 }
 
@@ -1588,7 +1607,13 @@ func (sh *shaping) submitOne(ctx context.Context, args map[string]any) (string, 
 			return "", outcome{}, err
 		}
 		if refused != nil {
-			return text, outcome{kind: outInvalid, problems: refused}, nil
+			sh.refusedQuestionSets++
+			if sh.refusedQuestionSets >= questionRefusalLimit {
+				e := sys.Fail("shape", "question_refusals", fmt.Sprintf("shaping stopped after %d refused question sets; decide technical questions from the request and repository", questionRefusalLimit), 1)
+				e.Lines = append(slices.Clone(refused), sh.refusalCountsLines()...)
+				return "", outcome{}, e
+			}
+			return text, outcome{kind: outQuestionRefused, problems: refused}, nil
 		}
 		return "accepted", outcome{kind: outQuestions, questions: sub.questions}, nil
 	case sub.blocked:
