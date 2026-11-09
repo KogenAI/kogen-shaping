@@ -363,8 +363,11 @@ type contractEnvItem struct {
 // contractConfirmed are the item lines of the confirmed findings of a refused candidate.
 type contractConfirmed struct {
 	contradictions []string
-	environment    []string
-	properties     []string
+	// fixes are the fix lines of the contradictions, one per item line and in the same order; a
+	// fix line follows its item line wherever the lines are shown or recorded.
+	fixes       []string
+	environment []string
+	properties  []string
 	// wrong are the lines of the wrong-implementation check, with their headline.
 	wrong         []string
 	wrongHeadline string
@@ -376,7 +379,19 @@ func (c contractConfirmed) empty() bool {
 
 // all is every line, contradictions first, as the contradictions record keeps them.
 func (c contractConfirmed) all() []string {
-	return slices.Concat(c.contradictions, c.environment, c.properties, c.wrong)
+	return slices.Concat(c.contradictionLines(), c.environment, c.properties, c.wrong)
+}
+
+// contradictionLines are the item lines of the contradictions, each followed by its fix line.
+func (c contractConfirmed) contradictionLines() []string {
+	out := make([]string, 0, 2*len(c.contradictions))
+	for i, line := range c.contradictions {
+		out = append(out, line)
+		if i < len(c.fixes) {
+			out = append(out, c.fixes[i])
+		}
+	}
+	return out
 }
 
 // contractFindingLine is the confirmation input's line for finding n (from 1), values normalized.
@@ -410,6 +425,14 @@ func contractItemLine(f contractFinding, confirmation string) string {
 	return fmt.Sprintf("- %s | %s | confirmed: %s", normalizeWhitespace(f.scenario), contractBody(f), normalizeWhitespace(confirmation))
 }
 
+// contractFixLine is the feedback line that follows a confirmed finding's item line: the exact
+// expectation to change and the exact contract to follow.
+func contractFixLine(f contractFinding) string {
+	nw := normalizeWhitespace
+	return fmt.Sprintf("- fix for %s: in %s change the expectation \"%s\" to follow the contract in %s: \"%s\"",
+		nw(f.scenario), nw(f.expectation.path), nw(f.expectation.quote), nw(f.contract.path), nw(f.contract.quote))
+}
+
 // contractHeadline is the first line of the refusal of n confirmed findings.
 func contractHeadline(n int) string {
 	return fmt.Sprintf("Contract check: %d acceptance expectation(s) contradict the Intent or code it keeps unchanged, so no correct implementation can pass them; nothing was published. "+
@@ -431,7 +454,7 @@ func environmentHeadline(n int) string {
 func contractFeedback(c contractConfirmed) string {
 	var out []string
 	if len(c.contradictions) > 0 {
-		out = append(append(out, contractHeadline(len(c.contradictions))), c.contradictions...)
+		out = append(append(out, contractHeadline(len(c.contradictions))), c.contradictionLines()...)
 	}
 	if len(c.environment) > 0 {
 		out = append(append(out, environmentHeadline(len(c.environment))), c.environment...)
@@ -486,7 +509,11 @@ func applyVerdicts(items []contractItem, envItems []contractEnvItem, verdicts []
 	for i := range items {
 		it := &items[i]
 		if it.evidenced {
+			before := len(lines.contradictions)
 			decide(&it.verdict, &it.confirmation, func(why string) string { return contractItemLine(it.finding, why) }, &lines.contradictions)
+			if len(lines.contradictions) > before {
+				lines.fixes = append(lines.fixes, contractFixLine(it.finding))
+			}
 		}
 	}
 	for i := range envItems {

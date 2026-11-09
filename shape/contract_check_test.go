@@ -142,6 +142,13 @@ func TestContractVerdictCounting(t *testing.T) {
 		"- a | expectation: " + ccFeaturePath + ": Given is-even: the number 4 | contract: " + ccIntentPath + ": returns True for even integers | why: because | confirmed: one is confirmed",
 		"- c | expectation: " + ccFeaturePath + ": Given is-even: the number 4 | contract: " + ccIntentPath + ": returns True for even integers | why: because | confirmed: three",
 	}
+	wantFixes := []string{
+		"- fix for a: in " + ccFeaturePath + " change the expectation \"Given is-even: the number 4\" to follow the contract in " + ccIntentPath + ": \"returns True for even integers\"",
+		"- fix for c: in " + ccFeaturePath + " change the expectation \"Given is-even: the number 4\" to follow the contract in " + ccIntentPath + ": \"returns True for even integers\"",
+	}
+	if !reflect.DeepEqual(confirmed.fixes, wantFixes) {
+		t.Fatalf("fixes\n%q\nwant\n%q", confirmed.fixes, wantFixes)
+	}
 	if !reflect.DeepEqual(lines, want) {
 		t.Fatalf("lines\n%q\nwant\n%q", lines, want)
 	}
@@ -168,7 +175,7 @@ func TestContractFormats(t *testing.T) {
 	if got := contractHeadline(2); got != wantHead {
 		t.Errorf("headline %q", got)
 	}
-	if got := contractFeedback(contractConfirmed{contradictions: []string{"- x", "- y"}}); got != wantHead+"\n- x\n- y" {
+	if got := contractFeedback(contractConfirmed{contradictions: []string{"- x", "- y"}, fixes: []string{"- fx", "- fy"}}); got != wantHead+"\n- x\n- fx\n- y\n- fy" {
 		t.Errorf("feedback %q", got)
 	}
 	wantEnvHead := "Environment check: 2 acceptance step(s) fail on the unchanged tree because Kogen's fresh copy is not prepared for them, not because the requested behaviour is missing; nothing was published. " +
@@ -339,7 +346,8 @@ func ccContradiction() any {
 const ccRefusal = "Contract check: 1 acceptance expectation(s) contradict the Intent or code it keeps unchanged, so no correct implementation can pass them; nothing was published. " +
 	"Correct each expectation, or the Intent where the Intent is what is wrong, so that a correct implementation passes; do not delete or weaken a scenario to pass this check. " +
 	"Resubmitting this candidate unchanged is refused again.\n" +
-	"- Even numbers | expectation: " + ccFeaturePath + ": Given is-even: the number 4 | contract: " + ccIntentPath + ": calc.is_even(n) returns True for even integers. | why: four is even, so the scenario cannot fail for a correct implementation | confirmed: four is even"
+	"- Even numbers | expectation: " + ccFeaturePath + ": Given is-even: the number 4 | contract: " + ccIntentPath + ": calc.is_even(n) returns True for even integers. | why: four is even, so the scenario cannot fail for a correct implementation | confirmed: four is even\n" +
+	"- fix for Even numbers: in " + ccFeaturePath + " change the expectation \"Given is-even: the number 4\" to follow the contract in " + ccIntentPath + ": \"calc.is_even(n) returns True for even integers.\""
 
 func ccInput(req map[string]any) string {
 	var out strings.Builder
@@ -412,7 +420,7 @@ func TestContractCheckRefusesAConfirmedContradictionAndPublishesItsCorrection(t 
 		reviews[0]["findings"] != float64(1) || reviews[0]["evidenced"] != float64(1) || reviews[0]["confirmed"] != float64(1) || reviews[1]["findings"] != float64(0) {
 		t.Fatalf("contract_review events %v", reviews)
 	}
-	if refused := ccRefused(f); len(refused) != 1 || refused[0]["problems"].([]any)[0] != strings.Split(ccRefusal, "\n")[1] {
+	if refused := ccRefused(f); len(refused) != 1 || refused[0]["problems"].([]any)[0] != strings.Split(ccRefusal, "\n")[1] || refused[0]["problems"].([]any)[1] != strings.Split(ccRefusal, "\n")[2] {
 		t.Fatalf("submission_refused events %v", refused)
 	}
 	shpContains(t, "progress", f.Stderr.String(), "kogen: checking the contract")
@@ -781,7 +789,7 @@ func TestContractCheckKeptContradictionEndsNotReadyAndApprovalRefusesIt(t *testi
 	}
 	var rec contractContradictions
 	b, _ := os.ReadFile(recordPath)
-	if err := json.Unmarshal(b, &rec); err != nil || rec.SHA256 != ccHash(t, f) || !reflect.DeepEqual(rec.Lines, []string{item}) || !strings.HasSuffix(string(b), "}\n") {
+	if err := json.Unmarshal(b, &rec); err != nil || rec.SHA256 != ccHash(t, f) || !reflect.DeepEqual(rec.Lines, []string{item, strings.Split(ccRefusal, "\n")[2]}) || !strings.HasSuffix(string(b), "}\n") {
 		t.Fatalf("record %q (%v)", b, err)
 	}
 
