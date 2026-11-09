@@ -51,6 +51,8 @@ var contractReviewInstructions = strings.Join([]string{
 	"When unsure, report nothing.",
 	`For each finding give scenario (the scenario name exactly as in acceptance.feature), expectation (its path and the exact text copied from that file), contract (the path of intent.md, another candidate acceptance or step file, <request>, or the unchanged repository file, and the exact text copied from it that the expectation contradicts) and why (what a correct implementation does instead). Answer {"findings":[],"environment":[],"properties":[]} when there is none.`,
 	"Separately, identify the properties the Request and the Questions and answers ask for: a quality, a bound, a comparison with the old behaviour, or a behaviour that must be kept. Take them from the Request and the answers themselves, not from what the candidate declares. A plain input/output request (a command, call or input with its expected output) asks for none: answer properties [].",
+	"Properties describe requested PRODUCT behaviour. Instructions for the shaper's engineering procedure (inspect files, use probes or proposal tools, keep acceptance offline or bounded, submit a complete package) are not product properties and need no product scenario or wrong-implementation witness. Those instructions still govern shaping. When the requested product itself must provide offline operation, a bound, a test runner or a tool parameter, that is a product property and still needs its own evidence.",
+	"Configured Build checks below are actual effective repository commands, enforced independently before and after implementation. A routine delivery condition that the existing test suite remains green is covered by a configured command only when that command runs the same requested suite and selection. Do not turn that already-covered delivery condition into a product property requiring another acceptance scenario or controls witness, or require a whole-suite acceptance step that exceeds the step limit. A check's name alone is not evidence: true, compilation, a different suite, or a narrowed package/name filter does not cover a requested whole suite. Product behaviour, including changes to a test runner itself, is never covered merely because a test command is configured.",
 	"For each property give property (a short name), request (the exact text copied from the Request or the Questions and answers that asks for it), kind (kept for a behaviour that must be kept, new otherwise), observable (false only when no automatic step can observe it, such as a subjective quality), scenarios (the names, exactly as in acceptance.feature, of the scenarios that exercise it; for a property that is not observable, the scenarios that claim it holds, also through a figure, log line or document sentence standing in for it), decision (for a property that is not observable, the exact text of the candidate intent.md Decisions line that records it as needing human evaluation; otherwise empty) and issues.",
 	"An issue is a scenario of the property whose evidence does not establish it, with problem, scenario, quote and why. Its problem is missing when a new property's scenario is red on the unchanged tree only because a file, module, function, command or test it needs does not exist yet (quote: that failure, copied exactly from the readiness observations), or test_count when the step's only evidence is that tests the Build writes exist or pass in some number and the step does not itself assert the property (quote: that code, copied exactly from the step file). A step that first gives the missing piece a do-nothing form and then fails on the property's behaviour has no issue.",
 }, "\n")
@@ -61,6 +63,7 @@ var contractConfirmationInstructions = strings.Join([]string{
 	"For each numbered finding, inspect the cited expectation and contract yourself. Answer confirmed only when a correct implementation of the Intent cannot pass the expectation because of the cited contract; otherwise answer refuted. Give one verdict per finding with its number and a short why.",
 	"For an environment finding, answer confirmed only when the cited fresh-copy output shows that the step failed because the copy was not prepared for it, not because the requested behaviour is missing.",
 	"For a property problem, answer confirmed only when the Request or the Questions and answers ask for that property and the candidate has the stated problem; otherwise answer refuted.",
+	"Refute a property problem about engineering procedure rather than requested product behaviour. Refute a missing-scenario or missing-witness problem for the routine condition that existing tests stay green when an actual Configured Build check runs that same requested suite and selection. Inspect its command, not its name; a partial or unrelated command is insufficient. Requested product behaviour still needs evidence even when test checks are configured.",
 	"A persistent assertion failure in a scenario that also covers a kept property does not alone show that property is broken. For a kept_assertion problem, inspect the actual failed assertion: confirm only when it tests the kept property itself. Refute when it tests new behaviour that is not implemented yet, even if another assertion in the same scenario preserves a bound or format.",
 }, "\n")
 
@@ -645,8 +648,12 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 	if answers == "" {
 		answers = "none"
 	}
+	checks, err := json.Marshal(sh.cfg.Checks)
+	if err != nil {
+		return contractConfirmed{}, err
+	}
 	reviewInput := contractReviewInput(sh.slug, append(sections, [2]string{"Readiness observations", observations},
-		[2]string{"Request", sh.request}, [2]string{"Questions and answers", answers}))
+		[2]string{"Request", sh.request}, [2]string{"Questions and answers", answers}, [2]string{"Configured Build checks", string(checks)}))
 
 	incomplete := func(reason string, findings, evidenced int, items []contractItem, envItems []contractEnvItem) (contractConfirmed, error) {
 		sh.progress("kogen: contract check incomplete (" + reason + "); the candidate goes on")
