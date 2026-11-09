@@ -610,7 +610,7 @@ type shaping struct {
 	contractRefused  map[string]contractConfirmed // package hash to the item lines of its refusal
 	contractLines    []string                     // the item lines of the last contract refusal
 	reviewProps      []propertyReport             // the properties of the last contract review that was complete; nil otherwise
-	carriedRepair    []string                     // exact keep-lines from the last carried-decisions refusal
+	carriedRepair    bool                         // the next submission must restore standing ledger decisions
 	lastGate         string                       // the gate of the last refused submission
 	lastRefusal      []string                     // its problem lines as recorded in submission_refused
 	// unresolved are the refusals since the last submission answered with readiness failures.
@@ -1656,19 +1656,15 @@ func (sh *shaping) acceptFiles(ctx context.Context, submitted []proposedFile) (s
 	if draft, ok := sh.proposed[p]; ok {
 		sh.proposed[p] = sh.normalizeDecisionRounds(draft)
 	}
-	if len(sh.carriedRepair) > 0 {
+	if sh.carriedRepair {
 		p := project.IntentMDPath(sh.slug)
 		if draft, ok := sh.proposed[p]; ok {
 			// This submission may have recorded or revised decisions before
 			// reaching files. Repair from the current ledger, not the prior
 			// refusal's snapshot, so newly accepted decisions are carried too.
-			var current []string
-			for _, d := range sh.ledger.standing() {
-				current = append(current, fmt.Sprintf("- %s (round %d) is not in Decisions; keep it as: %s", d.ID, d.Round, d.intentLine()))
-			}
-			sh.proposed[p] = repairCarriedDecisionDraft(draft, current)
+			sh.proposed[p] = repairCarriedDecisionDraft(draft, sh.ledger.standing())
 		}
-		sh.carriedRepair = nil
+		sh.carriedRepair = false
 	}
 	if err := sh.keepProposals(); err != nil {
 		return "", outcome{}, err

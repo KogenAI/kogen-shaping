@@ -75,8 +75,9 @@ func unresolvedLines(root, slug string) []string {
 	return out
 }
 
-// repairCarriedDecisionDraft restores only the exact lines supplied by the gate.
-func repairCarriedDecisionDraft(draft string, problems []string) string {
+// repairCarriedDecisionDraft restores exact standing ledger lines.
+// A draft line claiming a restored ID keeps its text, but the ID belongs to the ledger.
+func repairCarriedDecisionDraft(draft string, standing []recordedDecision) string {
 	loc := decisionsHeading.FindStringIndex(draft)
 	if loc == nil {
 		return draft
@@ -85,22 +86,40 @@ func repairCarriedDecisionDraft(draft string, problems []string) string {
 	if next := nextHeading.FindStringIndex(draft[loc[1]:]); next != nil {
 		end = loc[1] + next[0]
 	}
+	byID := map[string]string{}
+	for _, d := range standing {
+		byID[d.ID] = d.intentLine()
+	}
 	have := map[string]bool{}
-	for _, line := range decisionLines(draft) {
-		have[strings.TrimRight(line, "\r")] = true
+	lines := strings.Split(draft[loc[1]:end], "\n")
+	for i, line := range lines {
+		refs := decisionRoundRe.FindAllStringSubmatchIndex(line, -1)
+		if len(refs) != 1 {
+			continue
+		}
+		ref := refs[0]
+		canonical, ok := byID[line[ref[2]:ref[3]]]
+		if !ok {
+			continue
+		}
+		if !have[canonical] && sourceTagRe.ReplaceAllString(line, "") == sourceTagRe.ReplaceAllString(canonical, "") {
+			have[canonical] = true
+			continue
+		}
+		lines[i] = strings.TrimSuffix(line[:ref[0]], " ") + line[ref[1]:]
 	}
 	var missing []string
-	for _, problem := range problems {
-		_, line, ok := strings.Cut(problem, " is not in Decisions; keep it as: ")
-		if ok && strings.HasPrefix(problem, "- D") && strings.HasPrefix(line, "- ") && !have[line] {
+	for _, d := range standing {
+		line := byID[d.ID]
+		if !have[line] {
 			missing = append(missing, line)
 			have[line] = true
 		}
 	}
+	section := draft[:loc[1]] + strings.Join(lines, "\n")
 	if len(missing) == 0 {
-		return draft
+		return section + draft[end:]
 	}
-	section := draft[:end]
 	trimmed := strings.TrimRight(section, "\r\n")
 	suffix := section[len(trimmed):]
 	if len(trimmed) > 0 {

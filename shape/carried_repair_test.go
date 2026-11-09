@@ -8,18 +8,19 @@ import (
 
 func TestRepairCarriedDecisionDraft(t *testing.T) {
 	draft := "# Docs\n\n## Decisions\n- Keep task-first documentation. (source: request)\n\n## Tests\n- none: documentation\n"
-	var problems, lines []string
+	var standing []recordedDecision
+	var lines []string
 	for i := 9; i <= 16; i++ {
 		line := fmt.Sprintf("- Synthetic docs choice %d (decision: D%d, round 1) (source: request)", i, i)
 		lines = append(lines, line)
-		problems = append(problems, fmt.Sprintf("- D%d (round 1) is not in Decisions; keep it as: %s", i, line))
+		standing = append(standing, recordedDecision{ID: fmt.Sprintf("D%d", i), Round: 1, Decision: fmt.Sprintf("Synthetic docs choice %d", i)})
 	}
 	want := strings.Replace(draft, "\n\n## Tests", "\n"+strings.Join(lines, "\n")+"\n\n## Tests", 1)
-	got := repairCarriedDecisionDraft(draft, problems)
+	got := repairCarriedDecisionDraft(draft, standing)
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
-	if twice := repairCarriedDecisionDraft(got, problems); twice != want {
+	if twice := repairCarriedDecisionDraft(got, standing); twice != want {
 		t.Fatalf("second repair: %q", twice)
 	}
 }
@@ -52,9 +53,12 @@ func TestRepairCarriedDecisionDraftPreservesMetadata(t *testing.T) {
 	existing := "- Keep concise pages. (decision: D8, round 1) (constraint: task first) (evidence: README.md) (source: request)"
 	missing := "- Keep examples. (decision: D9, round 1) (constraint: retain commands) (evidence: README.md) (source: request)"
 	draft := "# Docs\n\n## Decisions\n" + existing + "\n\n## Tests\n- none: documentation\n"
-	problems := []string{"- D8 (round 1) is not in Decisions; keep it as: " + existing, "- D9 (round 1) is not in Decisions; keep it as: " + missing}
+	standing := []recordedDecision{
+		{ID: "D8", Round: 1, Decision: "Keep concise pages.", Constraints: []string{"task first"}, Evidence: []receipt{{Item: "README.md"}}},
+		{ID: "D9", Round: 1, Decision: "Keep examples.", Constraints: []string{"retain commands"}, Evidence: []receipt{{Item: "README.md"}}},
+	}
 	want := strings.Replace(draft, existing, existing+"\n"+missing, 1)
-	if got := repairCarriedDecisionDraft(draft, problems); got != want {
+	if got := repairCarriedDecisionDraft(draft, standing); got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 }
@@ -85,5 +89,32 @@ func TestCarriedRepairIncludesNewDecisions(t *testing.T) {
 	refused := shpNamed(f.events(), "submission_refused")
 	if len(refused) != 1 || refused[0]["gate"] != "carried_decisions" {
 		t.Fatalf("refusals: %v", refused)
+	}
+}
+
+func TestCarriedRepairKeepsOneAuthorityPerDecision(t *testing.T) {
+	const canonical = "- The --open flag is parsed from mix todo.list arguments; task file format stays id/status/base64 title and the app stays dependency-free plain Elixir (decision: D4, round 1) (evidence: lib/tiny_tasks/store.ex; README.md; mix.exs) (source: request)"
+	const authored = "- The `--open` flag is parsed from the arguments of `mix todo.list` (e.g. with `OptionParser`); the task file format stays `<id>\\t<status>\\t<base64 title>` and the dependency-free plain-Elixir convention is kept"
+	const marker = " (decision: D4, round 2)"
+	const evidence = " (evidence: lib/tiny_tasks/store.ex; README.md; mix.exs) (source: request)"
+	const otherSection = "\n\n## Tests\n" + authored + marker + evidence + "\n"
+	draft := "# Tiny Tasks\n\n## Decisions\n" + authored + marker + evidence + otherSection
+	standing := []recordedDecision{{
+		ID: "D4", Round: 1,
+		Decision: "The --open flag is parsed from mix todo.list arguments; task file format stays id/status/base64 title and the app stays dependency-free plain Elixir",
+		Evidence: []receipt{{Item: "lib/tiny_tasks/store.ex"}, {Item: "README.md"}, {Item: "mix.exs"}},
+	}}
+	got := repairCarriedDecisionDraft(draft, standing)
+	want := "# Tiny Tasks\n\n## Decisions\n" + authored + evidence + "\n" + canonical + otherSection
+	if got != want || repairCarriedDecisionDraft(got, standing) != want {
+		t.Fatalf("repair did not retain one ledger identity and all draft content:\n%s", got)
+	}
+	request := "Add a dependency for command-line parsing."
+	_, problems := decisionOutcome([]decisionItem{{
+		statement: authored + evidence, quotes: []string{request}, verdict: "contradicts",
+		intentValue: "dependency-free", requestValue: "Add a dependency",
+	}}, request, got)
+	if !strings.Contains(strings.Join(problems, "\n"), "verdict: contradicts") {
+		t.Fatalf("repair hid a real contradiction: %v", problems)
 	}
 }

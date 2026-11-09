@@ -522,3 +522,67 @@ func TestShapeDecisionRejectsPackageAddedEvidence(t *testing.T) {
 		t.Fatalf("feedback: %s", feedback)
 	}
 }
+
+func TestDecisionRevisionSeparatesInlineReason(t *testing.T) {
+	parallel(t)
+	const reason = "the earlier wording was judged unsupported by the request without an assumption marker; this round re-read lib/tiny_tasks/store.ex, README.md and mix.exs"
+	for _, tc := range []struct {
+		name, revises, why, id, explanation string
+	}{
+		{"inline reason", "D4 because " + reason, "", "D4", reason},
+		{"separate reason", "D4", "read the current store", "D4", "read the current store"},
+		{"conflicting reasons", "D4 because old reason", "new reason", "D4 because old reason", "new reason"},
+		{"missing reason", "D4 because", "", "D4 because", ""},
+		{"malformed id", "D4 or D5 because unclear", "", "D4 or D5 because unclear", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := map[string]any{"decisions": []any{map[string]any{
+				"decision": "The --open flag is read from the arguments of mix todo.list",
+				"revises":  tc.revises, "why": tc.why,
+			}}}
+			list, _, ok := decisionsOf(args)
+			if !ok || len(list) != 1 || list[0].revises != tc.id || list[0].why != tc.explanation {
+				t.Fatalf("decision = %+v, valid = %v", list, ok)
+			}
+		})
+	}
+}
+
+func TestInlineDecisionRevisionStillRequiresFreshEvidence(t *testing.T) {
+	parallel(t)
+	f := newShpFx(t)
+	sh := f.shaping()
+	sh.ext = &shapeExec{t: t}
+	sh.inspected = true // An earlier inspection is insufficient for this revision.
+	sh.round = 2
+	sh.stateDir = filepath.Join(f.Root, ".kogen/local/shaping", shpSlug)
+	sh.ledger = &decisionLedger{Decisions: []recordedDecision{
+		{ID: "D1"}, {ID: "D2"}, {ID: "D3"},
+		{ID: "D4", Round: 1, Decision: "Use the existing storage", Evidence: []receipt{
+			{Item: "calc.js", Kind: receiptCheckout, Round: 1, SHA256: dlSha(t, f, "calc.js")},
+		}},
+	}}
+	args := map[string]any{"decisions": []any{map[string]any{
+		"decision": "Keep existing storage unchanged", "revises": "D4 because the original phrasing was ambiguous",
+		"evidence": []any{"calc.js"},
+	}}}
+	list, _, ok := decisionsOf(args)
+	if !ok {
+		t.Fatal("submission did not parse")
+	}
+	text, _, refused, err := sh.decisionRecordGate(list)
+	if err != nil || !refused || !strings.Contains(text, "revises D4 without evidence this round read or ran, so D4 stands") {
+		t.Fatalf("stale revision did not stop at the evidence gate: %q, refused=%v, err=%v", text, refused, err)
+	}
+	if _, stands := sh.ledger.standingByID("D4"); !stands || len(sh.ledger.Decisions) != 4 {
+		t.Fatalf("refusal changed the ledger: %+v", sh.ledger.Decisions)
+	}
+	sh.ext = nil
+	sh.readTexts = map[string]string{"calc.js": numberedLines(f.read("calc.js"))}
+	if text, _, refused, err := sh.decisionRecordGate(list); err != nil || refused {
+		t.Fatalf("revision with fresh evidence was refused: %q, err=%v", text, err)
+	}
+	if d, stands := sh.ledger.standingByID("D5"); !stands || d.Revises != "D4" || d.Why != "the original phrasing was ambiguous" || sh.ledger.Decisions[3].SupersededBy != "D5" {
+		t.Fatalf("fresh revision did not supersede D4: %+v", sh.ledger.Decisions)
+	}
+}

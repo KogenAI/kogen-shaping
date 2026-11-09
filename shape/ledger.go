@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -320,6 +321,8 @@ const (
 	decisionsMalformed   = "decisions: every decision needs decision text, optional evidence and constraints lists of text, and optional uncertainty, revises and why text"
 )
 
+var recordedDecisionID = regexp.MustCompile(`^D[1-9][0-9]*$`)
+
 // decisionsOf reads the submission's decisions: none for an absent or empty list, otherwise the
 // decisions, or ok false when the value is malformed.
 func decisionsOf(args map[string]any) (list []sourcedDecision, present, ok bool) {
@@ -361,6 +364,12 @@ func decisionsOf(args map[string]any) (list []sourcedDecision, present, ok bool)
 			return nil, true, false
 		}
 		d.revises = strings.TrimSpace(d.revises)
+		if strings.TrimSpace(d.why) == "" {
+			id, why, inline := strings.Cut(d.revises, " because ")
+			if inline && recordedDecisionID.MatchString(id) && strings.TrimSpace(why) != "" {
+				d.revises, d.why = id, strings.TrimSpace(why)
+			}
+		}
 		list = append(list, d)
 	}
 	return list, true, true
@@ -663,7 +672,7 @@ func (sh *shaping) carriedDecisionsGate(intent string) (string, outcome, bool) {
 	if len(problems) == 0 {
 		return "", outcome{}, false
 	}
-	sh.carriedRepair = append([]string(nil), problems...)
+	sh.carriedRepair = true
 	sh.refused("carried_decisions", problems)
 	text := strings.Join(append([]string{fmt.Sprintf(carriedDecisionsHeadline, len(problems))}, problems...), "\n")
 	return text, outcome{kind: outInvalid, problems: problems}, true
