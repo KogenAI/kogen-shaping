@@ -88,7 +88,7 @@ func TestReadinessCheckAndKeptEvidence(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	r.Tools = verify.Tools{Node: node, Quint: quint}
+	r.Tools.Node, r.Tools.Quint = node, quint
 	r.Log, r.Evidence = log, ev
 	s := session(p.Root)
 
@@ -372,7 +372,8 @@ func TestReadinessSetup(t *testing.T) {
 	p.Config.Setup = []string{"echo ok", "for i in $(seq 1 30); do echo line $i; done; exit 3", "echo never >> '" + trace + "'"}
 	err := r.Setup(ctx, session(p.Root), p.Root, false)
 	e := sysError(t, err, "environment", "setup_failed")
-	if e.Exit != 3 || e.Detail != "Setup setup-2 failed (status=3)." || len(e.Lines) != 20 || e.Lines[19] != "line 30" || e.Lines[0] != "line 11" {
+	if e.Exit != 3 || e.Detail != "Setup setup-2 failed (status=3)." || len(e.Lines) != 22 || e.Lines[19] != "line 30" || e.Lines[0] != "line 11" ||
+		!strings.HasPrefix(e.Lines[20], "commands.setup[1]: ") || !strings.HasPrefix(e.Lines[21], "next: fix commands.setup") {
 		t.Errorf("verify.Readiness.Setup: the first failure refuses with exit 3 and the last 20 output lines, got exit %d %q %d lines", e.Exit, e.Detail, len(e.Lines))
 	}
 	if strings.Contains(readFile(t, "", trace), "never") {
@@ -485,7 +486,9 @@ func TestReadinessFeasibilityObligations(t *testing.T) {
 	p.commit("input changed")
 	_, err = r.Check(context.Background(), s, fixtureSlug)
 	e := sysError(t, err, "intent", "not_ready")
-	if e.Detail != "declared feasibility evidence failed" || len(e.Lines) != 1 || !strings.HasPrefix(e.Lines[0], "route/support: expected ") {
+	if e.Detail != "declared feasibility evidence failed" || !slices.ContainsFunc(e.Lines, func(line string) bool {
+		return strings.HasPrefix(line, "route/support: expected ") && strings.Contains(line, `"output":"changed\n"`)
+	}) {
 		t.Errorf("verify.Readiness.Check: a declared output that the actual check does not give must refuse, got %q %q", e.Detail, e.Lines)
 	}
 }

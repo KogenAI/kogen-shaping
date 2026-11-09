@@ -19,7 +19,7 @@ func retryShape(t *testing.T, limit, invalid int, success bool) {
 	}
 	f := newShpFx(t, steps...)
 	f.newSession()
-	exit, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Slug: shpSlug, Request: "Add calc.is_even(n).", Client: f.Client, SubmissionRetryLimit: limit})
+	exit, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Request: "Add calc.is_even(n).", Client: f.Client, SubmissionRetryLimit: limit})
 	if success {
 		if err != nil || exit != 0 {
 			t.Fatalf("exit %d: %v", exit, err)
@@ -57,7 +57,7 @@ func TestSubmissionRetryOne(t *testing.T) {
 		f := newShpFx(t, shpSubmit("one", shpTitled(long, "")))
 		f.setReport("PASSED", 0)
 		f.newSession()
-		exit, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Slug: shpSlug, Request: "Add calc.is_even(n).", Client: f.Client, SubmissionRetryLimit: 1})
+		exit, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Request: "Add calc.is_even(n).", Client: f.Client, SubmissionRetryLimit: 1})
 		if err != nil || exit != 0 {
 			t.Fatalf("exit %d: %v", exit, err)
 		}
@@ -100,7 +100,7 @@ func TestSubmissionRetryRefine(t *testing.T) {
 				f := newRefFx(t, refOpts{}, steps...)
 				before := f.pkg()
 				f.newSession()
-				exit, err := Refine(context.Background(), f.S, RefineInput{Project: f.Root, Slug: shpSlug, Hash: f.hash0, Request: "Clarify existing draft", Client: f.Client, SubmissionRetryLimit: n})
+				exit, err := Refine(context.Background(), f.S, RefineInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Hash: f.hash0, Request: "Clarify existing draft", Client: f.Client, SubmissionRetryLimit: n})
 				if success {
 					if err != nil || exit != 0 {
 						t.Fatalf("exit %d: %v", exit, err)
@@ -138,7 +138,7 @@ func TestSubmissionRetryExternal(t *testing.T) {
 		f.useExternalShape()
 		x := &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){result(outside)}}
 		f.newSession()
-		_, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Slug: shpSlug, Request: "x", External: x.external(), SubmissionRetryLimit: 1})
+		_, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Request: "x", External: x.external(), SubmissionRetryLimit: 1})
 		shpWantError(t, err, "shape", "invalid_output", "after 1 attempts", 1)
 		shpEq(t, "rounds", x.calls, 1)
 		shapeAbsent(t, f)
@@ -149,7 +149,7 @@ func TestSubmissionRetryExternal(t *testing.T) {
 		before := f.pkg()
 		x := &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){result(map[string]any{"files": []any{}})}}
 		f.newSession()
-		_, err := Refine(context.Background(), f.S, RefineInput{Project: f.Root, Slug: shpSlug, Hash: f.hash0, Request: "x", External: x.external(), SubmissionRetryLimit: 1})
+		_, err := Refine(context.Background(), f.S, RefineInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Hash: f.hash0, Request: "x", External: x.external(), SubmissionRetryLimit: 1})
 		shpWantError(t, err, "shape", "refinement_invalid", "after 1 submissions", 1)
 		shpEq(t, "rounds", x.calls, 1)
 		refEqual(t, "preserved", f.pkg(), before)

@@ -1816,6 +1816,16 @@ func (sh *shaping) checkSubmission(ctx context.Context, files []string) (string,
 		return "accepted: unchanged checked observations acknowledged", outcome{kind: outReady}, nil
 	}
 	sh.readinessReview = nil
+	sh.progress("kogen: checking step code")
+	feedback, err := sh.stepSelfcheck(ctx)
+	if err != nil {
+		return "", outcome{}, err
+	}
+	if feedback != "" {
+		problems := strings.Split(feedback, "\n")[1:]
+		sh.refused("step_selfcheck", problems)
+		return feedback, outcome{kind: outInvalid, problems: problems}, nil
+	}
 	lines, err := sh.decisionCheckWithEvidence(ctx, string(written), evidence)
 	if err != nil {
 		return "", outcome{}, err
@@ -1839,15 +1849,6 @@ func (sh *shaping) checkSubmission(ctx context.Context, files []string) (string,
 	if len(problems) > 0 {
 		sh.refused("example_check", problems)
 		return "Examples contradict the rules:\n" + strings.Join(problems, "\n"), outcome{kind: outInvalid, problems: problems}, nil
-	}
-	sh.progress("kogen: checking step code")
-	feedback, err := sh.stepSelfcheck(ctx)
-	if err != nil {
-		return "", outcome{}, err
-	}
-	if feedback != "" {
-		sh.refused("step_selfcheck", strings.Split(feedback, "\n")[1:])
-		return feedback, outcome{kind: outInvalid, problems: strings.Split(feedback, "\n")[1:]}, nil
 	}
 	if text, out, err := sh.staticChecks(ctx, hash); err != nil || out.kind == outInvalid {
 		return text, out, err

@@ -86,14 +86,14 @@ func newRefFx(t *testing.T, o refOpts, steps ...shpStep) *refFx {
 		}
 	}
 	f.newSession()
-	rd := &verify.Readiness{Root: f.Root, Repo: f.Repo, Config: cfg}
+	rd := &verify.Readiness{Root: f.Root, Repo: f.Repo, Config: cfg, Tools: fixtureTools(f.S)}
 	if _, err := rd.Check(context.Background(), f.S, shpSlug); err != nil {
 		t.Fatal(err)
 	}
 	f.hash0 = f.hash()
 	if o.approved {
 		f.newSession()
-		if exit, err := Approve(context.Background(), f.S, ApproveInput{Project: f.Root, Slug: shpSlug, Hash: f.hash0}); err != nil || exit != 0 {
+		if exit, err := Approve(context.Background(), f.S, ApproveInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Hash: f.hash0}); err != nil || exit != 0 {
 			t.Fatalf("approve: exit %d, err %v\n%s", exit, err, f.Stdout)
 		}
 		f.approval = f.read(".kogen/local/approvals/is-even.json")
@@ -142,7 +142,7 @@ func (f *refFx) refine(hash string) (int, error) {
 	f.t.Helper()
 	f.newSession()
 	return Refine(context.Background(), f.S, RefineInput{
-		Project: f.Root, Slug: shpSlug, Hash: hash, Request: "Clarify only the existing draft; preserve its executable contract.",
+		Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Hash: hash, Request: "Clarify only the existing draft; preserve its executable contract.",
 		RequestPath: filepath.Join(f.Aux, "correction.txt"), Client: f.Client,
 	})
 }
@@ -159,7 +159,7 @@ func (f *refFx) refineAsync(hash string) <-chan refResult {
 	s := f.S
 	go func() {
 		exit, err := Refine(context.Background(), s, RefineInput{
-			Project: f.Root, Slug: shpSlug, Hash: hash, Request: "Clarify only the existing draft; preserve its executable contract.",
+			Project: f.Root, Tools: fixtureTools(s), Slug: shpSlug, Hash: hash, Request: "Clarify only the existing draft; preserve its executable contract.",
 			RequestPath: filepath.Join(f.Aux, "correction.txt"), Client: f.Client,
 		})
 		done <- refResult{exit, err}
@@ -546,7 +546,7 @@ func TestRefineOriginalReadinessHitRetainsTheRecordWithoutExecution(t *testing.T
 	record := f.read(".kogen/local/readiness/is-even.json")
 	runs = f.runs()
 	f.newSession()
-	exit, err := Approve(context.Background(), f.S, ApproveInput{Project: f.Root, Slug: shpSlug})
+	exit, err := Approve(context.Background(), f.S, ApproveInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug})
 	if err != nil || exit != 5 {
 		t.Fatalf("exit %d, err %v", exit, err)
 	}
@@ -770,7 +770,7 @@ func TestRefineCumulativeRedProposalsStayUnpublishedUntilTheirObservationsAreAck
 	// the card reuses the published candidate's observations
 	record := f.read(".kogen/local/readiness/is-even.json")
 	f.newSession()
-	exit, err := Approve(context.Background(), f.S, ApproveInput{Project: f.Root, Slug: shpSlug})
+	exit, err := Approve(context.Background(), f.S, ApproveInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug})
 	if err != nil || exit != 5 {
 		t.Fatalf("card: exit %d, err %v", exit, err)
 	}
@@ -1117,7 +1117,7 @@ func TestRefineProtectedPathsAreNotEditable(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.newSession()
-	if _, err := (&verify.Readiness{Root: f.Root, Repo: f.Repo, Config: cfg}).Check(context.Background(), f.S, shpSlug); err != nil {
+	if _, err := (&verify.Readiness{Root: f.Root, Repo: f.Repo, Config: cfg, Tools: fixtureTools(f.S)}).Check(context.Background(), f.S, shpSlug); err != nil {
 		t.Fatal(err)
 	}
 	f.Prov.mu.Lock()
@@ -1144,7 +1144,7 @@ func TestRefineFixersFormatTheCandidateAndCannotTouchOtherFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 		f.newSession()
-		if _, err := (&verify.Readiness{Root: f.Root, Repo: f.Repo, Config: cfg}).Check(context.Background(), f.S, shpSlug); err != nil {
+		if _, err := (&verify.Readiness{Root: f.Root, Repo: f.Repo, Config: cfg, Tools: fixtureTools(f.S)}).Check(context.Background(), f.S, shpSlug); err != nil {
 			t.Fatal(err)
 		}
 		f.Prov.mu.Lock()
@@ -1199,7 +1199,7 @@ func TestRefineRefusalsBeforeTheModel(t *testing.T) {
 		parallel(t)
 		f := newRefFx(t, refOpts{})
 		f.newSession()
-		exit, err := Refine(context.Background(), f.S, RefineInput{Project: f.Root, Slug: "missing", Hash: f.hash0, Request: "x"})
+		exit, err := Refine(context.Background(), f.S, RefineInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: "missing", Hash: f.hash0, Request: "x"})
 		e := shpWantError(t, err, "intent", "not_found", "", 2)
 		shpEq(t, "detail", e.Detail, "Intent does not exist: missing (looked in .kogen/intents/missing)")
 		if len(e.Lines) == 0 || e.Lines[0] != "kogen intent list shows existing Intents; kogen intent shape missing <request-file> creates one" {
@@ -1399,7 +1399,7 @@ func TestRefineAnApprovedCorrectionArchivesTheExactApprovalAndNeedsAFreshOne(t *
 	archived := f.read(strings.TrimPrefix(f.evidence(), f.Root+"/") + "/revoked-approval.json")
 	refText(t, "archived approval", archived, f.approval)
 	f.newSession()
-	exit, err = Approve(context.Background(), f.S, ApproveInput{Project: f.Root, Slug: shpSlug, Hash: f.hash()})
+	exit, err = Approve(context.Background(), f.S, ApproveInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Hash: f.hash()})
 	if err != nil || exit != 0 {
 		t.Fatalf("approve: exit %d, err %v", exit, err)
 	}
@@ -1450,7 +1450,7 @@ func TestRefineFailedAndCancelledApprovedCorrectionsPreservePackageRawApprovalAn
 				asession := sys.NewWith(f.Env, f.Root)
 				var out strings.Builder
 				asession.Stdout, asession.Stderr = &out, &out
-				exit, err := Approve(context.Background(), asession, ApproveInput{Project: f.Root, Slug: shpSlug})
+				exit, err := Approve(context.Background(), asession, ApproveInput{Project: f.Root, Tools: fixtureTools(asession), Slug: shpSlug})
 				shpWantError(t, err, "environment", "build_running", "", 3)
 				shpEq(t, "approve exit", exit, 3)
 				f2.Interrupt("SIGINT")
@@ -1561,7 +1561,7 @@ func TestRefineAnExternalEditWhileRefiningIsPreservedAndPreventsPublication(t *t
 	asession := sys.NewWith(f.Env, f.Root)
 	var out strings.Builder
 	asession.Stdout, asession.Stderr = &out, &out
-	_, err := Approve(context.Background(), asession, ApproveInput{Project: f.Root, Slug: shpSlug})
+	_, err := Approve(context.Background(), asession, ApproveInput{Project: f.Root, Tools: fixtureTools(asession), Slug: shpSlug})
 	shpWantError(t, err, "environment", "build_running", "", 3)
 	if f.exists(".kogen/local/approvals/is-even.json") {
 		t.Fatal("no approval while refining")
@@ -1667,7 +1667,7 @@ func TestRefineLocalIgnoredWarmthStaysAvailableToProbesButOutOfFinalProof(t *tes
 			// a card afterwards reuses the record
 			record := f.read(".kogen/local/readiness/is-even.json")
 			f.newSession()
-			if exit, err := Approve(context.Background(), f.S, ApproveInput{Project: f.Root, Slug: shpSlug}); err != nil || exit != 5 {
+			if exit, err := Approve(context.Background(), f.S, ApproveInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug}); err != nil || exit != 5 {
 				t.Fatalf("card: exit %d, err %v", exit, err)
 			}
 			refText(t, "record", f.read(".kogen/local/readiness/is-even.json"), record)
@@ -1752,7 +1752,7 @@ func TestRefineRecordsTheCorrectionInTheSourceReceipt(t *testing.T) {
 	}
 	// a fresh approval binds the new receipt
 	f.newSession()
-	if exit, err := Approve(context.Background(), f.S, ApproveInput{Project: f.Root, Slug: shpSlug, Hash: f.hash()}); err != nil || exit != 0 {
+	if exit, err := Approve(context.Background(), f.S, ApproveInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Hash: f.hash()}); err != nil || exit != 0 {
 		t.Fatalf("approve: exit %d, err %v", exit, err)
 	}
 }
@@ -1822,7 +1822,7 @@ func TestRefineStopsWhenTheContextIsCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	f.newSession()
-	exit, err := Refine(ctx, f.S, RefineInput{Project: f.Root, Slug: shpSlug, Hash: f.hash0, Request: "x", Client: f.Client})
+	exit, err := Refine(ctx, f.S, RefineInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Hash: f.hash0, Request: "x", Client: f.Client})
 	if err == nil || exit == 0 {
 		t.Fatalf("exit %d, err %v", exit, err)
 	}

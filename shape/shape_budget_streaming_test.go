@@ -84,7 +84,7 @@ func TestShapeBudgetStreaming800Seconds(t *testing.T) {
 	f.Client.HTTP = &http.Client{Transport: tr}
 	f.Client.Now = clock.Now
 	f.newSession()
-	exit, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Slug: shpSlug, Request: "Add calc.is_even(n).", Client: f.Client})
+	exit, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Request: "Add calc.is_even(n).", Client: f.Client})
 	if err != nil || exit != 0 {
 		t.Fatalf("exit %d err %v\n%s", exit, err, f.Stdout)
 	}

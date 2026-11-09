@@ -68,7 +68,7 @@ func TestToolsFromInstall(t *testing.T) {
 	write(t, root, "node-path", node+"\n")
 	got = verify.ToolsFromInstall(root)
 	want := verify.Tools{Node: node, Quint: wantQuint, Cucumber: wantCucumber}
-	if got != want {
+	if got.Node != want.Node || got.Quint != want.Quint || got.Cucumber != want.Cucumber {
 		t.Errorf("verify.ToolsFromInstall: Node is the trimmed text of node-path:\n got: %+v\nwant: %+v", got, want)
 	}
 }

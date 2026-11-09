@@ -38,7 +38,7 @@ func TestPreflightJSON(t *testing.T) {
 		f.committedDraft()
 		f.newSession()
 		by := "Contract Approver <approver@example.invalid>"
-		if exit, err := shape.Approve(context.Background(), f.S, shape.ApproveInput{Project: f.Root, Slug: slug, Hash: f.hash(), By: by}); err != nil || exit != 0 {
+		if exit, err := shape.Approve(context.Background(), f.S, shape.ApproveInput{Project: f.Root, Slug: slug, Hash: f.hash(), By: by, Tools: f.tools()}); err != nil || exit != 0 {
 			t.Fatalf("approve: exit %d, err %v\n%s", exit, err, f.Stdout)
 		}
 

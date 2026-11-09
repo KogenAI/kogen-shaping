@@ -120,7 +120,7 @@ func TestShapeBudgetRolesShape(t *testing.T) {
 		f := newShpFx(t, shpSubmit("c1", shpFiles()), shpAck("c2"))
 		obs := observeDeadlines(f.Client)
 		f.newSession()
-		if _, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Slug: shpSlug, Request: "Add calc.is_even(n).", Client: f.Client}); err != nil {
+		if _, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Request: "Add calc.is_even(n).", Client: f.Client}); err != nil {
 			t.Fatalf("%v\n%s", err, f.Stdout)
 		}
 		obs.wantThirtyMinutes(t, len(f.Prov.allRequests()))
@@ -134,7 +134,7 @@ func TestShapeBudgetRolesShape(t *testing.T) {
 		f := newShpFx(t, stalledPastThirty(clock), shpSubmit("c1", shpFiles()), shpAck("c2"))
 		f.Client.Now = clock.Now
 		f.newSession()
-		exit, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Slug: shpSlug, Request: "Add calc.is_even(n).", Client: f.Client})
+		exit, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Request: "Add calc.is_even(n).", Client: f.Client})
 		e, ok := sys.AsError(err)
 		if !ok || e.Class != "shape" || e.Reason != "provider_failed" || e.Exit != 4 || exit != 4 {
 			t.Fatalf("exit %d err %v", exit, err)
@@ -145,7 +145,7 @@ func TestShapeBudgetRolesShape(t *testing.T) {
 
 		// The retry Shape names is the rerun: it is a new run with its own single record.
 		f.newSession()
-		if _, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Slug: shpSlug, Request: "Add calc.is_even(n).", Client: f.Client}); err != nil {
+		if _, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Request: "Add calc.is_even(n).", Client: f.Client}); err != nil {
 			t.Fatalf("%v\n%s", err, f.Stdout)
 		}
 		shpEq(t, "requests after the rerun", len(f.Prov.requests()) > 1, true)
@@ -158,7 +158,7 @@ func TestShapeBudgetRolesShape(t *testing.T) {
 		f.remove(".kogen/local/readiness/is-even.json")
 		obs := observeDeadlines(f.Client)
 		f.newSession()
-		if _, err := Refine(context.Background(), f.S, RefineInput{Project: f.Root, Slug: shpSlug, Hash: f.hash0, Request: "Clarify the draft.", Client: f.Client}); err != nil {
+		if _, err := Refine(context.Background(), f.S, RefineInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Hash: f.hash0, Request: "Clarify the draft.", Client: f.Client}); err != nil {
 			t.Fatal(err)
 		}
 		obs.wantThirtyMinutes(t, len(f.Prov.requests()))
@@ -173,7 +173,7 @@ func TestShapeBudgetRolesShape(t *testing.T) {
 		f.remove(".kogen/local/readiness/is-even.json")
 		f.Client.Now = clock.Now
 		f.newSession()
-		_, err := Refine(context.Background(), f.S, RefineInput{Project: f.Root, Slug: shpSlug, Hash: f.hash0, Request: "Clarify the draft.", Client: f.Client})
+		_, err := Refine(context.Background(), f.S, RefineInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Hash: f.hash0, Request: "Clarify the draft.", Client: f.Client})
 		if e, ok := sys.AsError(err); !ok || e.Class != "provider" || e.Reason != "unavailable" || e.Exit != 4 {
 			t.Fatalf("err %v, want provider/unavailable (exit 4)", err)
 		}

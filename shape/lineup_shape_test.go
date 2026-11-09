@@ -200,13 +200,13 @@ func (f *shpFx) useExternalShape() {
 func (f *shpFx) shapeWith(x *shapeExec, request string) (int, error) {
 	f.t.Helper()
 	f.newSession()
-	return Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Slug: shpSlug, Request: request, Client: f.Client, External: x.external()})
+	return Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Request: request, Client: f.Client, External: x.external()})
 }
 
 func (f *refFx) refineWith(x *shapeExec, hash string) (int, error) {
 	f.t.Helper()
 	f.newSession()
-	return Refine(context.Background(), f.S, RefineInput{Project: f.Root, Slug: shpSlug, Hash: hash,
+	return Refine(context.Background(), f.S, RefineInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Hash: hash,
 		Request: "Clarify only the existing draft; preserve its executable contract.", RequestPath: filepath.Join(f.Aux, "correction.txt"),
 		Client: f.Client, External: x.external()})
 }
@@ -677,7 +677,7 @@ func TestClaudeLineupUnsupportedCapabilities(t *testing.T) {
 		f := newShpFx(t)
 		f.useExternalShape()
 		f.newSession()
-		_, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Slug: shpSlug, Request: "x", Client: f.Client,
+		_, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Request: "x", Client: f.Client,
 			External: func(project.Role) (executor.Executor, error) { return buildOnlyExec{}, nil }})
 		if se, ok := sys.AsError(err); !ok || se.Reason != "unavailable" {
 			t.Fatalf("error %v", err)

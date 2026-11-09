@@ -620,7 +620,7 @@ func TestContractCheckEnvironmentFindings(t *testing.T) {
 		s := sys.NewWith(f.Env, f.Root)
 		var out strings.Builder
 		s.Stdout, s.Stderr = &out, &out
-		exit, err = Approve(context.Background(), s, ApproveInput{Project: f.Root, Slug: shpSlug, Hash: rec.SHA256})
+		exit, err = Approve(context.Background(), s, ApproveInput{Project: f.Root, Tools: fixtureTools(s), Slug: shpSlug, Hash: rec.SHA256})
 		e = shpWantError(t, err, "intent", "not_ready", "", 1)
 		if exit != 1 || !strings.Contains(strings.Join(e.Lines, "\n"), item) {
 			t.Fatalf("approve: exit %d lines %q", exit, e.Lines)
@@ -789,7 +789,7 @@ func TestContractCheckKeptContradictionEndsNotReadyAndApprovalRefusesIt(t *testi
 		s := sys.NewWith(f.Env, f.Root)
 		var out strings.Builder
 		s.Stdout, s.Stderr = &out, &out
-		exit, err := Approve(context.Background(), s, ApproveInput{Project: f.Root, Slug: shpSlug, Hash: hash})
+		exit, err := Approve(context.Background(), s, ApproveInput{Project: f.Root, Tools: fixtureTools(s), Slug: shpSlug, Hash: hash})
 		return exit, out.String(), err
 	}
 	for _, hash := range []string{"", rec.SHA256} {

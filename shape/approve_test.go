@@ -184,6 +184,9 @@ func (f *approveFx) approve(in ApproveInput) (int, string, error) {
 	f.t.Helper()
 	s, out, _ := f.session()
 	in.Project, in.Slug = f.Root, approveSlug
+	if in.Tools == (verify.Tools{}) {
+		in.Tools = fixtureTools(s)
+	}
 	exit, err := Approve(context.Background(), s, in)
 	return exit, out.String(), err
 }
@@ -418,7 +421,7 @@ func TestApproveMissingIntent(t *testing.T) {
 	parallel(t)
 	f := newApproveFx(t)
 	s, _, _ := f.session()
-	exit, err := Approve(context.Background(), s, ApproveInput{Project: f.Root, Slug: "unknown"})
+	exit, err := Approve(context.Background(), s, ApproveInput{Project: f.Root, Tools: fixtureTools(s), Slug: "unknown"})
 	e := approveWantError(t, err, "intent", "not_found", "Intent does not exist: unknown (looked in .kogen/intents/unknown)", 2)
 	if len(e.Lines) == 0 || e.Lines[0] != "kogen intent list shows existing Intents; kogen intent shape unknown <request-file> creates one" {
 		t.Fatalf("Lines = %q, want the next-command line first", e.Lines)
@@ -532,7 +535,7 @@ func TestApproveInterruptDuringPublication(t *testing.T) {
 				f.write(".kogen/local/approvals/fixture.json", raw)
 			}
 			s, out, _ := f.session()
-			in := ApproveInput{Project: f.Root, Slug: approveSlug, Hash: f.sha()[:8]}
+			in := ApproveInput{Project: f.Root, Slug: approveSlug, Hash: f.sha()[:8], Tools: fixtureTools(s)}
 			in.approveAfterWrite = func() { s.Interrupt("SIGINT") }
 			exit, err := Approve(context.Background(), s, in)
 			var interrupted *sys.Interrupted
@@ -1039,7 +1042,7 @@ func TestApproveStaticChecks(t *testing.T) {
 	}
 	sha := f.sha()
 	s, _, errOut := f.session()
-	if exit, err := Approve(context.Background(), s, ApproveInput{Project: f.Root, Slug: approveSlug, Hash: sha}); err != nil || exit != 0 {
+	if exit, err := Approve(context.Background(), s, ApproveInput{Project: f.Root, Tools: fixtureTools(s), Slug: approveSlug, Hash: sha}); err != nil || exit != 0 {
 		t.Fatalf("approve: exit %d, err %v", exit, err)
 	}
 	if ran() != 1 || !strings.Contains(errOut.String(), "kogen: static checks: reusing the result recorded for this package (checked)") {

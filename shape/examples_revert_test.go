@@ -90,7 +90,7 @@ Then(/^is-even: the output is (.*)$/, function (expected) { assert.equal(require
 	f.write(record, fmt.Sprintf(`{"sha256":%q,"lines":["legacy contradiction"]}`, hash))
 	for _, h := range []string{"", hash} {
 		f.newSession()
-		code, err := Approve(context.Background(), f.S, ApproveInput{Project: f.Root, Slug: shpSlug, Hash: h})
+		code, err := Approve(context.Background(), f.S, ApproveInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Hash: h})
 		want := 5
 		if h != "" {
 			want = 0

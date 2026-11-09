@@ -1,7 +1,10 @@
 package shape
 
 import (
+	"context"
 	"encoding/json"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -10,6 +13,83 @@ import (
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-verification/verify"
 )
+
+func TestShapeChecksConfiguredCucumberOutlineBeforeModelReview(t *testing.T) {
+	parallel(t)
+	const folder = "test/intents/steps"
+	const stepPath = folder + "/is-even__steps.js"
+	const featurePath = ".kogen/intents/is-even/acceptance.feature"
+	const feature = `Feature: Inspect credential file bytes
+  Scenario Outline: Keep fixture bytes exactly
+    Given is-even: a home folder whose ChatGPT credential file contains "<content>"
+    Then is-even: the fixture bytes are unchanged
+
+    Examples:
+      | content       |
+      | not json      |
+      | {"client_id": |
+      |               |
+`
+	const steps = `const { Given, Then } = require('@cucumber/cucumber');
+const assert = require('node:assert/strict');
+Given('is-even: a home folder whose ChatGPT credential file contains {string}', function (raw) { this.raw = raw; });
+Then('is-even: the fixture bytes are unchanged', function () {
+  assert.ok(['not json', '{"client_id":', ''].includes(this.raw), JSON.stringify(this.raw));
+});
+`
+	f := newShpFx(t, shpSubmit("candidate", map[string]any{"files": []any{
+		map[string]any{"path": project.IntentMDPath(shpSlug), "content": strings.ReplaceAll(shpScopedIntentMD, "features/steps", folder)},
+		map[string]any{"path": featurePath, "content": feature},
+		map[string]any{"path": stepPath, "content": steps},
+	}}))
+	f.write(project.ConfigPath, strings.ReplaceAll(f.read(project.ConfigPath), "features/steps", folder))
+	f.git("add", project.ConfigPath)
+	f.git("commit", "-qm", "Use the configured non-default Cucumber folder")
+	f.setFeatureReport("report", feature, "PASSED", 0)
+	f.newSession()
+	exit, err := Shape(context.Background(), f.S, ShapeInput{
+		Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Request: "Keep malformed credential file bytes intact.",
+		Client: f.Client, SubmissionRetryLimit: 1,
+	})
+	shpEq(t, "exit", exit, 1)
+	problem := shpWantError(t, err, "intent", "not_ready", "the Intent is not ready to build", 1)
+	shpContains(t, "failed Outline row", strings.Join(problem.Lines, "\n"), `undefined step: Given is-even: a home folder whose ChatGPT credential file contains "{"client_id":" (Examples row line 9)`)
+	shpContains(t, "repair hint", strings.Join(problem.Lines, "\n"), "Escape inner quotes inside the {string} argument")
+	refused := shpNamed(f.events(), "submission_refused")
+	if len(refused) != 1 || refused[0]["gate"] != "step_selfcheck" || len(f.Prov.decisionRequests()) != 0 || len(f.Prov.literalRequests()) != 0 {
+		t.Fatalf("malformed Outline was not stopped before review: %v", refused)
+	}
+
+	// Run the real CLI as well: escaping the inner quotes binds the step and
+	// passes the original malformed JSON bytes, not an escaped variant, to JS.
+	node, cucumber := f.S.Getenv("KOGEN_NODE"), f.S.Getenv("KOGEN_CUCUMBER")
+	run := func() ([]byte, error) {
+		cmd := exec.Command(node, filepath.Join(cucumber, "@cucumber/cucumber/bin/cucumber.js"), "--strict", "--require", stepPath, "--format", "progress", featurePath)
+		cmd.Dir = f.Root
+		cmd.Env = append(slices.Clone(f.S.Env), "NODE_PATH="+cucumber)
+		return cmd.CombinedOutput()
+	}
+	if output, err := run(); err == nil || !strings.Contains(string(output), "1 undefined") {
+		t.Fatalf("Cucumber accepted the unescaped row: %v\n%s", err, output)
+	}
+	f.write(featurePath, strings.Replace(feature, `{"client_id":`, `{\"client_id\":`, 1))
+	if output, err := run(); err != nil || !strings.Contains(string(output), "3 scenarios (3 passed)") {
+		t.Fatalf("escaped row did not preserve the fixture bytes: %v\n%s", err, output)
+	}
+	f.write(stepPath, strings.Replace(steps, "file contains {string}", "file omits {string}", 1))
+	if output, err := run(); err == nil || !strings.Contains(string(output), "3 undefined") {
+		t.Fatalf("Cucumber accepted an actually unmatched definition: %v\n%s", err, output)
+	}
+}
+
+func TestShapeStepsDirDefaultsForUnconfiguredAcceptance(t *testing.T) {
+	for _, cfg := range []*project.Config{nil, {}, {Acceptance: &project.Acceptance{}}} {
+		sh := &shaping{cfg: cfg}
+		if got := sh.stepsDir(); got != "features/steps" {
+			t.Fatalf("unconfigured steps directory: %q", got)
+		}
+	}
+}
 
 func TestSelfcheckFeedbackNamesDefectsNotWarnings(t *testing.T) {
 	parallel(t)

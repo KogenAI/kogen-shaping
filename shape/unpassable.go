@@ -545,7 +545,8 @@ func (sh *shaping) unpassableControl(ctx context.Context, ready *verify.Ready) (
 	if _, err := sh.repo.Materialize(ready.CandidateTree, tree); err != nil {
 		return nil, "the candidate tree could not be materialized", nil
 	}
-	_, files, _ := verify.StepAnalysis(tree, ready.Intent, nil)
+	stepsDir := sh.stepsDir()
+	_, files, _ := verify.StepAnalysisIn(tree, stepsDir, ready.Intent, nil)
 	if len(files) == 0 {
 		return nil, "the candidate has no step files", nil
 	}
@@ -562,7 +563,7 @@ func (sh *shaping) unpassableControl(ctx context.Context, ready *verify.Ready) (
 	}
 	command = append(command, "--format", ShellQuote("message:"+report), ShellQuote(project.FeaturePath(sh.slug)))
 	res, err := sh.s.RunContext(ctx, strings.Join(command, " "), tree, sys.Options{
-		Env:             map[string]string{"NODE_PATH": cucumber, "KOGEN_UNPASSABLE_LOG": log},
+		Env:             map[string]string{"NODE_PATH": cucumber, "KOGEN_UNPASSABLE_LOG": log, "KOGEN_UNPASSABLE_STEPS_DIR": stepsDir},
 		Timeout:         unpassableBound,
 		Context:         ctx,
 		KillGroupOnExit: true,

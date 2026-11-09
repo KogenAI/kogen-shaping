@@ -2,7 +2,7 @@
 // Kogen's control-run preload (Shape's unpassable-step check). It loads before any step file
 // (node -r) and replaces everything acceptance code obtains from outside itself with a
 // stand-in: a value on which every operation by acceptance code is a use and fails the step.
-// Acceptance code means the JavaScript files under features/steps/. Operations by any other
+// Acceptance code means the JavaScript files under the configured steps folder. Operations by any other
 // code (Node's assert internals, Cucumber's formatters) are inert and never count, so a
 // stand-in can not break Cucumber's own reporting.
 const Module = require('node:module');
@@ -12,12 +12,14 @@ const url = require('node:url');
 
 const KEY = Symbol.for('kogen.unpassable.control');
 const logPath = process.env.KOGEN_UNPASSABLE_LOG;
+const stepsDir = process.env.KOGEN_UNPASSABLE_STEPS_DIR;
 delete process.env.KOGEN_UNPASSABLE_LOG;
+delete process.env.KOGEN_UNPASSABLE_STEPS_DIR;
 const appendFileSync = fs.appendFileSync;
 const cwd = process.cwd();
 let realCwd = cwd;
 try { realCwd = fs.realpathSync(cwd); } catch (e) { /* the working directory is used as it is */ }
-const stepsDirs = [...new Set([cwd, realCwd])].map(d => path.join(d, 'features', 'steps') + path.sep);
+const stepsDirs = [...new Set([cwd, realCwd])].map(d => path.resolve(d, stepsDir) + path.sep);
 const self = __filename;
 
 function toPath(file) {
@@ -103,7 +105,7 @@ globalThis[KEY] = {
 };
 
 // Modules loaded by acceptance code: Node builtins, @cucumber/cucumber and files under
-// features/steps/ stay real; any other module, resolvable or not, is a stand-in.
+// the configured steps folder stay real; any other module, resolvable or not, is a stand-in.
 function isCucumber(request) {
   return request === '@cucumber/cucumber' || request.startsWith('@cucumber/cucumber/');
 }

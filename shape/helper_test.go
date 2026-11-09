@@ -22,6 +22,7 @@ import (
 	"github.com/KogenAI/kogen-executor/testproc"
 	"github.com/KogenAI/kogen-loop/provider"
 	"github.com/KogenAI/kogen-loop/sys"
+	"github.com/KogenAI/kogen-verification/verify"
 )
 
 // ---- a scripted provider ----
@@ -388,6 +389,10 @@ func shpEnv(extra ...string) []string {
 	return append(env, extra...)
 }
 
+func fixtureTools(s *sys.Session) verify.Tools {
+	return verify.Tools{Node: s.Getenv("KOGEN_NODE"), Cucumber: s.Getenv("KOGEN_CUCUMBER"), Quint: s.Getenv("KOGEN_QUINT")}
+}
+
 type shpFx struct {
 	t      *testing.T
 	Root   string
@@ -689,7 +694,7 @@ func (f *shpFx) shape(request string) (int, error) {
 func (f *shpFx) shapeFrom(request, path string) (int, error) {
 	f.t.Helper()
 	f.newSession()
-	return Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Slug: shpSlug, Request: request, RequestPath: path, Client: f.Client})
+	return Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Request: request, RequestPath: path, Client: f.Client})
 }
 
 func shpWantError(t *testing.T, err error, class, reason, detail string, exit int) *sys.Error {

@@ -20,14 +20,14 @@ func TestApproveExitCodes(t *testing.T) {
 		hash := f.hash()
 
 		f.newSession()
-		exit, err := shape.Approve(context.Background(), f.S, shape.ApproveInput{Project: f.Root, Slug: slug})
+		exit, err := shape.Approve(context.Background(), f.S, shape.ApproveInput{Project: f.Root, Slug: slug, Tools: f.tools()})
 		if err != nil || exit != 5 {
 			t.Fatalf("card: exit %d, err %v\n%s", exit, err, f.Stdout)
 		}
 
 		f.newSession()
 		by := "Contract Approver <approver@example.invalid>"
-		exit, err = shape.Approve(context.Background(), f.S, shape.ApproveInput{Project: f.Root, Slug: slug, Hash: hash, By: by})
+		exit, err = shape.Approve(context.Background(), f.S, shape.ApproveInput{Project: f.Root, Slug: slug, Hash: hash, By: by, Tools: f.tools()})
 		if err != nil || exit != 0 {
 			t.Fatalf("approve: exit %d, err %v\n%s", exit, err, f.Stdout)
 		}

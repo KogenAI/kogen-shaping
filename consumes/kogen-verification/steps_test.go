@@ -16,6 +16,7 @@ import (
 // Signatures and field types kogen-shaping's calls rely on.
 var (
 	_ func(string, *project.Intent, []project.Scenario) ([]string, []string, []string)                          = verify.StepAnalysis
+	_ func(string, string, *project.Intent, []project.Scenario) ([]string, []string, []string)                  = verify.StepAnalysisIn
 	_ func([]string, verify.StepRaw) []verify.StepItem                                                          = verify.StepItems
 	_ func([]verify.StepItem) []verify.StepWarning                                                              = verify.StepWarnings
 	_ func(context.Context, string, string, string, []string, []string, []string) (verify.StepRaw, bool, error) = verify.RunStepScript

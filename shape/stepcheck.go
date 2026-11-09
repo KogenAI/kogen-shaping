@@ -79,10 +79,11 @@ func (sh *shaping) stepSelfcheck(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", nil // the package is not readable; readiness reports why
 	}
-	own, files, texts := verify.StepAnalysis(sh.root, intent, scenarios)
+	own, files, texts := verify.StepAnalysisIn(sh.root, sh.stepsDir(), intent, scenarios)
 
 	var items []verify.StepItem
 	matches := map[string][]verify.StepDef{}
+	quoteHint := false
 	if len(own) > 0 {
 		node, cucumber := sh.stepTool(sh.rd.Tools.Node, "KOGEN_NODE"), sh.stepTool(sh.rd.Tools.Cucumber, "KOGEN_CUCUMBER")
 		raw, _, err := verify.RunStepScript(ctx, node, cucumber, sh.root, sh.s.Env, files, texts)
@@ -90,6 +91,12 @@ func (sh *shaping) stepSelfcheck(ctx context.Context) (string, error) {
 			return "", err
 		}
 		items = verify.StepItems(own, raw)
+		for _, it := range items {
+			if it.Check == "steps" && it.Detail == "undefined step" && unescapedStringArgument(it.Target, raw.Defs) {
+				quoteHint = true
+				break
+			}
+		}
 		// Cucumber's own matcher names the definitions of an ambiguous step: run it again for
 		// that one text; the definitions it marks used are exactly those that match.
 		for _, it := range items {
@@ -156,7 +163,36 @@ func (sh *shaping) stepSelfcheck(ctx context.Context) (string, error) {
 		event["warnings"] = list
 	}
 	sh.ev.Record(event)
-	return selfcheckScenarioFeedback(items, scenarios, matches), nil
+	feedback := selfcheckScenarioFeedback(items, scenarios, matches)
+	if quoteHint {
+		feedback += "\n- Escape inner quotes inside the {string} argument (including quotes in an Examples cell), or use a DocString to preserve raw fixture bytes."
+	}
+	return feedback, nil
+}
+
+// unescapedStringArgument recognizes the narrow case where a matching literal
+// prefix and suffix surround a double-quoted argument with raw inner quotes.
+func unescapedStringArgument(text string, defs []verify.StepDef) bool {
+	for _, d := range defs {
+		prefix, suffix, found := strings.Cut(d.Pattern, "{string}")
+		if !found || strings.Contains(suffix, "{string}") {
+			continue
+		}
+		value, starts := strings.CutPrefix(text, prefix)
+		value, ends := strings.CutSuffix(value, suffix)
+		if starts && ends && len(value) > 2 && value[0] == '"' && value[len(value)-1] == '"' &&
+			strings.Contains(strings.ReplaceAll(value[1:len(value)-1], `\"`, ""), `"`) {
+			return true
+		}
+	}
+	return false
+}
+
+func (sh *shaping) stepsDir() string {
+	if sh.cfg != nil && sh.cfg.Acceptance != nil && sh.cfg.Acceptance.StepsDir != "" {
+		return sh.cfg.Acceptance.StepsDir
+	}
+	return strings.TrimSuffix(verify.StepsFolder, "/")
 }
 
 // stepTool is a tool path of the readiness tools, else the environment variable.

@@ -85,7 +85,7 @@ func TestShapeExecutionStateBoundary(t *testing.T) {
 				x := startMutating{shapeExec: &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){result(shpFiles())}},
 					onStart: func() { marker = f.plant("commit-msg") }, startErr: startErr}
 				f.newSession()
-				_, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Slug: shpSlug, Request: "Add calc.is_even(n).", Client: f.Client, External: x.external()})
+				_, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Request: "Add calc.is_even(n).", Client: f.Client, External: x.external()})
 				wantStateRefusal(t, err, "execution_state_changed", "commit-msg")
 				notRun(t, marker)
 				shapeAbsent(t, f)
@@ -217,7 +217,7 @@ func TestRefineExecutionStateBoundary(t *testing.T) {
 		x := startMutating{shapeExec: &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){result(map[string]any{"files": []any{}})}},
 			onStart: func() { marker = f.plant("commit-msg") }, startErr: errors.New("executor failed to start")}
 		f.newSession()
-		_, err := Refine(context.Background(), f.S, RefineInput{Project: f.Root, Slug: shpSlug, Hash: f.hash0,
+		_, err := Refine(context.Background(), f.S, RefineInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Hash: f.hash0,
 			Request: "Clarify only the existing draft; preserve its executable contract.", RequestPath: filepath.Join(f.Aux, "correction.txt"),
 			Client: f.Client, External: x.external()})
 		wantStateRefusal(t, err, "execution_state_changed", "commit-msg")

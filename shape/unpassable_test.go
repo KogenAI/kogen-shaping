@@ -372,6 +372,34 @@ func TestUnpassableControlStandIns(t *testing.T) {
 	}
 }
 
+func TestUnpassableControlUsesConfiguredStepFolder(t *testing.T) {
+	const folder = "test/intents/steps"
+	const stepPath = folder + "/is_even_steps.js"
+	marker := filepath.Join(t.TempDir(), "started")
+	steps := fmt.Sprintf(`const { Then } = require('@cucumber/cucumber');
+Then('step process', function () {
+  require('node:child_process').spawnSync('touch', [%q]);
+  throw new Error('stub');
+});
+`, marker)
+	_, sh, ready, lines := unpassableFixture(t, "", []controlProbe{{name: "process"}}, map[string]string{
+		project.ConfigPath:            strings.ReplaceAll(shpGuardConfig, "features/steps", folder),
+		project.IntentMDPath(shpSlug): strings.ReplaceAll(shpIntentMD, "features/steps", folder),
+		stepPath:                      steps,
+	})
+	run, reason, err := sh.unpassableControl(context.Background(), ready)
+	if err != nil || reason != "" {
+		t.Fatalf("control run: reason %q, err %v", reason, err)
+	}
+	scenario := run.caseAt(lines["process"])
+	if scenario == nil || len(scenario.steps) != 1 || run.defs[scenario.steps[0].def].file != stepPath || scenario.steps[0].status != "FAILED" {
+		t.Fatalf("custom definition did not run in the control: %+v", scenario)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("control did not isolate the custom step's child process: %v", err)
+	}
+}
+
 func TestUnpassableControlSkipped(t *testing.T) {
 	stub := []controlProbe{{name: "stub", body: "throw new Error('stub');"}}
 	t.Run("Node is unavailable", func(t *testing.T) {

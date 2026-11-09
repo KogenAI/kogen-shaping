@@ -82,7 +82,7 @@ func userSaw(f *fx, err error) string {
 }
 
 func shapeInput(f *fx) shape.ShapeInput {
-	return shape.ShapeInput{Project: f.Root, Slug: slug, Request: "Add calc.is_even(n).", Client: f.Client}
+	return shape.ShapeInput{Project: f.Root, Slug: slug, Request: "Add calc.is_even(n).", Client: f.Client, Tools: f.tools()}
 }
 
 // refineDraft is a ready draft whose readiness record is removed, so Refine asks the model.
@@ -135,7 +135,7 @@ func TestShapeBudgetRolesShape(t *testing.T) {
 	t.Run("refine sends every request under thirty minutes and records it once", func(t *testing.T) {
 		t.Parallel()
 		f, hash := refineDraft(t, answer(call("p1", "probe", map[string]any{"command": "true"})), refinement("c1", intentPath, intentMD))
-		in := shape.RefineInput{Project: f.Root, Slug: slug, Hash: hash, Request: "Clarify the draft.", Client: f.Client}
+		in := shape.RefineInput{Project: f.Root, Slug: slug, Hash: hash, Request: "Clarify the draft.", Client: f.Client, Tools: f.tools()}
 		if _, err := shape.Refine(context.Background(), f.S, in); err != nil {
 			t.Fatal(err)
 		}
@@ -147,7 +147,7 @@ func TestShapeBudgetRolesShape(t *testing.T) {
 	t.Run("a stalled refine expires unavailable naming thirty minutes and records once", func(t *testing.T) {
 		t.Parallel()
 		f, hash := refineDraft(t, stalled(), refinement("c1", intentPath, intentMD))
-		in := shape.RefineInput{Project: f.Root, Slug: slug, Hash: hash, Request: "Clarify the draft.", Client: f.Client}
+		in := shape.RefineInput{Project: f.Root, Slug: slug, Hash: hash, Request: "Clarify the draft.", Client: f.Client, Tools: f.tools()}
 		exit, err := shape.Refine(context.Background(), f.S, in)
 		if e, ok := sys.AsError(err); !ok || e.Class != "provider" || e.Reason != "unavailable" || e.Exit != 4 || exit != 4 {
 			t.Fatalf("exit %d err %v, want provider/unavailable (exit 4)", exit, err)

@@ -217,7 +217,16 @@ func newProject(t *testing.T, feasibility string) *fixtureProject {
 }
 
 func (p *fixtureProject) readiness() *verify.Readiness {
-	return &verify.Readiness{Root: p.Root, Repo: p.Repo, Config: p.Config}
+	p.t.Helper()
+	node, err := exec.LookPath("node")
+	if err != nil {
+		p.t.Fatal(err)
+	}
+	cucumber, err := filepath.Abs("../../testdata/tools/cucumber/node_modules")
+	if err != nil {
+		p.t.Fatal(err)
+	}
+	return &verify.Readiness{Root: p.Root, Repo: p.Repo, Config: p.Config, Tools: verify.Tools{Node: node, Cucumber: cucumber}}
 }
 
 // outcome is the result of one step in a prepared report.

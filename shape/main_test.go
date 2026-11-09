@@ -90,5 +90,12 @@ func resolveTestTools() error {
 			}
 		}
 	}
+	if os.Getenv("KOGEN_QUINT") == "" {
+		if path, err := filepath.Abs(filepath.Join("..", "testdata", "tools", "quint", "node_modules", "@informalsystems", "quint", "dist", "src", "cli.js")); err == nil {
+			if st, err := os.Stat(path); err == nil && st.Mode().IsRegular() {
+				os.Setenv("KOGEN_QUINT", path)
+			}
+		}
+	}
 	return nil
 }

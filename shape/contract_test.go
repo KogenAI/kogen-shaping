@@ -17,7 +17,7 @@ import (
 func (f *shpFx) shapeAs(slug, request string) (int, error) {
 	f.t.Helper()
 	f.newSession()
-	return Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Slug: slug, Request: request, Client: f.Client})
+	return Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: slug, Request: request, Client: f.Client})
 }
 
 func (f *shpFx) allToolOutputs() []string {

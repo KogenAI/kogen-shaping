@@ -247,6 +247,10 @@ func (f *fx) read(rel string) string {
 
 func (f *fx) head() string { return strings.TrimSpace(f.git("rev-parse", "HEAD")) }
 
+func (f *fx) tools() verify.Tools {
+	return verify.Tools{Node: f.S.Getenv("KOGEN_NODE"), Cucumber: f.S.Getenv("KOGEN_CUCUMBER"), Quint: f.S.Getenv("KOGEN_QUINT")}
+}
+
 // draft writes the is-even package and records its readiness with verify.Readiness.Check, against
 // the report currently prepared.
 func (f *fx) draft() {
@@ -259,7 +263,7 @@ func (f *fx) draft() {
 		f.t.Fatal(err)
 	}
 	f.newSession()
-	rd := &verify.Readiness{Root: f.Root, Repo: f.Repo, Config: cfg}
+	rd := &verify.Readiness{Root: f.Root, Repo: f.Repo, Config: cfg, Tools: f.tools()}
 	if _, err := rd.Check(context.Background(), f.S, slug); err != nil {
 		f.t.Fatal(err)
 	}

@@ -85,7 +85,7 @@ type knobResult struct {
 func knobShapeEntry(t *testing.T, call shpStep, request string) knobResult {
 	f := newShpFx(t, call, shpSubmit("c1", shpFiles()), shpAck("c2"))
 	f.newSession()
-	exit, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Slug: shpSlug, Request: request, Client: f.Client})
+	exit, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Request: request, Client: f.Client})
 	return knobResult{f.Prov.requests(), exit, err, knobText(f, err)}
 }
 
@@ -93,7 +93,7 @@ func knobRefineEntry(t *testing.T, call shpStep, request string) knobResult {
 	f := newRefFx(t, refOpts{red: true}, call, refSubmit("c1", refIntentPath, shpScopedIntentMD))
 	f.remove(".kogen/local/readiness/is-even.json")
 	f.newSession()
-	exit, err := Refine(context.Background(), f.S, RefineInput{Project: f.Root, Slug: shpSlug, Hash: f.hash0, Request: request, Client: f.Client})
+	exit, err := Refine(context.Background(), f.S, RefineInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Hash: f.hash0, Request: request, Client: f.Client})
 	return knobResult{f.Prov.requests(), exit, err, knobText(f.shpFx, err)}
 }
 
@@ -154,7 +154,7 @@ func knobAuthority(t *testing.T, name string) {
 		step := shpAnthropic(f)
 		f.Prov.route = func(map[string]any) *shpStep { return &step }
 		f.newSession()
-		Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Slug: shpSlug, Request: "Add calc.is_even(n).", Client: f.Client})
+		Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Request: "Add calc.is_even(n).", Client: f.Client})
 	} else {
 		r := newRefFx(t, refOpts{red: true})
 		f = r.shpFx
@@ -163,7 +163,7 @@ func knobAuthority(t *testing.T, name string) {
 		r.hash0 = r.hash()
 		r.remove(".kogen/local/readiness/is-even.json")
 		f.newSession()
-		Refine(context.Background(), f.S, RefineInput{Project: f.Root, Slug: shpSlug, Hash: r.hash0, Request: "Clarify the draft.", Client: f.Client})
+		Refine(context.Background(), f.S, RefineInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Hash: r.hash0, Request: "Clarify the draft.", Client: f.Client})
 	}
 	reqs := f.Prov.requests()
 	if len(reqs) == 0 {
@@ -192,7 +192,7 @@ func TestLoopKnobsShape(t *testing.T) {
 	t.Run("client keeps the loop's response budget", func(t *testing.T) {
 		f := newShpFx(t, shpSubmit("c1", shpFiles()), shpAck("c2"))
 		f.newSession()
-		if _, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Slug: shpSlug, Request: "Add calc.is_even(n).", Client: f.Client}); err != nil {
+		if _, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Request: "Add calc.is_even(n).", Client: f.Client}); err != nil {
 			t.Fatal(err)
 		}
 		shpEq(t, "response budget", f.Client.ResponseBudget, time.Duration(0))
@@ -201,7 +201,7 @@ func TestLoopKnobsShape(t *testing.T) {
 		f := newShpFx(t, shpSubmit("c1", shpFiles()), shpAck("c2"))
 		f.Client.ResponseBudget = 42 * time.Second
 		f.newSession()
-		if _, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Slug: shpSlug, Request: "Add calc.is_even(n).", Client: f.Client}); err != nil {
+		if _, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Request: "Add calc.is_even(n).", Client: f.Client}); err != nil {
 			t.Fatal(err)
 		}
 		shpEq(t, "response budget", f.Client.ResponseBudget, 42*time.Second)
@@ -229,7 +229,7 @@ func TestLoopKnobsRefine(t *testing.T) {
 		f := newRefFx(t, refOpts{red: true}, shpAnswer(shpCall("p1", "probe", map[string]any{"command": "true"})), refSubmit("c1", refIntentPath, shpScopedIntentMD))
 		f.remove(".kogen/local/readiness/is-even.json")
 		f.newSession()
-		if _, err := Refine(context.Background(), f.S, RefineInput{Project: f.Root, Slug: shpSlug, Hash: f.hash0, Request: "Clarify the draft.", Client: f.Client}); err != nil {
+		if _, err := Refine(context.Background(), f.S, RefineInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Hash: f.hash0, Request: "Clarify the draft.", Client: f.Client}); err != nil {
 			t.Fatal(err)
 		}
 		shpEq(t, "response budget", f.Client.ResponseBudget, time.Duration(0))

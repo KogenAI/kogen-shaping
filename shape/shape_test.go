@@ -309,7 +309,7 @@ func TestShapeInterruptEndsWithTheSignalAndKeepsEvidence(t *testing.T) {
 		f.S.Interrupt("SIGINT")
 	}()
 	f.newSession()
-	exit, err := Shape(t.Context(), f.S, ShapeInput{Project: f.Root, Slug: shpSlug, Request: "Add calc.is_even(n).", Client: f.Client})
+	exit, err := Shape(t.Context(), f.S, ShapeInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Request: "Add calc.is_even(n).", Client: f.Client})
 	var i *sys.Interrupted
 	if !shpAsInterrupted(err, &i) || i.Signal != "SIGINT" || exit != 130 {
 		t.Fatalf("exit %d, err %v", exit, err)
