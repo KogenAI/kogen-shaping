@@ -567,3 +567,66 @@ func TestInlineDecisionRevisionStillRequiresFreshEvidence(t *testing.T) {
 		t.Fatalf("fresh revision did not supersede D4: %+v", sh.ledger.Decisions)
 	}
 }
+
+func TestExternalShapeCanReviseAfterRereadingCarriedEvidence(t *testing.T) {
+	parallel(t)
+	for _, tc := range []struct {
+		name, path string
+		turn       int
+		failed     bool
+		revises    bool
+	}{
+		{"fresh reread", "calc.js", 2, false, true},
+		{"prior turn read", "calc.js", 1, false, false},
+		{"failed reread", "calc.js", 2, true, false},
+		{"different file read", "README.md", 2, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parallel(t)
+			f := newShpFx(t)
+			f.useExternalShape()
+			first := map[string]any{"decision": "Use the old helper", "evidence": []any{"calc.js"}}
+			revision := map[string]any{
+				"decision": "Use the current helper", "revises": "D1 because the request names the current helper",
+				"evidence": []any{"calc.js"},
+			}
+			questionVerdict := func(class, decision string) func(int, string) (executor.RoundResult, error) {
+				return result(map[string]any{"items": []any{map[string]any{
+					"number": 1, "class": class, "why": "fixture judgment", "decision": decision,
+				}}})
+			}
+			x := &shapeExec{t: t,
+				readEvents: map[int][]map[string]any{tc.turn: {{
+					"event": "executor_tool", "name": "Read", "tool_use_id": "reread", "denied": false, "result_error": tc.failed,
+					"arguments": map[string]any{"file_path": filepath.Join(f.Root, tc.path)},
+				}}},
+				rounds: []func(int, string) (executor.RoundResult, error){
+					result(dlAsk("Which helper is used?", first)),
+					questionVerdict("technical", "Use the current helper."),
+					result(dlAsk("Which label should it show?", revision)),
+					questionVerdict("ui_ux", ""),
+				},
+			}
+			exit, err := f.shapeWith(x, "Use the current helper. The caller chooses the label.")
+			ledger := dlLedger(t, f)
+			if !tc.revises {
+				if err == nil || len(ledger.Decisions) != 1 {
+					t.Fatalf("invalid reread allowed a revision: exit %d, err %v, ledger %+v", exit, err, ledger.Decisions)
+				}
+				for _, input := range x.inputs {
+					if strings.Contains(input.Feedback, "revises D1 without evidence this round read or ran") {
+						return
+					}
+				}
+				t.Fatalf("revision failed without the expected evidence refusal: %v", x.inputs)
+			}
+			if err != nil || exit != 5 {
+				t.Fatalf("rereading the source did not reach the UI question: exit %d, err %v, feedback %v", exit, err, x.inputs)
+			}
+			if d, ok := ledger.standingByID("D2"); !ok || d.Revises != "D1" || len(d.Evidence) != 1 ||
+				d.Evidence[0].SHA256 != dlSha(t, f, "calc.js") || ledger.Decisions[0].SupersededBy != "D2" {
+				t.Fatalf("external reread did not support the revision: %+v", ledger.Decisions)
+			}
+		})
+	}
+}

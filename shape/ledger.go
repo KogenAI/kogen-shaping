@@ -524,7 +524,7 @@ func (sh *shaping) decisionReceipt(n int, raw string) (r receipt, fresh bool, pr
 	changedLine := at + fmt.Sprintf("%s changed since round %d read it; read it again", it.path, carried.Round)
 	if sh.ext != nil {
 		switch {
-		case found:
+		case found && !sh.externalReads[cleaned]:
 			return carried, false, "", nil
 		case sh.inspected:
 			return receipt{Item: item, Kind: receiptCheckout, Round: sh.round, SHA256: digest, Text: numberedLines(string(data))}, true, "", nil

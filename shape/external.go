@@ -467,3 +467,32 @@ func inspectedBy(e map[string]any) bool {
 	}
 	return false
 }
+
+// externalReadPath identifies the exact checkout file read by a completed external tool call.
+func externalReadPath(root string, event map[string]any) string {
+	if event["event"] != "executor_tool" || event["name"] != "Read" ||
+		event["denied"] != false || event["result_error"] != false {
+		return ""
+	}
+	args, _ := event["arguments"].(map[string]any)
+	p, _ := args["file_path"].(string)
+	if p == "" {
+		return ""
+	}
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(root, p)
+	}
+	base, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return ""
+	}
+	file, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		return ""
+	}
+	rel, err := filepath.Rel(base, file)
+	if err != nil || rel == "." || !filepath.IsLocal(rel) {
+		return ""
+	}
+	return filepath.ToSlash(rel)
+}

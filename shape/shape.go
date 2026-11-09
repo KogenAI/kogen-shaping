@@ -564,10 +564,11 @@ type shaping struct {
 	// preparationRefused are the failure signatures of the preparation failures refused in this run.
 	preparationRefused []preparationSignature
 
-	inspected bool             // a read, list or search tool answered in this conversation
-	docs      []map[string]any // documentation tool results of this conversation
-	window    *window
-	cacheID   string // this conversation's cache identity
+	inspected     bool             // a read, list or search tool answered in this conversation
+	externalReads map[string]bool  // paths read by the external shaper in its current turn
+	docs          []map[string]any // documentation tool results of this conversation
+	window        *window
+	cacheID       string // this conversation's cache identity
 
 	// ledger is the shaping's sourced decisions (nil in Refine) and round the number of this run in
 	// the shaping: the question rounds in state.json when the run started, plus one.
@@ -1072,10 +1073,14 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 // rules, and Kogen's actual feedback returns to the same session. Three invalid submissions in
 // a row end it like the native shaper.
 func (sh *shaping) converseExternal(ctx context.Context, blocks []any) (outcome, *extSession, error) {
+	sh.externalReads = make(map[string]bool)
 	stable := ShaperInstructions() + "\n\n" + externalNote + "\n\n" + blocksText(blocks)
 	x, err := startExternal(ctx, sh.ext, sh.extMax, sh.repo, sh.root, sh.s.Getenv("HOME"),
 		filepath.Join(sh.ev.Dir, "executor-shape"), sh.slug, sh.role, stable, "", shaperSubmitSchema(), sh.ev,
 		func(e map[string]any) {
+			if p := externalReadPath(sh.root, e); p != "" {
+				sh.externalReads[p] = true
+			}
 			if inspectedBy(e) {
 				sh.inspected = true
 				if e["name"] == "Bash" {
@@ -1091,6 +1096,7 @@ func (sh *shaping) converseExternal(ctx context.Context, blocks []any) (outcome,
 	feedback, invalid := "", 0
 	for {
 		sh.s.Progress(fmt.Sprintf("kogen: shaping (external round %d, %d s)", x.rounds+1, sh.elapsed()))
+		clear(sh.externalReads)
 		res, err := x.round(ctx, feedback)
 		if err != nil {
 			return outcome{}, x, err

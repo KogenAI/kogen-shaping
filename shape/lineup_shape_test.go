@@ -19,17 +19,18 @@ import (
 // session; each round is a function that may touch the checkout and returns the structured
 // result. It records the tasks and the feedback it was given.
 type shapeExec struct {
-	t        *testing.T
-	mu       sync.Mutex
-	rounds   []func(n int, root string) (executor.RoundResult, error)
-	starts   []executor.Task
-	inputs   []executor.Input
-	startErr error
-	seq      int
-	calls    int  // rounds over every session
-	bash     bool // the main shaper session completes a Bash call in its first round
-	noRead   bool // the main shaper session completes no Read call in its first round
-	cap      int  // the executor's own shape-role round cap; 0: 6
+	t          *testing.T
+	mu         sync.Mutex
+	rounds     []func(n int, root string) (executor.RoundResult, error)
+	starts     []executor.Task
+	inputs     []executor.Input
+	startErr   error
+	seq        int
+	calls      int  // rounds over every session
+	bash       bool // the main shaper session completes a Bash call in its first round
+	noRead     bool // the main shaper session completes no Read call in its first round
+	readEvents map[int][]map[string]any
+	cap        int // the executor's own shape-role round cap; 0: 6
 	// contract, when set, answers the contract review and confirmation sessions in order (the
 	// last repeats); they do not count in rounds or calls, and starts holds only the other
 	// sessions. Without it every review finds no contradiction.
@@ -168,6 +169,9 @@ func (s *shapeSession) Round(_ context.Context, in executor.Input) (executor.Rou
 		if s.x.bash {
 			s.emit(map[string]any{"event": "executor_tool", "name": "Bash", "tool_use_id": "t2", "denied": false})
 		}
+	}
+	for _, event := range s.x.readEvents[s.n] {
+		s.emit(event)
 	}
 	res, err := fn(s.n, s.task.Root)
 	if err != nil {
