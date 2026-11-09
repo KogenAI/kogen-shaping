@@ -221,6 +221,10 @@ func BuildContextIndex(repo *git.Repo, cfg *project.Config, slug string, origina
 	if full == nil {
 		full = []string{"README.md"}
 	}
+	draftPaths, err := recoveryOwnedPaths(root, slug, cfg)
+	if err != nil {
+		return "", nil, err
+	}
 	var measure ContextMeasure
 	for _, e := range entries {
 		included := 0
@@ -228,6 +232,9 @@ func BuildContextIndex(repo *git.Repo, cfg *project.Config, slug string, origina
 		if slices.Contains(full, e.Path) {
 			included = e.Bytes
 			reason = "full authoritative contract; exact instructions/declarations win excerpt budget"
+			if draftPaths[e.Path] {
+				reason = "full unapproved draft proposal for repair; original request and settled answers determine product scope"
+			}
 		}
 		measure.Included += included
 		measure.Omitted += e.Bytes - included
@@ -481,7 +488,7 @@ func contextBlocks(p promptInput) ([]any, error) {
 	if len(recovery) > 0 {
 		fmt.Fprintf(&b, "Draft paths editable through Shape recovery: %s\n", InspectStrings(sortedKeys(recovery)))
 		fmt.Fprintf(&b, "Helpers already restored as current proposals from byte-identical accepted private custody: %s\n", InspectStrings(p.restored))
-		b.WriteString("This is recovery of a retained, unapproved draft. Its own Intent artifacts and slug-owned acceptance helpers may be repaired through propose_files and submit; the automatic baseline freezes the finished package for Build only after approval. Do not report a protected-edit blocker for repairing this unapproved draft. Configured protect patterns, project configuration and other Intents' artifacts remain protected. The restored helpers are already retained; submit them only if changing them. Other declared helpers must be read and resubmitted, even when unchanged. No prior readiness or approval is restored: the complete candidate is checked again.\n")
+		b.WriteString("This is recovery of a retained, unapproved draft. The original request and settled answers remain the product authority; this draft is a proposal, not additional product scope. Correct unrequested additions against that authority, preserving genuinely settled choices and using the standing decision ledger when a revision is needed. Its own Intent artifacts and slug-owned acceptance helpers may be repaired through propose_files and submit; the automatic baseline freezes the finished package for Build only after approval. Do not report a protected-edit blocker for repairing this unapproved draft. Configured protect patterns, project configuration and other Intents' artifacts remain protected. The restored helpers are already retained; submit them only if changing them. Other declared helpers must be read and resubmitted, even when unchanged. No prior readiness or approval is restored: the complete candidate is checked again.\n")
 	}
 	b.WriteString("Approval freezes this baseline. It is not an exception or authorization to change a protected path. Inspect the implementation edits required to deliver the requested outcome; do not infer a conflict by scanning request prose. If a required protected edit cannot be avoided without changing the requested outcome, submit the exclusive `blocked` report with actual protected paths and a reason. Never submit a ready package conditional on a protected-edit approval mechanism: no such override exists.\n\n")
 	b.WriteString("Full contract inclusions: exact request, Q&A, README, testing rules and protection/automatic baseline are authoritative and are not clipped.\n")

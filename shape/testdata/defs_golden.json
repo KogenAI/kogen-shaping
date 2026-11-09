@@ -1,10 +1,13 @@
 {
   "probe": {
-    "description": "Run a quick throwaway command with /bin/sh -c in a scratch copy of the working tree (with its installed dependencies and builds), never in the project, to prove a risky assumption. Optional scratch files are written first. Stopped after 5 minutes. Returns the exit status, whether it timed out, the wall time and the combined output.",
+    "description": "Run a command with /bin/sh -c in a scratch copy of the working tree to investigate material uncertainty or prepare and check required proof artifacts. Accepted current proposals are applied to the copy first, then optional scratch files override them for this probe only. The project and retained proposals are untouched. Stopped after 5 minutes. Reports status, timeout, wall time and combined output. With capture_output=true, successful complete UTF-8 output is kept privately as a bounded artifact handle instead of being copied into the conversation. Generate a large controls.json programmatically, print only its contents, then use propose_files from_probe to retain it. Capturing confers no ownership, readiness or approval; normal proposal validation and every gate still apply.",
     "name": "probe",
     "parameters": {
       "additionalProperties": false,
       "properties": {
+        "capture_output": {
+          "type": "boolean"
+        },
         "command": {
           "type": "string"
         },
@@ -36,7 +39,7 @@
     "type": "function"
   },
   "propose_files": {
-    "description": "Retain Intent files without checking them yet, so a large package is written in bounded pieces across several replies: put one long file, or a few short ones, in each call and make one call per reply. Same path rules as submit's files; well-formed proposals accumulate (latest content for a path wins) and are kept privately under .kogen/local/shaping/<slug>/proposed/ as soon as they are accepted; a malformed or unsafe call retains nothing. A proposal is not a submission: it runs no checks and never counts as an invalid submission. End with submit, whose files (at least one, for example the last file) complete the package Kogen checks; a reply cut off before its tool call loses only that reply.",
+    "description": "Retain complete owned Intent or step files without checking them. Each file supplies path and exactly one of content (whole text) or from_probe (a successful captured output handle from this invocation). Use captured output for programmatically generated controls.json or other large proof artifacts without retyping repository files. Same path/protection rules as submit. Proposals accumulate privately; malformed or unsafe mixed calls retain nothing. End with submit to check the complete package.",
     "name": "propose_files",
     "parameters": {
       "additionalProperties": false,
@@ -47,13 +50,15 @@
               "content": {
                 "type": "string"
               },
+              "from_probe": {
+                "type": "string"
+              },
               "path": {
                 "type": "string"
               }
             },
             "required": [
-              "path",
-              "content"
+              "path"
             ],
             "type": "object"
           },

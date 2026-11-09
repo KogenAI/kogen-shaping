@@ -596,6 +596,7 @@ type shaping struct {
 	questionRefusals  []classCount      // the classes of the questions the question checks refused, in order of first refusal
 	probed            map[string]bool   // the commands of the probe calls of this run
 	probeTexts        map[string]string // the latest answer text of each probed command of this run
+	probeOutputs      map[string]capturedProbeOutput
 	readTexts         map[string]string // the latest answer text of the read_file calls of the main conversation, by cleaned path
 	ranCommand        bool              // the external session completed a Bash call
 	readPaths         map[string]bool   // the cleaned path arguments of the read_file calls of the main conversation
@@ -1162,6 +1163,11 @@ func (sh *shaping) proposeFiles(args map[string]any) (string, error) {
 	var sub submission
 	problems := []string{"propose_files takes a non-empty files list"}
 	if len(list) > 0 {
+		var refProblem string
+		list, refProblem = sh.expandProbeOutputs(list)
+		if refProblem != "" {
+			return "invalid proposal: " + refProblem + "\nNo files from this call were retained; earlier proposals are unchanged.", nil
+		}
 		var err error
 		if sub, problems, err = sh.validateFiles(list); err != nil {
 			return "", err
@@ -1217,7 +1223,11 @@ func (sh *shaping) writeManifest(revision Revision) (map[string]any, error) {
 		}
 		originals = append(originals, map[string]any{"path": p, "source": dest, "sha256": ContentHash(o.content)})
 	}
-	return map[string]any{"proposed": proposed, "originals": originals}, nil
+	manifest := map[string]any{"proposed": proposed, "originals": originals}
+	if captures := sh.capturedOutputManifest(); len(captures) > 0 {
+		manifest["captured_probe_outputs"] = captures
+	}
+	return manifest, nil
 }
 
 // noteReach keeps the cleaned path of a read_file or list_files call of the main conversation,
@@ -1255,6 +1265,15 @@ func (sh *shaping) runTool(ctx context.Context, c tools.Call) (tools.Output, err
 			sh.readTexts[cleanCitedPath(path)] = out.Text
 		}
 		return out, err
+	}
+	if capture, present := args["capture_output"]; present {
+		enabled, ok := capture.(bool)
+		if !ok {
+			return tools.Output{Text: "error: capture_output must be a boolean"}, nil
+		}
+		if enabled {
+			tl.Probe = func(command string, files any) (string, error) { return sh.probe(ctx, command, files, true) }
+		}
 	}
 	sh.progress("kogen: probe: " + textOf(args["command"]))
 	var out tools.Output
@@ -1301,12 +1320,17 @@ func documentationAgent(c *provider.Client) string {
 
 // probe is the probe tool: the command in a scratch copy of the working tree, five minutes at
 // most; its result is the text the model reads.
-func (sh *shaping) probe(ctx context.Context, command string, files any) (string, error) {
+func (sh *shaping) probe(ctx context.Context, command string, files any, capture ...bool) (string, error) {
 	if sh.probed == nil {
 		sh.probed = map[string]bool{}
 	}
 	sh.probed[command] = true
 	p := verify.Probe{Root: sh.root, Command: command, Tools: sh.in.tools()}
+	// Candidate artifacts precede explicit experiment overrides. Neither writes
+	// production bytes; the verifier applies them only to its disposable copy.
+	for _, path := range sortedKeys(sh.proposed) {
+		p.Files = append(p.Files, verify.ProbeFile{Path: path, Content: sh.proposed[path]})
+	}
 	var problems []string
 	switch list := files.(type) {
 	case nil:
@@ -1335,7 +1359,18 @@ func (sh *shaping) probe(ctx context.Context, command string, files any) (string
 		}
 		return "", err
 	}
-	return fmt.Sprintf("exit status: %d\ntimed_out: %t\nwall: %s s\n%s", r.Status, r.TimedOut, formatWall(r.Wall), r.Output), nil
+	output := r.Output
+	if len(capture) > 0 && capture[0] {
+		if r.Status == 0 && !r.TimedOut {
+			output, err = sh.captureProbeOutput(output)
+			if err != nil {
+				return "", err
+			}
+		} else {
+			output = "No output captured: probe did not complete successfully.\n" + tools.Cut(output)
+		}
+	}
+	return fmt.Sprintf("exit status: %d\ntimed_out: %t\nwall: %s s\n%s", r.Status, r.TimedOut, formatWall(r.Wall), output), nil
 }
 
 // formatWall is a wall time as Elixir prints a float: one decimal at least.
