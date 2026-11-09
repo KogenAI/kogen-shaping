@@ -248,7 +248,7 @@ func TestClaudeLineupShapeSubmission(t *testing.T) {
 		lines := strings.Split(strings.TrimSuffix(f.Stdout.String(), "\n"), "\n")
 		shpEq(t, "line count", len(lines), 7)
 		shpEq(t, "scenarios line", lines[4], "Scenarios: 2 (2 fail now, 0 pass now)")
-		shpMatch(t, "usage line", lines[5], `^shape claude-opus-5-5/xhigh claude-code 7 round\(s\) wall_ms=\d+$`)
+		shpMatch(t, "usage line", lines[5], `^shape claude-opus-5-5/xhigh claude-code 5 round\(s\) wall_ms=\d+$`)
 		shpEq(t, "feature", f.read(".kogen/intents/is-even/acceptance.feature"), shpFeature)
 		shpEq(t, "steps", f.read("features/steps/is-even__steps.js"), shpSteps)
 		shpEq(t, "intent", f.read(".kogen/intents/is-even/intent.md"), shpScopedIntentMD)
@@ -781,10 +781,10 @@ func TestExecutorRoundTiming(t *testing.T) {
 				case "executor-contract-review-1":
 					review++
 					shpEq(t, "review model_ms", e["model_ms"], nil)
-				case "executor-decision-1", "executor-decision-2":
+				case "executor-decision-1":
 					decision++
 					shpEq(t, "decision model_ms", e["model_ms"], nil)
-				case "executor-literal-1", "executor-literal-2":
+				case "executor-literal-1":
 					literal++
 					shpEq(t, "literal model_ms", e["model_ms"], nil)
 				default:
@@ -793,8 +793,8 @@ func TestExecutorRoundTiming(t *testing.T) {
 			}
 			shpEq(t, "main rounds", main, 2)
 			shpEq(t, "review rounds", review, 1)
-			shpEq(t, "decision rounds", decision, 2)
-			shpEq(t, "literal rounds", literal, 2)
+			shpEq(t, "decision rounds", decision, 1)
+			shpEq(t, "literal rounds", literal, 1)
 			accounts := shpNamed(events, "shape_time")
 			if len(accounts) != 1 {
 				t.Fatalf("accounts %v", accounts)

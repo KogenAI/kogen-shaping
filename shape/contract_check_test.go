@@ -450,7 +450,7 @@ func TestContractCheckRefusesAConfirmedContradictionAndPublishesItsCorrection(t 
 		t.Fatalf("second review input %q", ccInput(reqs[2])[:200])
 	}
 	// Their tokens join the usage total Shape prints.
-	shpContains(t, "usage line", f.Stdout.String(), "shape gpt-6.1-sol/high input=1266 cached=480 output=360 reasoning=120 wall_ms=")
+	shpContains(t, "usage line", f.Stdout.String(), "shape gpt-6.1-sol/high input=1045 cached=400 output=300 reasoning=100 wall_ms=")
 }
 
 func TestContractCheckUnevidencedAndRefutedFindingsNeverRefuse(t *testing.T) {
@@ -918,7 +918,7 @@ func TestContractCheckExternalShape(t *testing.T) {
 			t.Fatalf("events %v", reviews)
 		}
 		// The sessions' rounds count in the usage line.
-		shpMatch(t, "usage line", f.Stdout.String(), `shape claude-opus-5-5/xhigh claude-code 12 round\(s\) wall_ms=\d+`)
+		shpMatch(t, "usage line", f.Stdout.String(), `shape claude-opus-5-5/xhigh claude-code 10 round\(s\) wall_ms=\d+`)
 	})
 
 	t.Run("a session that ends without a result is incomplete and the candidate goes on", func(t *testing.T) {
