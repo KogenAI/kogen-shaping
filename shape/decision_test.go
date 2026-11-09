@@ -341,3 +341,36 @@ func TestDecisionOutcomeRepairsExplicitRequestConflict(t *testing.T) {
 		t.Fatalf("contradiction does not tell Shape how to repair the actual line: %s", feedback)
 	}
 }
+
+func TestParaphrasedValueCannotClearAGroundedConflict(t *testing.T) {
+	parallel(t)
+	const want = "every not_ready refusal detail names the exact failing line or item (text and location) and a fix text that covers that same line"
+	const request = "Shape refusals (decision_check, contract_review, carried_decisions, decision_record) give only a generic rule. Expected: " + want + "."
+	const line = "- contract_review keeps its refusal lines: each already names the scenario, both file paths and both verbatim quotes, and the request's acceptance checks name the other three gates only. (evidence: shape/contract.go) (assumption: the request lists contract_review among the refusing gates but its acceptance checks do not cover it; confirm that leaving its lines and tests unchanged is enough) (source: request)"
+	const intent = "# Name the failing line\n\n## Decisions\n" + line + "\n"
+	for _, paraphrase := range []string{
+		"contract_review refusals keep their lines unchanged, so only three gates get the line-naming and fix text",
+		"contract_review keeps its refusal lines (left unchanged)",
+	} {
+		item := decisionItem{
+			statement: line, quotes: []string{want}, verdict: "contradicts",
+			intentValue: paraphrase, requestValue: want,
+			difference: "The decision exempts contract_review from an explicit requirement.",
+			why:        "The request includes contract_review.",
+		}
+		_, lines := decisionOutcome([]decisionItem{item}, request, intent)
+		feedback := strings.Join(lines, "\n")
+		if !strings.Contains(feedback, "fix for intent.md line 4") ||
+			!strings.Contains(feedback, want) ||
+			strings.Contains(feedback, assumptionRule) {
+			t.Errorf("grounded conflict escaped with paraphrased value %q: %s", paraphrase, feedback)
+		}
+	}
+
+	const unanswered = "- Use a heading named Fix. (assumption: confirm the heading) (source: request)"
+	item := decisionItem{statement: unanswered, verdict: "unsupported", why: "the request gives no heading"}
+	_, feedback := decisionOutcome([]decisionItem{item}, request, "## Decisions\n"+unanswered+"\n")
+	if len(feedback) != 0 {
+		t.Fatalf("a genuine assumption was refused: %q", feedback)
+	}
+}

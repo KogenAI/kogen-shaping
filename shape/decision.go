@@ -27,6 +27,7 @@ Compare values, not notation: before comparing, normalise digit grouping (1,000 
 A statement that restates the request's value in another notation follows the request.
 Feasibility records are observed evidence, not product decisions requiring request quotes. Their measurements, probe results and observer-control outputs are checked by the feasibility machinery, separately from this check. The candidate view below omits that section; the full Intent remains available to the other checks.
 Give contradicts only when the values still differ after that normalisation, such as a different number, a wrongly converted unit or a different order where order matters; then give intent_value (the value as the statement writes it), request_value (the value as a request quote writes it) and difference (what makes them differ). For follows and unsupported give these three as empty strings.
+An explicit requirement to cover a named set conflicts with a decision that leaves out any member of that set. Copy each conflicting value verbatim. If only the whole Decision line expresses the choice, copy that line as intent_value.
 A Decision line may be marked as an assumption with (assumption: <what the user must confirm>) placed before its trailing tag; a marked line keeps its trailing (source: request) or (source: answer N). A recorded assumption is acceptable when the request is silent, but does not override an explicit request conflict.
 For a concrete result in prose or examples, read the corresponding Decisions before judging support. A consistent restatement of an evidenced or assumed Decision follows; it does not need a second copy of the marker on every prose line. Existing repository formats and access messages supported by those Decisions do not need to be specified again by the user. Still report explicit request conflicts, including a Decision narrowing a required set of outcomes, even when that Decision has evidence or an assumption.
 For a Decision that preserves an existing repository value, use the observed repository evidence below: if it shows the stated current value, give follows without requiring a request quote. A citation name alone is not proof. Give unsupported when the observed evidence does not establish the claimed value, including a keep-unchanged claim with a different value. A new choice with neither evidence nor a recorded assumption remains unsupported. Explicit request conflicts still contradict even when the repository currently differs.
@@ -144,7 +145,7 @@ func decisionOutcome(items []decisionItem, request, intent string) (map[string]a
 	counts := map[string]int{}
 	events := make([]any, len(items))
 	var problems []string
-	refused, unsupported := 0, false
+	refused, conflicts, unsupported := 0, 0, false
 	for i := range items {
 		it := &items[i]
 		reported := it.statement
@@ -160,17 +161,22 @@ func decisionOutcome(items []decisionItem, request, intent string) (map[string]a
 		if !supported {
 			it.verdict = "unsupported"
 		}
+		paraphrasedConflict := false
 		if it.verdict == "contradicts" {
-			named := normalizeWhitespace(it.intentValue) != "" && containsNormalized(it.statement, it.intentValue)
-			found := false
+			draftValue, requestValue := normalizeNotation(it.intentValue), normalizeNotation(it.requestValue)
+			draftNamed := draftValue != "" && containsNormalized(it.statement, it.intentValue)
+			requestNamed := false
 			for _, q := range it.quotes {
-				found = found || containsNormalized(q, it.requestValue)
+				requestNamed = requestNamed || containsNormalized(q, it.requestValue)
 			}
-			named = named && normalizeWhitespace(it.requestValue) != "" && found
+			requestNamed = requestValue != "" && requestNamed
 			switch {
-			case !named:
+			case !draftNamed || !requestNamed:
 				it.verdict = "unsupported"
-			case normalizeNotation(it.intentValue) == normalizeNotation(it.requestValue):
+				// The whole statement and the requirement are grounded. A paraphrase
+				// weakens the finding's evidence, but cannot turn it into user permission.
+				paraphrasedConflict = !draftNamed && requestNamed && draftValue != "" && draftValue != requestValue
+			case draftValue == requestValue:
 				it.verdict = "follows"
 			}
 		}
@@ -180,22 +186,32 @@ func decisionOutcome(items []decisionItem, request, intent string) (map[string]a
 		if reported != it.statement {
 			events[i].(map[string]any)["reported_statement"] = reported
 		}
-		if it.verdict == "follows" || (it.verdict == "unsupported" && markedStatement(intent, it.statement)) {
+		marked := it.verdict == "unsupported" && markedStatement(intent, it.statement)
+		if it.verdict == "follows" || (marked && !paraphrasedConflict) {
 			continue
+		}
+		uncertifiedConflict := marked && paraphrasedConflict
+		if uncertifiedConflict {
+			events[i].(map[string]any)["reported_verdict"] = "contradicts"
 		}
 		refused++
 		quoted := make([]string, len(it.quotes))
 		for j, q := range it.quotes {
 			quoted[j] = `"` + q + `"`
 		}
-		if it.verdict == "contradicts" {
-			problems = append(problems, fmt.Sprintf("statement: %s | request_quotes: %s | verdict: contradicts | intent_value: %s | request_value: %s | difference: %s | why: %s",
-				it.statement, strings.Join(quoted, ", "), it.intentValue, it.requestValue, it.difference, it.why))
+		if it.verdict == "contradicts" || uncertifiedConflict {
+			conflicts++
+			problems = append(problems, fmt.Sprintf("statement: %s | request_quotes: %s | verdict: %s | intent_value: %s | request_value: %s | difference: %s | why: %s",
+				it.statement, strings.Join(quoted, ", "), it.verdict, it.intentValue, it.requestValue, it.difference, it.why))
 			where := "the quoted statement"
 			if at := strings.Index(intent, it.statement); at >= 0 {
 				where = fmt.Sprintf("intent.md line %d", 1+strings.Count(intent[:at], "\n"))
 			}
-			problems = append(problems, fmt.Sprintf("fix for %s: Replace %q with the request's requirement %q. Align the acceptance expectations with that requirement.", where, it.intentValue, it.requestValue))
+			if uncertifiedConflict {
+				problems = append(problems, fmt.Sprintf("fix for %s: Preserve the request's requirement %q in the quoted line and its acceptance expectations. If the draft already follows the requirement, cite the exact matching text. The check reported a conflict but paraphrased the draft value.", where, it.requestValue))
+			} else {
+				problems = append(problems, fmt.Sprintf("fix for %s: Replace %q with the request's requirement %q. Align the acceptance expectations with that requirement.", where, it.intentValue, it.requestValue))
+			}
 			continue
 		}
 		unsupported = true
@@ -206,7 +222,7 @@ func decisionOutcome(items []decisionItem, request, intent string) (map[string]a
 		return event, nil
 	}
 	head := fmt.Sprintf("Decision check: %d stated decisions are not supported by the request; follow the request, cite the repository evidence that decides it with (evidence: ...), or mark the decision as an assumption the user must confirm:", refused)
-	if counts["contradicts"] > 0 {
+	if conflicts > 0 {
 		head = fmt.Sprintf("Decision check: %d stated decisions are not supported by the request; resolve each explicit conflict using the requirement below:", refused)
 	}
 	feedback := []string{head}
