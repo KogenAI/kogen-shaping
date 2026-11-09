@@ -38,7 +38,14 @@ func (sh *shaping) decisionEvidence(intent string) (string, error) {
 				continue
 			}
 			seen[path] = true
-			observed := sh.readPaths[path] || sh.listedPaths[path] || sh.listedPaths[path+"/"]
+			tracked, err := sh.headFiles()
+			if err != nil {
+				return "", err
+			}
+			observed := sh.readPaths[path]
+			if headDirectory(tracked, path) {
+				observed = sh.listedCovers(path)
+			}
 			if sh.ext != nil {
 				observed = sh.inspected
 			}

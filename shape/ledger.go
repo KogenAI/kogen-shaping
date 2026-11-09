@@ -435,19 +435,25 @@ func (sh *shaping) checkoutDigest(cleaned string) string {
 	return ContentHash(data)
 }
 
-// trackedAtHead is whether the cleaned path is a file tracked at HEAD.
-func (sh *shaping) trackedAtHead(cleaned string) (bool, error) {
+// headFiles lists the tracked file paths once for this shaping.
+func (sh *shaping) headFiles() (map[string]bool, error) {
 	if sh.tracked == nil {
 		out, err := sh.repo.OK("ls-tree", "-r", "-z", "--name-only", "HEAD")
 		if err != nil {
-			return false, err
+			return nil, err
 		}
 		sh.tracked = map[string]bool{}
 		for _, f := range strings.Split(strings.TrimSuffix(out, "\x00"), "\x00") {
 			sh.tracked[f] = true
 		}
 	}
-	return sh.tracked[cleaned], nil
+	return sh.tracked, nil
+}
+
+// trackedAtHead is whether the cleaned path is a file tracked at HEAD.
+func (sh *shaping) trackedAtHead(cleaned string) (bool, error) {
+	tracked, err := sh.headFiles()
+	return tracked[cleaned], err
 }
 
 // ---- the decision record gate ----
@@ -488,11 +494,14 @@ func (sh *shaping) decisionReceipt(n int, raw string) (r receipt, fresh bool, pr
 	if strings.HasSuffix(it.path, "/") {
 		return r, false, at + it.path + " is a directory; cite the files this shaping read", nil
 	}
-	tracked, err := sh.trackedAtHead(cleaned)
+	tracked, err := sh.headFiles()
 	if err != nil {
 		return r, false, "", err
 	}
-	if !tracked {
+	if !tracked[cleaned] {
+		if headDirectory(tracked, cleaned) {
+			return r, false, at + it.path + " is a directory; cite the files this shaping read", nil
+		}
 		return r, false, at + it.path + " is not a file tracked at HEAD", nil
 	}
 	data, err := sh.checkoutBytes(cleaned)

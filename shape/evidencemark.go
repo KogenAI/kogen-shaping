@@ -3,7 +3,6 @@ package shape
 import (
 	"fmt"
 	"path"
-	"slices"
 	"strings"
 )
 
@@ -109,8 +108,7 @@ type carriedItem struct {
 // evidenceCheck is evidenceProblems with the items that rested only on a carried receipt.
 func (sh *shaping) evidenceCheck(intent string) ([]string, []carriedItem, error) {
 	var carried []carriedItem
-	var tracked []string
-	var listed bool
+	var tracked map[string]bool
 	var problems []string
 	n := 0
 	for _, line := range decisionLines(intent) {
@@ -137,12 +135,12 @@ func (sh *shaping) evidenceCheck(intent string) ([]string, []carriedItem, error)
 						}
 					}
 				default:
-					if !listed {
-						out, err := sh.repo.OK("ls-tree", "-r", "-z", "--name-only", "HEAD")
+					if tracked == nil {
+						var err error
+						tracked, err = sh.headFiles()
 						if err != nil {
 							return nil, nil, err
 						}
-						tracked, listed = strings.Split(strings.TrimSuffix(out, "\x00"), "\x00"), true
 					}
 					var cited []string
 					switch {
@@ -164,7 +162,7 @@ func (sh *shaping) evidenceCheck(intent string) ([]string, []carriedItem, error)
 						if cite != it.path {
 							itemText = cite
 						}
-						problems, carried = sh.checkCitedPath(problems, carried, n, cite, itemText)
+						problems, carried = sh.checkCitedPath(problems, carried, n, cite, itemText, !tracked[cite])
 					}
 				}
 			}
@@ -173,15 +171,20 @@ func (sh *shaping) evidenceCheck(intent string) ([]string, []carriedItem, error)
 	return problems, carried, nil
 }
 
-// isTracked reports whether p is a file tracked at HEAD, or a directory written with a trailing
-// slash that holds a tracked file.
-func isTracked(tracked []string, p string) bool {
-	for _, f := range tracked {
-		if f == p || strings.HasSuffix(p, "/") && strings.HasPrefix(f, p) {
+// headDirectory reports whether p names a directory containing a tracked file at HEAD.
+// Both spellings of a directory are accepted.
+func headDirectory(tracked map[string]bool, p string) bool {
+	prefix := strings.TrimSuffix(p, "/") + "/"
+	for f := range tracked {
+		if strings.HasPrefix(f, prefix) {
 			return true
 		}
 	}
 	return false
+}
+
+func isTracked(tracked map[string]bool, p string) bool {
+	return tracked[p] || headDirectory(tracked, p)
 }
 
 // wordCitations reads an item that is not a whole tracked path as space-separated words: the
@@ -190,7 +193,7 @@ func isTracked(tracked []string, p string) bool {
 // later word that looks like a file path (a slash and a file name with an extension, after
 // removing enclosing backticks, quotes or parentheses and trailing periods, commas, semicolons
 // or colons) and is not a file tracked at HEAD is returned as untracked.
-func wordCitations(tracked []string, item string) (cited []string, untracked string) {
+func wordCitations(tracked map[string]bool, item string) (cited []string, untracked string) {
 	words := strings.Fields(item)
 	i := 0
 	for ; i < len(words); i++ {
@@ -211,7 +214,7 @@ func wordCitations(tracked []string, item string) (cited []string, untracked str
 		w = strings.TrimRight(w, "`\"')"+".,;:")
 		base := path.Base(w)
 		dot := strings.LastIndex(base, ".")
-		if strings.Contains(w, "/") && dot > 0 && dot < len(base)-1 && !slices.Contains(tracked, w) {
+		if strings.Contains(w, "/") && dot > 0 && dot < len(base)-1 && !isTracked(tracked, w) {
 			return cited, w
 		}
 	}
@@ -221,8 +224,7 @@ func wordCitations(tracked []string, item string) (cited []string, untracked str
 // checkCitedPath applies the read and listed rules to one cited tracked path of decision n and
 // returns the problems and carried items with its result added; item is the text a carried
 // receipt is recorded under.
-func (sh *shaping) checkCitedPath(problems []string, carried []carriedItem, n int, citedPath, item string) ([]string, []carriedItem) {
-	dir := strings.HasSuffix(citedPath, "/")
+func (sh *shaping) checkCitedPath(problems []string, carried []carriedItem, n int, citedPath, item string, dir bool) ([]string, []carriedItem) {
 	cleaned := cleanCitedPath(citedPath)
 	var held receipt
 	var heldOK, changed bool

@@ -85,10 +85,65 @@ func TestDecisionEvidenceRecognizesListedDirectorySpellings(t *testing.T) {
 	f.git("commit", "-qm", "Add the retained directory")
 	f.newSession()
 	sh := f.shaping()
-	sh.listedPaths = map[string]bool{"lib/": true}
+	sh.noteReach("list_files", map[string]any{"path": "lib/"})
 	text, err := sh.decisionEvidence("## Decisions\n- Keep helpers under lib. (evidence: lib) (source: request)\n")
 	if err != nil {
 		t.Fatal(err)
 	}
 	shpContains(t, "observed baseline directory", text, "retained.js")
+}
+
+func TestDocsDirectoryEvidenceReachesDecisionChecker(t *testing.T) {
+	parallel(t)
+	f := newShpFx(t)
+	f.write("docs/presets/guide.md", "Tracked preset configuration.\n")
+	f.write("docs/README.md", "The repository documentation.\n")
+	f.git("add", "docs")
+	f.git("commit", "-qm", "Add tracked documentation and presets")
+	f.newSession()
+	sh := f.shaping()
+	sh.listedPaths = map[string]bool{"docs": true}
+
+	for _, citation := range []string{"docs/presets", "docs/presets/"} {
+		intent := "## Decisions\n- Preserve the preset inventory. (evidence: " + citation + ") (source: request)\n"
+		problems, err := sh.evidenceProblems(intent)
+		if err != nil || len(problems) != 0 {
+			t.Errorf("tracked, listed directory %q: problems %v, error %v", citation, problems, err)
+		}
+		evidence, err := sh.decisionEvidence(intent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		shpContains(t, "tracked directory contents", evidence, "guide.md")
+	}
+
+	intent := "## Decisions\n- Preserve the readme. (evidence: docs/README.md) (source: request)\n"
+	problems, err := sh.evidenceProblems(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shpEq(t, "listing did not read the file", strings.Join(problems, "\n"), "- decision 1: this shaping did not read docs/README.md")
+	evidence, err := sh.decisionEvidence(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shpContains(t, "no inherited file read", evidence, "not observed")
+	if strings.Contains(evidence, "The repository documentation.") {
+		t.Fatal("directory listing supplied an unread file's contents")
+	}
+
+	_, _, diagnostic, err := sh.decisionReceipt(1, "docs/presets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shpEq(t, "sourced decision still needs a file", diagnostic,
+		"- sourced decision 1: docs/presets is a directory; cite the files this shaping read")
+
+	sh.listedPaths = nil
+	intent = "## Decisions\n- Preserve the preset inventory. (evidence: docs/presets) (source: request)\n"
+	problems, err = sh.evidenceProblems(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shpEq(t, "directory still needs observation", strings.Join(problems, "\n"), "- decision 1: this shaping did not list docs/presets")
 }
