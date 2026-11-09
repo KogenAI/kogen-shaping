@@ -29,6 +29,7 @@ Feasibility records are observed evidence, not product decisions requiring reque
 Give contradicts only when the values still differ after that normalisation, such as a different number, a wrongly converted unit or a different order where order matters; then give intent_value (the value as the statement writes it), request_value (the value as a request quote writes it) and difference (what makes them differ). For follows and unsupported give these three as empty strings.
 A Decision line may be marked as an assumption with (assumption: <what the user must confirm>) placed before its trailing tag; a marked line keeps its trailing (source: request) or (source: answer N). A recorded assumption is acceptable when the request is silent, but does not override an explicit request conflict.
 For a concrete result in prose or examples, read the corresponding Decisions before judging support. A consistent restatement of an evidenced or assumed Decision follows; it does not need a second copy of the marker on every prose line. Existing repository formats and access messages supported by those Decisions do not need to be specified again by the user. Still report explicit request conflicts, including a Decision narrowing a required set of outcomes, even when that Decision has evidence or an assumption.
+For a Decision that preserves an existing repository value, use the observed repository evidence below: if it shows the stated current value, give follows without requiring a request quote. A citation name alone is not proof. Give unsupported when the observed evidence does not establish the claimed value, including a keep-unchanged claim with a different value. A new choice with neither evidence nor a recorded assumption remains unsupported. Explicit request conflicts still contradict even when the repository currently differs.
 Answer by calling ` + SubmitDecisionCheckTool + `.`
 
 // assumptionRule is the feedback line that says exactly how to mark an assumption.
@@ -232,7 +233,11 @@ func (sh *shaping) decisionCheck(ctx context.Context, intent string) ([]string, 
 	if earlier == "" {
 		earlier = "none"
 	}
-	input := "Slug: " + sh.slug + "\n\n# Request\n\n" + sh.request + "\n\n# Earlier questions and answers\n\n" + earlier + "\n\n# Candidate intent.md\n\n" + decisionIntent(intent)
+	evidence, err := sh.decisionEvidence(intent)
+	if err != nil {
+		return nil, err
+	}
+	input := "Slug: " + sh.slug + "\n\n# Request\n\n" + sh.request + "\n\n# Earlier questions and answers\n\n" + earlier + "\n\n# Candidate intent.md\n\n" + decisionIntent(intent) + evidence
 	var args map[string]any
 	sh.decisionChecks++
 	if sh.ext != nil {
@@ -293,7 +298,7 @@ func (sh *shaping) decisionCheck(ctx context.Context, intent string) ([]string, 
 }
 
 // markedStatement reports whether every occurrence of the statement in intent.md (compared
-// after whitespace normalisation) has an assumption or evidence marker on every intent.md line
+// after whitespace normalisation) has an assumption or settled-answer marker on every intent.md line
 // it spans: the decision check does not count such a statement as a problem. A statement that
 // does not occur in intent.md is not marked.
 func markedStatement(intent, statement string) bool {
@@ -307,7 +312,7 @@ func markedStatement(intent, statement string) bool {
 	var lineOf []int
 	pendingSpace := false
 	for i, line := range lines {
-		marked[i] = strings.Contains(line, "(assumption:") || strings.Contains(line, "(evidence:") || strings.Contains(line, "(source: answer ")
+		marked[i] = strings.Contains(line, "(assumption:") || strings.Contains(line, "(source: answer ")
 		for j := 0; j < len(line); j++ {
 			if c := line[j]; c == ' ' || c == '\t' || c == '\r' {
 				pendingSpace = true

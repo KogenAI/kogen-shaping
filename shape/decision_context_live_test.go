@@ -29,13 +29,11 @@ func TestDecisionContextLive(t *testing.T) {
 		name, request, intent string
 		refuses               bool
 	}{
-		{"repository-output", "Add owner actions. Preserve existing check-in output and access rules.", `# Actions
+		{"repository-output", "Improve the controls feedback. Preserve existing bounds.", `# Controls
 ## Decisions
-- A check-in with nothing to report keeps four empty lists. (decision: D1, round 1) (evidence: loop.ex) (source: request)
-- A nonmember is refused with Access unavailable. (decision: D2, round 1) (evidence: access.ex) (source: request)
+- controlsMaxFiles remains 8. (decision: D1, round 1) (evidence: shape/controls.go) (source: request)
 ## Examples
-A check-in with nothing to report returns four empty lists.
-A nonmember is refused with Access unavailable.
+Each implementation can contain at most 8 files.
 `, false},
 		{"assumption-restated", "Only the owner may waive an action. Choose unspecified details and record them for approval.", `# Actions
 ## Decisions
@@ -75,7 +73,7 @@ A completed non-Build outcome is hidden from the hands-off view.
 		if err != nil {
 			t.Fatal(err)
 		}
-		sh := &shaping{s: s, repo: repo, root: repo.Dir, slug: c.name, request: c.request, role: role, ev: ev, client: provider.NewClient("kogen shape-live"), started: time.Now()}
+		sh := &shaping{s: s, repo: repo, root: repo.Dir, slug: c.name, request: c.request, role: role, ev: ev, client: provider.NewClient("kogen shape-live"), started: time.Now(), readPaths: map[string]bool{"shape/controls.go": true}}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		lines, err := sh.decisionCheck(ctx, c.intent)
 		cancel()

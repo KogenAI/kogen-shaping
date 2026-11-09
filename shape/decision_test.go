@@ -59,7 +59,7 @@ func TestDecisionOutcomeRules(t *testing.T) {
 		{"quote not in request", item(decision, []string{q, "nope"}, "follows"),
 			"unsupported", []string{`statement: ` + decision + ` | request_quotes: "` + q + `", "nope" | verdict: unsupported | why: w`}},
 		{"assumption not fed back", item(assumed, nil, "unsupported"), "unsupported", nil},
-		{"evidence not fed back", item(evidenced, nil, "unsupported"), "unsupported", nil},
+		{"unsupported evidence is fed back", item(evidenced, nil, "unsupported"), "unsupported", []string{`statement: ` + evidenced + ` | request_quotes:  | verdict: unsupported | why: w`}},
 		{"assumption contradicting not fed back", values(item(assumed, []string{"nope"}, "contradicts"), "a", "b"), "unsupported", nil},
 	}
 	for _, c := range cases {
@@ -241,12 +241,12 @@ func TestMarkedStatementOnEveryOccupiedLine(t *testing.T) {
 		name, intent, statement string
 		want                    bool
 	}{
-		{"marker elsewhere on the line", "## Decisions\n- Odd numbers return False (evidence: README.md) (source: request)\n", "Odd numbers return False", true},
+		{"marker elsewhere on the line", "## Decisions\n- Odd numbers return False (evidence: README.md) (source: request)\n", "Odd numbers return False", false},
 		{"assumption after the text", "## Decisions\n- Zero is even (assumption: silent) (source: request)\n", "Zero is even", true},
 		{"marker inside the statement text", "## Decisions\n- Zero is even (assumption: silent) (source: request)\n", "- Zero is even (assumption: silent) (source: request)", true},
 		{"marker on the next line", "## Decisions\n" + decision + "\n- Zero (assumption: silent) (source: request)\n", "Odd numbers return False", false},
 		{"two lines, one marker", "x (evidence: README.md)\nand zero is even.\n", "x (evidence: README.md) and zero is even.", false},
-		{"two lines, both marked", "x (evidence: README.md)\nand zero (assumption: a) is even.\n", "x (evidence: README.md) and zero (assumption: a) is even.", true},
+		{"two lines, both marked", "x (evidence: README.md)\nand zero (assumption: a) is even.\n", "x (evidence: README.md) and zero (assumption: a) is even.", false},
 		{"statement not in intent", "## Decisions\n- Zero (assumption: silent) (source: request)\n", "- Zero is even (assumption: silent) (source: request)", false},
 		{"one unmarked occurrence of two", "a b (evidence: x)\na b\n", "a b", false},
 		{"unmarked", "## Decisions\n" + decision + "\n", decision, false},
