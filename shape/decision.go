@@ -144,6 +144,7 @@ func decisionOutcome(items []decisionItem, request, intent string) (map[string]a
 	counts := map[string]int{}
 	events := make([]any, len(items))
 	var problems []string
+	refused, unsupported := 0, false
 	for i := range items {
 		it := &items[i]
 		reported := it.statement
@@ -182,6 +183,7 @@ func decisionOutcome(items []decisionItem, request, intent string) (map[string]a
 		if it.verdict == "follows" || (it.verdict == "unsupported" && markedStatement(intent, it.statement)) {
 			continue
 		}
+		refused++
 		quoted := make([]string, len(it.quotes))
 		for j, q := range it.quotes {
 			quoted[j] = `"` + q + `"`
@@ -189,16 +191,29 @@ func decisionOutcome(items []decisionItem, request, intent string) (map[string]a
 		if it.verdict == "contradicts" {
 			problems = append(problems, fmt.Sprintf("statement: %s | request_quotes: %s | verdict: contradicts | intent_value: %s | request_value: %s | difference: %s | why: %s",
 				it.statement, strings.Join(quoted, ", "), it.intentValue, it.requestValue, it.difference, it.why))
+			where := "the quoted statement"
+			if at := strings.Index(intent, it.statement); at >= 0 {
+				where = fmt.Sprintf("intent.md line %d", 1+strings.Count(intent[:at], "\n"))
+			}
+			problems = append(problems, fmt.Sprintf("fix for %s: Replace %q with the request's requirement %q. Align the acceptance expectations with that requirement.", where, it.intentValue, it.requestValue))
 			continue
 		}
+		unsupported = true
 		problems = append(problems, fmt.Sprintf("statement: %s | request_quotes: %s | verdict: unsupported | why: %s", it.statement, strings.Join(quoted, ", "), it.why))
 	}
 	event := map[string]any{"event": "decision_check", "follows": counts["follows"], "contradicts": counts["contradicts"], "unsupported": counts["unsupported"], "items": events}
 	if len(problems) == 0 {
 		return event, nil
 	}
-	head := fmt.Sprintf("Decision check: %d stated decisions are not supported by the request; follow the request, cite the repository evidence that decides it with (evidence: ...), or mark the decision as an assumption the user must confirm:", len(problems))
-	return event, append([]string{head, assumptionRule}, problems...)
+	head := fmt.Sprintf("Decision check: %d stated decisions are not supported by the request; follow the request, cite the repository evidence that decides it with (evidence: ...), or mark the decision as an assumption the user must confirm:", refused)
+	if counts["contradicts"] > 0 {
+		head = fmt.Sprintf("Decision check: %d stated decisions are not supported by the request; resolve each explicit conflict using the requirement below:", refused)
+	}
+	feedback := []string{head}
+	if unsupported {
+		feedback = append(feedback, assumptionRule)
+	}
+	return event, append(feedback, problems...)
 }
 
 // A finding can paraphrase a Decision despite the exact-copy

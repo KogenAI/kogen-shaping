@@ -77,7 +77,19 @@ func TestDecisionOutcomeRules(t *testing.T) {
 			}
 			continue
 		}
-		if !slices.Equal(lines, append([]string{decisionHead, assumptionRule}, c.feedback...)) {
+		want := append([]string{decisionHead, assumptionRule}, c.feedback...)
+		if c.verdict == "contradicts" {
+			want = []string{
+				"Decision check: 1 stated decisions are not supported by the request; resolve each explicit conflict using the requirement below:",
+				c.feedback[0],
+			}
+			if len(lines) != 3 || !strings.HasPrefix(lines[2], "fix for intent.md line ") {
+				t.Errorf("%s: missing source-specific fix in %q", c.name, lines)
+				continue
+			}
+			lines = lines[:2]
+		}
+		if !slices.Equal(lines, want) {
 			t.Errorf("%s: lines %q", c.name, lines)
 		}
 	}
@@ -306,5 +318,26 @@ func TestDecisionOutcomeGroundsInventedEmptyConstraint(t *testing.T) {
 		unsupported.statement = changed
 		_, lines := decisionOutcome([]decisionItem{unsupported}, request, intent)
 		shpContains(t, "changed finding", strings.Join(lines, "\n"), "verdict: unsupported")
+	}
+}
+
+func TestDecisionOutcomeRepairsExplicitRequestConflict(t *testing.T) {
+	parallel(t)
+	const request = "Every not_ready refusal detail names the exact failing line or item and a fix text that covers that same line."
+	const wanted = "a fix text that covers that same line"
+	const conflicting = "gets no fix line"
+	const statement = "- An item in the Decisions section gets no fix line. (source: request)"
+	const intent = "# Refusal details\n\n## Decisions\n" + statement + "\n"
+	item := decisionItem{
+		statement: statement, quotes: []string{request}, verdict: "contradicts",
+		intentValue: conflicting, requestValue: wanted,
+		difference: "the request says every item gets a fix line", why: "the decision introduces an exception",
+	}
+	_, lines := decisionOutcome([]decisionItem{item}, request, intent)
+	feedback := strings.Join(lines, "\n")
+	if !strings.Contains(feedback, "intent.md line 4") ||
+		!strings.Contains(feedback, `Replace "gets no fix line" with the request's requirement "a fix text that covers that same line"`) ||
+		strings.Contains(feedback, "mark the decision as an assumption") || strings.Contains(feedback, assumptionRule) {
+		t.Fatalf("contradiction does not tell Shape how to repair the actual line: %s", feedback)
 	}
 }
