@@ -668,7 +668,7 @@ func controlsJudge(w controlsImpl, sc project.Scenario, c *controlsCase, stepLin
 		if kind == "" {
 			kind = "Error"
 		}
-		return 4, fmt.Sprintf("wrong implementation \"%s\" fails scenario \"%s\" without an assertion: %s: %s", w.name, normalizeWhitespace(sc.Name), kind, controlsFirstLine(first.message))
+		return 4, fmt.Sprintf("wrong implementation \"%s\" fails scenario \"%s\" without an assertion: %s: %s", w.name, normalizeWhitespace(sc.Name), kind, controlsFailureMessage(first.message))
 	}
 	if location, ok := controlsFrame(first.stack, run.roots, stepFiles); !ok {
 		return 5, fmt.Sprintf("wrong implementation \"%s\" fails scenario \"%s\" with an assertion thrown outside the Intent's step files, at %s", w.name, normalizeWhitespace(sc.Name), location)
@@ -755,7 +755,7 @@ func controlsUnreachable(props []controlsProp, scenarios []project.Scenario, fea
 				first := c.firstUnpassed()
 				message := ""
 				if first != nil {
-					message = controlsFirstLine(first.message)
+					message = controlsFailureMessage(first.message)
 				}
 				reason = fmt.Sprintf("no pass is reachable: with the correct implementation in place, scenario \"%s\" fails at \"%s\": %s",
 					normalizeWhitespace(scenarios[k].Name), controlsStepLabel(first, feature), message)

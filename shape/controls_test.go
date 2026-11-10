@@ -136,11 +136,11 @@ func TestControlsJudge(t *testing.T) {
 		{"an earlier step", controlsFailed(3, "AssertionError", message, frame("/tmp/copy/features/steps/is-even__steps.js")), 3,
 			`wrong implementation "add removed" fails scenario "Add keeps working" at "Then is-even: add of 2 and 3 is 5", not at "And is-even: sub of 5 and 3 is 2"`},
 		{"an Error", controlsFailed(4, "Error", "boom\nmore", "Error: boom\n    at x (/tmp/copy/calc.js:1:1)"), 4,
-			`wrong implementation "add removed" fails scenario "Add keeps working" without an assertion: Error: boom`},
+			`wrong implementation "add removed" fails scenario "Add keeps working" without an assertion: Error: boom | more`},
 		{"a step timeout", controlsFailed(4, "Error", "function timed out, ensure the promise resolves within 5000 milliseconds", ""), 4,
 			`wrong implementation "add removed" fails scenario "Add keeps working" without an assertion: Error: function timed out, ensure the promise resolves within 5000 milliseconds`},
 		{"a missing module", controlsFailed(4, "Error", "Cannot find module '../../calc'\nRequire stack:", "Error: Cannot find module"), 4,
-			`wrong implementation "add removed" fails scenario "Add keeps working" without an assertion: Error: Cannot find module '../../calc'`},
+			`wrong implementation "add removed" fails scenario "Add keeps working" without an assertion: Error: Cannot find module '../../calc' | Require stack:`},
 		{"an assertion thrown by implementation code", controlsFailed(4, "AssertionError", message, frame("/tmp/copy/calc.js")), 5,
 			`wrong implementation "add removed" fails scenario "Add keeps working" with an assertion thrown outside the Intent's step files, at calc.js:4:10`},
 		{"an assertion thrown outside the copy", controlsFailed(4, "AssertionError", message, "AssertionError: x\n    at assert (node:assert:1:1)"), 5,
@@ -238,7 +238,7 @@ func TestControlsUnreachable(t *testing.T) {
 	failing := map[int]*controlsCase{2: passedCase(3, 4), 9: passedCase(6),
 		10: {steps: []controlsStep{{line: 6, status: "FAILED", kind: "Error", message: "boom\n    at x"}}}}
 	lines := controlsUnreachable(props, scenarios, feature, controlsRunResult{cases: failing, complete: true})
-	want := `- mul (new) | request: mul | problem: no pass is reachable: with the correct implementation in place, scenario "Mul 3 times 3" fails at "Then is-even: mul of <a> and <b> is <c>": boom`
+	want := `- mul (new) | request: mul | problem: no pass is reachable: with the correct implementation in place, scenario "Mul 3 times 3" fails at "Then is-even: mul of <a> and <b> is <c>": boom | at x`
 	if len(lines) != 1 || lines[0] != want {
 		t.Fatalf("lines = %q, want %q", lines, want)
 	}
@@ -775,5 +775,42 @@ func TestContractCheckClearsReviewPropertiesWhenItReturnsEarly(t *testing.T) {
 	}
 	if events := shpNamed(f.events(), "wrong_implementation_check"); len(events) != 0 || strings.Contains(f.Stderr.String(), "wrong-implementation check") {
 		t.Fatalf("events = %v, progress %s", events, f.Stderr.String())
+	}
+}
+
+func TestControlsBuildDiagnosticReasons(t *testing.T) {
+	scenarios, feature := controlsParseFixture(t)
+	message := "go build -o /x/driver ./features/steps/s__driver/main.go:\n# github.com/KogenAI/kogen-review/review\nreview/independent.go:771:6: undefined: required"
+	formatted := "go build -o /x/driver ./features/steps/s__driver/main.go: | review/independent.go:771:6: undefined: required | # github.com/KogenAI/kogen-review/review"
+	c := controlsFailed(4, "Error", message, "")
+	run := controlsRunResult{complete: true, cases: map[int]*controlsCase{scenarios[0].Line: c}}
+	props := []controlsProp{{report: propertyReport{property: "add", kind: "kept", request: "add"}, scenarios: []int{0}}}
+	lines := controlsUnreachable(props, scenarios, feature, run)
+	want := `- add (kept) | request: add | problem: no pass is reachable: with the correct implementation in place, scenario "Add keeps working" fails at "And is-even: sub of 5 and 3 is 2": ` + formatted
+	if len(lines) != 1 || lines[0] != want {
+		t.Errorf("unreachable = %q, want %q", lines, want)
+	}
+	_, reason := controlsJudge(controlsImpl{name: "broken", step: "And is-even: sub of 5 and 3 is 2"}, scenarios[0], c, []int{4}, feature, run, nil)
+	want = `wrong implementation "broken" fails scenario "Add keeps working" without an assertion: Error: ` + formatted
+	if reason != want {
+		t.Errorf("wrong = %q, want %q", reason, want)
+	}
+}
+
+func TestControlsFailureEvidencePreservesFirstLine(t *testing.T) {
+	scenarios, feature := controlsParseFixture(t)
+	w := controlsImpl{name: "broken", scenario: "Add keeps working", step: "And is-even: sub of 5 and 3 is 2"}
+	for _, tt := range []struct{ message, want string }{
+		{"expected true", "expected true"},
+		{"go build -o /x/driver ./features/steps/s__driver/main.go:\n# github.com/KogenAI/kogen-review/review\nreview/independent.go:771:6: undefined: required", "go build -o /x/driver ./features/steps/s__driver/main.go:"},
+	} {
+		c := controlsFailed(4, "AssertionError", tt.message, "")
+		run := controlsRunResult{complete: true, cases: map[int]*controlsCase{scenarios[0].Line: c}}
+		if got := controlsEvidenceOf(w, scenarios, feature, run, nil).Assertion; got != tt.want {
+			t.Errorf("assertion = %q, want %q", got, tt.want)
+		}
+		if got := controlsUnreachable([]controlsProp{{report: propertyReport{property: "add", kind: "kept", request: "add"}, scenarios: []int{0}}}, scenarios, feature, run); len(got) != 1 || !strings.HasSuffix(got[0], controlsFailureMessage(tt.message)) {
+			t.Errorf("unreachable = %q", got)
+		}
 	}
 }
