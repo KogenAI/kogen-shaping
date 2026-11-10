@@ -1,8 +1,11 @@
 package shape
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"os/exec"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -84,6 +87,7 @@ func (sh *shaping) stepSelfcheck(ctx context.Context) (string, error) {
 	var items []verify.StepItem
 	matches := map[string][]verify.StepDef{}
 	quoteHint := false
+	specialHint := false
 	if len(own) > 0 {
 		node, cucumber := sh.stepTool(sh.rd.Tools.Node, "KOGEN_NODE"), sh.stepTool(sh.rd.Tools.Cucumber, "KOGEN_CUCUMBER")
 		raw, _, err := verify.RunStepScript(ctx, node, cucumber, sh.root, sh.s.Env, files, texts)
@@ -96,6 +100,15 @@ func (sh *shaping) stepSelfcheck(ctx context.Context) (string, error) {
 				quoteHint = true
 				break
 			}
+		}
+		var undefined []string
+		for _, it := range items {
+			if it.Check == "steps" && it.Detail == "undefined step" {
+				undefined = append(undefined, it.Target)
+			}
+		}
+		if len(undefined) > 0 {
+			specialHint = literalExpressionHint(ctx, node, cucumber, sh.root, sh.s.Env, files, own, undefined)
 		}
 		// Cucumber's own matcher names the definitions of an ambiguous step: run it again for
 		// that one text; the definitions it marks used are exactly those that match.
@@ -167,7 +180,70 @@ func (sh *shaping) stepSelfcheck(ctx context.Context) (string, error) {
 	if quoteHint {
 		feedback += "\n- Escape inner quotes inside the {string} argument (including quotes in an Examples cell), or use a DocString to preserve raw fixture bytes."
 	}
+	if specialHint {
+		feedback += `
+- Cucumber Expressions read / as alternation, ( ) as optional text and { } as parameters; escape literal characters (in JavaScript strings use \\/, \\( and \\)) or rephrase the definition.`
+	}
 	return feedback, nil
+}
+
+// Inspect the registered source patterns before finalize: Cucumber omits definitions with
+// unknown parameter types from its finalized library. Use its expression parser and registry
+// for the hypothetical literal interpretation, without altering verification's matcher.
+const literalExpressionScript = `
+const fs = require('fs'), path = require('path');
+const cc = require('@cucumber/cucumber');
+const { CucumberExpression } = require('@cucumber/cucumber-expressions');
+const inp = JSON.parse(fs.readFileSync(0, 'utf8'));
+const b = cc.supportCodeLibraryBuilder;
+let n = 0;
+b.reset(process.cwd(), () => String(n++));
+for (const f of inp.files) { try { require(path.resolve(f)); } catch (e) {} }
+const registry = b.parameterTypeRegistry;
+let found = false;
+for (const d of b.stepDefinitionConfigs) {
+  // Cucumber's stack-based URI extraction can strip parentheses from the checkout path.
+  if (typeof d.pattern !== 'string' || !inp.own.some(f => {
+    const absolute = path.resolve(f), uri = path.resolve(d.uri);
+    return absolute === uri || absolute.replace(/[()]/g, '') === uri;
+  })) continue;
+  let p = '', changed = false;
+  for (let i = 0; i < d.pattern.length; i++) {
+    const c = d.pattern[i];
+    if (c === '\\') { p += c + (d.pattern[++i] || ''); continue; }
+    if (c === '{') {
+      const end = d.pattern.indexOf('}', i + 1);
+      if (end >= 0 && registry.lookupByTypeName(d.pattern.slice(i + 1, end))) {
+        p += d.pattern.slice(i, end + 1); i = end; continue;
+      }
+    }
+    if ('/(){'.includes(c)) { p += '\\'; changed = true; }
+    // A closing brace outside a parameter must also be escaped for the parser.
+    if (c === '}') p += '\\';
+    p += c;
+  }
+  if (!changed) continue;
+  try {
+    const expr = new CucumberExpression(p, registry);
+    if (inp.texts.some(t => expr.match(t) !== null)) { found = true; break; }
+  } catch (e) {}
+}
+process.stdout.write('\nKOGEN_LITERAL_HINT:' + JSON.stringify(found) + '\n');
+`
+
+func literalExpressionHint(ctx context.Context, node, cucumber, root string, env, files, own, texts []string) bool {
+	in, _ := json.Marshal(map[string]any{"files": files, "own": own, "texts": texts})
+	cmd := exec.CommandContext(ctx, node, "-e", literalExpressionScript)
+	cmd.Dir = root
+	cmd.Env = append(slices.Clone(env), "NODE_PATH="+cucumber)
+	cmd.Stdin = bytes.NewReader(in)
+	out, _ := cmd.Output()
+	for _, line := range strings.Split(string(out), "\n") {
+		if line == "KOGEN_LITERAL_HINT:true" {
+			return true
+		}
+	}
+	return false
 }
 
 // unescapedStringArgument recognizes the narrow case where a matching literal
