@@ -1,6 +1,7 @@
 package shape
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -78,6 +79,20 @@ func TestDecisionOutcomeRules(t *testing.T) {
 			continue
 		}
 		want := append([]string{decisionHead, assumptionRule}, c.feedback...)
+		grounded := false
+		for _, q := range c.item.quotes {
+			if q != "" && containsNormalized(request, q) {
+				grounded = true
+			}
+		}
+		if c.verdict == "unsupported" && grounded {
+			where := "the quoted statement"
+			if at := strings.Index(intent, c.item.statement); at >= 0 {
+				where = fmt.Sprintf("intent.md line %d", 1+strings.Count(intent[:at], "\n"))
+			}
+			want = append([]string{"Decision check: 1 stated decisions are not supported by the request; follow the quoted request passages:"}, c.feedback...)
+			want = append(want, "fix for "+where+": the request speaks to this in the quoted passages; make the statement follow them or remove it; an assumption does not override request text.")
+		}
 		if c.verdict == "contradicts" {
 			want = []string{
 				"Decision check: 1 stated decisions are not supported by the request; resolve each explicit conflict using the requirement below:",

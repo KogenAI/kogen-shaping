@@ -1,0 +1,10 @@
+'use strict';
+const {Given, When, Then, AfterAll} = require('@cucumber/cucumber');
+const h = require('./shape-retry-progress-policy__harness');
+Given('shape-retry-progress-policy: a fresh retry budget with limit three', function () { this.input = {}; });
+When('shape-retry-progress-policy: refusals arrive as {string}', function (gates) { this.input = {SRPP_GATES:gates}; });
+Then('shape-retry-progress-policy: the budget trace is {string}', function (expected) { h.trace(h.observe('budget', this.input), expected); });
+Given('shape-retry-progress-policy: statement {string} in draft {string}', function (statement, intent) { this.input = {SRPP_STATEMENT:statement, SRPP_INTENT:intent.replace(/\\n/g, '\n')}; });
+When('shape-retry-progress-policy: an unsupported finding cites {string}', function (quote) { this.input.SRPP_QUOTE = quote; });
+Then('shape-retry-progress-policy: feedback contains {string} and assumption rule is {string}', function (text, presence) { h.feedback(h.observe('decision', this.input), text, presence); });
+AfterAll(h.cleanup);

@@ -1,0 +1,11 @@
+{
+  "None": false,
+  "Path": ".kogen/models/shape-retry-progress-policy/model.qnt",
+  "Invariants": [
+    "Bounds",
+    "StopPolicy"
+  ],
+  "Seed": "17",
+  "Samples": "50",
+  "Steps": "8"
+}

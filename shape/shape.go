@@ -538,17 +538,19 @@ type original struct {
 
 // shaping is one run of the shaper conversation.
 type shaping struct {
-	s        *sys.Session
-	in       ShapeInput
-	repo     *git.Repo
-	root     string
-	slug     string
-	cfg      *project.Config
-	role     project.Role
-	ev       *Evidence
-	rd       *verify.Readiness
-	client   *provider.Client
-	stateDir string
+	retry        retryBudget
+	retryStopped bool
+	s            *sys.Session
+	in           ShapeInput
+	repo         *git.Repo
+	root         string
+	slug         string
+	cfg          *project.Config
+	role         project.Role
+	ev           *Evidence
+	rd           *verify.Readiness
+	client       *provider.Client
+	stateDir     string
 	// ext is the executor of an external shape role (nil: the native shaper).
 	ext    executor.Executor
 	extMax int
@@ -892,8 +894,7 @@ func (sh *shaping) providerFailed(e *sys.Error) error {
 	return sys.Fail("shape", "provider_failed", sentence, 4)
 }
 
-// converse runs the conversation until a valid submission, or three invalid ones in a row
-// (SHP-4, SHP-8).
+// converse runs until a valid submission or the invalid-submission budget ends (SHP-4, SHP-8).
 func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider.Usage, error) {
 	var usage provider.Usage
 	turns := newTurns("shape")
@@ -1004,7 +1005,7 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 				}
 				outputs = append(outputs, toolOutput(c, text))
 			case c.Name == SubmitTool:
-				sh.priorInvalid = turns.invalid
+				sh.priorInvalid = sh.retry.consecutive
 				text, r, err := sh.submit(ctx, c.Args())
 				if err != nil {
 					return outcome{}, usage, err
@@ -1039,7 +1040,7 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 			sh.ev.NextAttempt()
 		case result.kind == outInvalid:
 			turns.invalid++
-			if turns.invalid >= submissionRetryLimit(sh.in.SubmissionRetryLimit) {
+			if sh.retryStopped {
 				return result, usage, nil
 			}
 			sinceSubmit = 0
@@ -1070,7 +1071,7 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 
 // converseExternal is the external shaper's conversation: one fresh read-only session; each
 // final structured result is the existing `submit` payload, routed through the same submission
-// rules, and Kogen's actual feedback returns to the same session. Three invalid submissions in
+// rules, and Kogen's actual feedback returns to the same session. Invalid submissions in
 // a row end it like the native shaper.
 func (sh *shaping) converseExternal(ctx context.Context, blocks []any) (outcome, *extSession, error) {
 	sh.externalReads = make(map[string]bool)
@@ -1093,7 +1094,7 @@ func (sh *shaping) converseExternal(ctx context.Context, blocks []any) (outcome,
 	}
 	defer x.close()
 	defer func() { sh.ev.Record(x.summary()) }()
-	feedback, invalid := "", 0
+	feedback := ""
 	for {
 		sh.s.Progress(fmt.Sprintf("kogen: shaping (external round %d, %d s)", x.rounds+1, sh.elapsed()))
 		clear(sh.externalReads)
@@ -1108,15 +1109,14 @@ func (sh *shaping) converseExternal(ctx context.Context, blocks []any) (outcome,
 		if err != nil {
 			return outcome{}, x, err
 		}
-		sh.priorInvalid = invalid
+		sh.priorInvalid = sh.retry.consecutive
 		text, out, err := sh.submit(ctx, args)
 		if err != nil {
 			return outcome{}, x, err
 		}
 		switch out.kind {
 		case outInvalid:
-			invalid++
-			if invalid >= submissionRetryLimit(sh.in.SubmissionRetryLimit) {
+			if sh.retryStopped {
 				return out, x, nil
 			}
 		case outObservations, outPrecheck, outQuestionRefused:
@@ -1479,7 +1479,16 @@ func (sh *shaping) refused(gate string, problems []string) {
 	refusal := shapeRefusal{attempt: sh.submissions, gate: gate, problems: cut}
 	sh.unresolved = append(sh.unresolved, refusal)
 	sh.lastCounted = &refusal
-	sh.ev.Record(map[string]any{"event": "submission_refused", "attempt": sh.submissions, "gate": gate, "problems": cut})
+	event := map[string]any{"event": "submission_refused", "attempt": sh.submissions, "gate": gate, "problems": cut}
+	if gate != "question_check" {
+		if sh.retry.limit == 0 {
+			sh.retry.limit = submissionRetryLimit(sh.in.SubmissionRetryLimit)
+		}
+		sh.retryStopped = sh.retry.refuse(gate)
+		event["consecutive"] = sh.retry.consecutive
+		event["total"] = sh.retry.total
+	}
+	sh.ev.Record(event)
 }
 
 // envelopeRule is the first problem line of a submission that is not exactly one of questions,
@@ -1684,7 +1693,8 @@ func (sh *shaping) acceptFiles(ctx context.Context, submitted []proposedFile) (s
 		}
 	}
 	intent, _, err := project.CheckIntent(sh.root, sh.slug, sh.overlay())
-	if err != nil && sh.priorInvalid >= submissionRetryLimit(sh.in.SubmissionRetryLimit)-1 {
+	if err != nil && (sh.retry.total >= 2*submissionRetryLimit(sh.in.SubmissionRetryLimit)-1 ||
+		(sh.retry.gate == "intent" && sh.priorInvalid >= submissionRetryLimit(sh.in.SubmissionRetryLimit)-1) || submissionRetryLimit(sh.in.SubmissionRetryLimit) == 1) {
 		if e, ok := sys.AsError(err); ok && e.Reason == "lint" && slices.ContainsFunc(e.Lines, func(line string) bool { return strings.HasPrefix(line, "title:") }) {
 			p := project.IntentMDPath(sh.slug)
 			before := sh.proposed[p]

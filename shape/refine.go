@@ -88,6 +88,7 @@ func refineStart(ctx context.Context, s *sys.Session, in RefineInput) (int, erro
 
 // refine is one run: what it froze, what it keeps privately and the conversation's state.
 type refine struct {
+	retry  retryBudget
 	s      *sys.Session
 	in     RefineInput
 	repo   *git.Repo
@@ -819,8 +820,22 @@ type refineOutcome struct {
 	kind       refineKind
 	reason     string // the constraint
 	diagnostic string // why the submission was invalid
+	gate       string
 	files      map[string]string
 	ready      *verify.Ready
+}
+
+func (r *refine) countRefusal(out refineOutcome) bool {
+	if r.retry.limit == 0 {
+		r.retry.limit = submissionRetryLimit(r.in.SubmissionRetryLimit)
+	}
+	gate := out.gate
+	if gate == "" {
+		gate = "validation"
+	}
+	stop := r.retry.refuse(gate)
+	r.ev.Record(map[string]any{"event": "submission_refused", "attempt": r.retry.total, "gate": gate, "problems": strings.Split(out.diagnostic, "\n"), "consecutive": r.retry.consecutive, "total": r.retry.total})
+	return stop
 }
 
 // converseExternal is the external refiner: one fresh read-only session whose final structured
@@ -835,7 +850,7 @@ func (r *refine) converseExternal(ctx context.Context, role project.Role, blocks
 	}
 	defer x.close()
 	defer func() { r.ev.Record(x.summary()) }()
-	feedback, invalid := "", 0
+	feedback := ""
 	for {
 		if err := interrupted(ctx, r.s); err != nil {
 			return nil, nil, err
@@ -865,8 +880,7 @@ func (r *refine) converseExternal(ctx context.Context, role project.Role, blocks
 		case refineConstrained:
 			return nil, nil, refineConstraint(out.reason)
 		case refineInvalid:
-			invalid++
-			if invalid >= submissionRetryLimit(r.in.SubmissionRetryLimit) {
+			if r.countRefusal(out) {
 				e := sys.Fail("shape", "refinement_invalid", fmt.Sprintf("no valid ready correction after %d submissions; the original draft is preserved", submissionRetryLimit(r.in.SubmissionRetryLimit)), 1)
 				e.Lines = strings.Split(out.diagnostic, "\n")
 				return nil, nil, e
@@ -877,7 +891,7 @@ func (r *refine) converseExternal(ctx context.Context, role project.Role, blocks
 }
 
 // converse runs the conversation until a ready complete candidate, an unsupported
-// correction, or three invalid or not-ready submissions (SHP-11).
+// correction, or exhaustion of the invalid-submission budget (SHP-11).
 func (r *refine) converse(ctx context.Context, role project.Role, defs []any, input []any) (map[string]string, *verify.Ready, provider.Usage, error) {
 	var usage provider.Usage
 	turns := newTurns("refine")
@@ -1010,7 +1024,7 @@ func (r *refine) converse(ctx context.Context, role project.Role, defs []any, in
 		if result.kind == refineInvalid {
 			turns.invalid++
 			r.ev.NextAttempt()
-			if turns.invalid >= submissionRetryLimit(r.in.SubmissionRetryLimit) {
+			if r.countRefusal(result) {
 				e := sys.Fail("shape", "refinement_invalid",
 					fmt.Sprintf("no valid ready correction after %d submissions; the original draft is preserved", submissionRetryLimit(r.in.SubmissionRetryLimit)), 1)
 				e.Lines = strings.Split(result.diagnostic, "\n")
@@ -1178,7 +1192,7 @@ func (r *refine) submit(ctx context.Context, args map[string]any) (string, refin
 	}
 	return "not ready:\n" + diagnostic +
 			"\nWell-formed proposals are retained in this run; submit only corrections. Omitted paths retain their previous proposal, or the original if never proposed.",
-		refineOutcome{kind: refineInvalid, diagnostic: diagnostic}, nil
+		refineOutcome{kind: refineInvalid, diagnostic: diagnostic, gate: "readiness"}, nil
 }
 
 // acceptanceChecks is Shape's acceptance checks (the readiness gates, the unpassable-step
@@ -1218,11 +1232,11 @@ func refusal(err error) (string, bool) {
 // refused is the outcome of a candidate an acceptance check refused: its text goes back to the
 // refiner as it is and counts as an invalid submission. The refused candidate's readiness is
 // never kept to acknowledge.
-func (r *refine) refused(attempt int, text string) (string, refineOutcome, error) {
+func (r *refine) refused(attempt int, gate, text string) (string, refineOutcome, error) {
 	if err := r.save("", map[string][]byte{fmt.Sprintf("diagnostic-%d.txt", attempt): []byte(text)}, 0o666); err != nil {
 		return "", refineOutcome{}, err
 	}
-	return text, refineOutcome{kind: refineInvalid, diagnostic: text}, nil
+	return text, refineOutcome{kind: refineInvalid, diagnostic: text, gate: gate}, nil
 }
 
 // check formats and checks the accumulated candidate in the scratch checkout. A *sys.Error is
@@ -1280,7 +1294,7 @@ func (r *refine) check(ctx context.Context, attempt int, paths []string) (string
 		return "", refineOutcome{}, err
 	}
 	if confirmed, ok := checks.contractRefused[hash]; ok {
-		return r.refused(attempt, contractFeedback(confirmed))
+		return r.refused(attempt, contractGate, contractFeedback(confirmed))
 	}
 	acknowledged := r.observed != nil && r.scratchD.Current(r.s, r.slug, r.observed)
 	ready := r.observed
@@ -1298,7 +1312,15 @@ func (r *refine) check(ctx context.Context, attempt int, paths []string) (string
 		})
 		r.scratchD.Gate = nil
 		if text, ok := refusal(err); ok {
-			return r.refused(attempt, text)
+			gate := "unpassable_step"
+			var unwritten *unwrittenTestsError
+			var observer *runnerObserverError
+			if errors.As(err, &unwritten) {
+				gate = "unwritten_tests"
+			} else if errors.As(err, &observer) {
+				gate = "runner_observer"
+			}
+			return r.refused(attempt, gate, text)
 		}
 		if err != nil {
 			return "", refineOutcome{}, err
@@ -1340,7 +1362,7 @@ func (r *refine) check(ctx context.Context, attempt int, paths []string) (string
 		}
 		if !confirmed.empty() {
 			checks.contractRefused[hash] = confirmed
-			return r.refused(attempt, contractFeedback(confirmed))
+			return r.refused(attempt, contractGate, contractFeedback(confirmed))
 		}
 		checks.contractChecked[hash] = true
 	}

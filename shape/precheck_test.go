@@ -27,7 +27,7 @@ func TestShapeDeclaredFileGapsAreAllNamed(t *testing.T) {
 	f := newShpFx(t,
 		shpSubmit("c1", preFiles(preFile(preIntentPath, intent))),
 		shpSubmit("c2", preFiles(preFile(preFeaturePath, shpFeature))),
-		shpSubmit("c3", outside), shpSubmit("c4", outside))
+		shpSubmit("c3", outside), shpSubmit("c4", outside), shpSubmit("c5", outside))
 	exit, err := f.shape("Add calc.is_even(n).")
 	shpWantError(t, err, "shape", "incomplete_package", "within 3 attempts", 1)
 	shpEq(t, "exit", exit, 1)
@@ -36,7 +36,7 @@ func TestShapeDeclaredFileGapsAreAllNamed(t *testing.T) {
 	shpEq(t, "refusal", shpOutputs(reqs[1])["c1"], "invalid submission:\n"+strings.Join(gaps, "\n")+"\nEarlier well-formed proposals are retained; submit only corrections.")
 	shpEq(t, "precheck", shpOutputs(reqs[2])["c2"], "not submitted: the package still has these gaps, and this call was not counted as a submission attempt:\n"+
 		strings.Join(gaps[1:], "\n")+"\nThe files of this call were retained with your earlier proposals. Add what is missing with propose_files; the next submission counts as an attempt.")
-	shpEq(t, "refused", strings.Join(shpRefused(f), " "), "1:intent 2:validation 3:validation")
+	shpEq(t, "refused", strings.Join(shpRefused(f), " "), "1:intent 2:validation 3:validation 4:validation")
 	pre := shpNamed(f.events(), "submission_precheck")
 	shpEq(t, "prechecks", len(pre), 1)
 	shpEq(t, "attempt", pre[0]["attempt"], any(float64(1)))

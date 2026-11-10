@@ -214,14 +214,31 @@ func decisionOutcome(items []decisionItem, request, intent string) (map[string]a
 			}
 			continue
 		}
-		unsupported = true
+		grounded := false
+		for _, q := range it.quotes {
+			if strings.TrimSpace(q) != "" && containsNormalized(request, q) {
+				grounded = true
+			}
+		}
 		problems = append(problems, fmt.Sprintf("statement: %s | request_quotes: %s | verdict: unsupported | why: %s", it.statement, strings.Join(quoted, ", "), it.why))
+		if grounded {
+			where := "the quoted statement"
+			if at := strings.Index(intent, it.statement); at >= 0 {
+				where = fmt.Sprintf("intent.md line %d", 1+strings.Count(intent[:at], "\n"))
+			}
+			problems = append(problems, fmt.Sprintf("fix for %s: the request speaks to this in the quoted passages; make the statement follow them or remove it; an assumption does not override request text.", where))
+		} else {
+			unsupported = true
+		}
 	}
 	event := map[string]any{"event": "decision_check", "follows": counts["follows"], "contradicts": counts["contradicts"], "unsupported": counts["unsupported"], "items": events}
 	if len(problems) == 0 {
 		return event, nil
 	}
 	head := fmt.Sprintf("Decision check: %d stated decisions are not supported by the request; follow the request, cite the repository evidence that decides it with (evidence: ...), or mark the decision as an assumption the user must confirm:", refused)
+	if !unsupported {
+		head = fmt.Sprintf("Decision check: %d stated decisions are not supported by the request; follow the quoted request passages:", refused)
+	}
 	if conflicts > 0 {
 		head = fmt.Sprintf("Decision check: %d stated decisions are not supported by the request; resolve each explicit conflict using the requirement below:", refused)
 	}

@@ -34,7 +34,7 @@ func TestShapeMissingFilesSurviveUnrelatedInvalidSubmits(t *testing.T) {
 	f := newShpFx(t,
 		shpSubmit("missing", preFiles(preFile(preIntentPath, shpScopedIntentMD))),
 		shpSubmit("unrelated1", preFiles(preFile("calc.js", "x"))),
-		shpSubmit("unrelated2", preFiles(preFile("calc.js", "x"))))
+		shpSubmit("unrelated2", preFiles(preFile("calc.js", "x"))), shpSubmit("unrelated3", preFiles(preFile("calc.js", "x"))))
 	_, err := f.shape("Add calc.is_even(n).")
 	e := shpWantError(t, err, "shape", "incomplete_package", "within 3 attempts", 1)
 	shpContains(t, "actual unresolved feature", strings.Join(e.Lines, "\n"), "acceptance.feature does not exist")
@@ -72,7 +72,7 @@ func TestShapeResolvedGapsDoNotMaskLaterInvalidPackages(t *testing.T) {
 	outside := preFiles(preFile("calc.js", "x"))
 	f := newShpFx(t, shpSubmit("missing", preFiles(preFile(preIntentPath, shpScopedIntentMD))),
 		shpAnswer(shpCall("complete", ProposeFilesTool, shpFiles())),
-		shpSubmit("bad2", outside), shpSubmit("bad3", outside))
+		shpSubmit("bad2", outside), shpSubmit("bad3", outside), shpSubmit("bad4", outside))
 	_, err := f.shape("Add calc.is_even(n).")
 	shpWantError(t, err, "shape", "invalid_output", "after 3 attempts", 1)
 	shapeAbsent(t, f)
