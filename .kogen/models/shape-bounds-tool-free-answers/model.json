@@ -1,0 +1,11 @@
+{
+  "None": false,
+  "Path": ".kogen/models/shape-bounds-tool-free-answers/model.qnt",
+  "Invariants": [
+    "Bounded",
+    "StopAtBoundary"
+  ],
+  "Seed": "1",
+  "Samples": "100",
+  "Steps": "305"
+}

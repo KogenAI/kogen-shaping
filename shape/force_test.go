@@ -427,10 +427,10 @@ func forceResets(t *testing.T, w *forceWire) {
 		shpWantError(t, err, "shape", "invalid_output", "the shaper answered without calling any tool 3 consecutive times (no-tool limit); its last submission (attempt 1) was refused at gate validation", 1)
 		reqs := f.Prov.requests()
 		// The first prose answer after the refusal is followed by a recovery inference; the long
-		// prose answer follows actual reads, so it starts a new idle streak. The reset
-		// request stays forced; three consecutive idle answers, not the earlier prose, end the run.
-		forced := len(reqs) - 2
-		forceVerify(t, w, "shape", f.events(), reqs, true, []int{forced, forced + 1}, [][2]int{{2, 1}, {3, 1}}, [2]int{4, 1})
+		// prose answer follows actual reads, but still counts since the refusal. The reset
+		// request stays forced and the third answer ends the run.
+		forced := len(reqs) - 1
+		forceVerify(t, w, "shape", f.events(), reqs, true, []int{forced}, [][2]int{{2, 1}}, [2]int{3, 1})
 		forceCheckReset(t, f.events(), reqs, f.Prov.rawRequests(), "shape", 2)
 	})
 	t.Run("reset/refine", func(t *testing.T) {

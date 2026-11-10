@@ -10,9 +10,8 @@ import (
 )
 
 // noToolLimit is the finite protection against repeated prose: a native shaping conversation
-// stops at this many consecutive answers without any tool call (Refine retains its
-// cumulative bound). It is separate from the invalid-submission
-// budget.
+// stops at this many tool-free answers since submission (Refine retains its
+// cumulative bound). It is separate from the invalid-submission budget.
 const noToolLimit = 3
 
 // Reminders for a tool-free answer. They are sent after every such answer, whether or not the

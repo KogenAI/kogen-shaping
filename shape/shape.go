@@ -898,7 +898,7 @@ func (sh *shaping) providerFailed(e *sys.Error) error {
 func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider.Usage, error) {
 	var usage provider.Usage
 	turns := newTurns("shape")
-	defer turns.counts(sh.ev)
+	defer shapeTurnCounts(turns, sh.ev, &sh.requests)
 	home := sh.s.Getenv("HOME")
 	if home == "" {
 		home, _ = os.UserHomeDir()
@@ -913,8 +913,7 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 	var last lastSubmission
 	var lastAnswer string
 	for {
-		sh.requests++
-		sh.s.Progress(fmt.Sprintf("kogen: shaping (request %d, %d s)", sh.requests, sh.elapsed()))
+		sh.s.Progress(fmt.Sprintf("kogen: shaping (request %d, %d s)", sh.requests+1, sh.elapsed()))
 		t0 := time.Now()
 
 		revision, err := CurrentRevision(sh.repo)
@@ -964,6 +963,7 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 		turns.announce(req, sh.role, sh.ev)
 		call := sh.ev.BeginCall("shape", "", revision.Map(), "main shaping", sh.role).Sized(sh.client, req)
 		resp, err := tools.Deliver(input, "shape", sh.ev.Record, func() (*provider.Response, error) {
+			sh.requests++
 			sent := sh.ev.Millis()
 			r, err := sh.client.Respond(ctx, sh.s, req, call)
 			call.End(r, err)
@@ -971,6 +971,9 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 			return r, err
 		})
 		if err != nil {
+			if sh.requests >= shapeRequestCap {
+				return shapeRequestStop(last, lastAnswer, turns.noTool), usage, nil
+			}
 			return outcome{}, usage, err
 		}
 		sh.progress(fmt.Sprintf("kogen: shape response %s wall_ms=%d", resp.Usage.Line(), time.Since(t0).Milliseconds()))
@@ -984,6 +987,10 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 			lastAnswer = sh.recordToolFreeAnswer(resp.Items, turns.noTool, redactor)
 		} else {
 			noToolStreak = 0
+		}
+
+		if sh.requests >= shapeRequestCap {
+			return shapeRequestStop(last, lastAnswer, turns.noTool), usage, nil
 		}
 
 		var outputs []any
@@ -1054,7 +1061,7 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 		case result.kind == outBlocked, result.kind == outQuestions, result.kind == outReady:
 			return result, usage, nil
 		case toolFree:
-			if noToolStreak >= noToolLimit {
+			if shapeAnswerLimit(sinceSubmit) {
 				return noToolStop(last, lastAnswer), usage, nil
 			}
 			sh.ev.NextAttempt()
