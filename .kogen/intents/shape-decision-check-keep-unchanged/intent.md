@@ -1,0 +1,42 @@
+# Support evidenced keep-unchanged decisions
+
+Slug: shape-decision-check-keep-unchanged
+Model: not applicable — this is stateless evidence classification and citation resolution, not a new workflow state
+Acceptance:
+- .kogen/intents/shape-decision-check-keep-unchanged/acceptance.feature
+- features/steps/shape-decision-check-keep-unchanged__steps.js
+- features/steps/shape-decision-check-keep-unchanged__driver/probe_test.go
+
+Make decision_check accept a Decision preserving existing values or behaviour when observed repository evidence establishes the claim, without requiring a request quote. Continue refusing unsupported new choices and purportedly unchanged values that the evidence does not establish. A citation is not a waiver, and evidence never overrides an explicit conflicting request.
+
+The current checker policy already states the core rule, and its evidence supplier already includes baseline file bytes and retained probe output. Preserve those working parts rather than inventing another classifier. The demonstrated remaining gap is file-and-line citations: the citation parser currently treats the line suffix as part of the filename. Resolve a positive decimal `:line` suffix on a file citation to the observed tracked file for evidence qualification and delivery to the checker. Keep the citation's original text in the Intent; continue checking actual baseline bytes rather than trusting a candidate's claim. Plain file citations and scratch-observation evidence must continue working. (evidence: shape/decision.go; shape/decision_evidence.go; shape/evidencemark.go)
+
+Add focused production regression coverage for the requested classifications and citation resolution, retaining useful existing tests. The acceptance helper compiles a test overlay into the actual shape package and calls decisionCheck through its local scripted provider. It observes the delivered checker instructions, independently supplied evidence, recorded verdict and refusal feedback. Scripted verdicts qualify the local gate and evidence transport, not live-model reasoning. Policy-output assertions pin the existing explicit classification guidance. No new provider, authentication, settings, limits, or changes to other gates are requested. (evidence: shape/decision.go; shape/helper_test.go; shape/decision_evidence_grounding_test.go)
+
+## Decisions
+- A keep-unchanged Decision supported by observed repository evidence follows without a request quote; unsupported new choices and claims whose cited evidence does not establish their stated value remain unsupported. (source: request)
+- Preserve explicit-request conflict handling and recorded-answer and assumption semantics; do not replace semantic support checking with automatic acceptance of every evidence marker. (evidence: shape/decision.go; shape/decision_test.go; shape/decision_evidence_grounding_test.go) (source: request)
+- Resolve file-and-line references as citations of the observed tracked file, while keeping baseline-source and retained-probe grounding; the current parser does not separate a line suffix from the file path. (evidence: shape/evidencemark.go; shape/decision_evidence.go) (source: request)
+- Use the existing local scripted-provider fixture for deterministic gate coverage and inspect the instructions actually sent to that provider; this does not establish live-model reasoning quality. (evidence: shape/helper_test.go; shape/decision_evidence_grounding_test.go) (source: request)
+- Require existing decision_check tests and the full kogen-shaping suite to remain green through the configured go-test check, rather than rerunning the full suite inside every wrong-implementation control. (evidence: .kogen/project.yaml; README.md) (source: request)
+
+## Source comparison
+- Addressed: the original Problem and Expected paragraphs' supported keep-unchanged Decisions, repository file-and-line or observed-tree evidence, no mandatory request quote, and unsupported new choices are covered by the outcome, citation-resolution requirement, and the first three acceptance scenarios. The core prompt policy already exists at shape/decision.go:33; the complete contract retains it and fixes the demonstrated citation delivery gap rather than removing the grounding check.
+- Addressed: requested acceptance checks (1) through (3) are represented by the executable checker scenarios, including refusal when evidence disagrees. The helper-directory scratch-observation counterexample is retained as its own scenario. The controlsMaxRuns, controlsMaxFiles, controlsMaxBytes, controlsTimeCap and 300 s reproducer literals remain in executable feature inputs and their local fixture.
+- Addressed: acceptance check (4) requires the existing decision_check tests and full suite green. The configured GOFLAGS=-trimpath go test ./... check executes that obligation; it is not replaced by the focused acceptance helper. The full suite passed in shaping on the unchanged production tree; the final implementation must pass it afresh.
+- Addressed as historical context, not a new scope requirement: the 8 Nov 6-of-9 gate breakdown, k-shape-controls-minimal-witnesses and k-shape-helper-dir-guidance reports motivate the executable reproductions. Studio issue ed7490a5-37ca-4fc0-b7c6-30664f7efcbd is retained in the feature description. The retry basis v0.1.0-dev.3c70abcb and shape-unreachable-names-build-error at 4c0d87f remain context; there is no request here to alter compiler/step-error forwarding or the other gates.
+- Omitted: no requested behaviour is deliberately omitted. Deterministic local scripted-provider tests do not purport to be a live-provider evaluation, nor is a paid provider call added to ordinary regression checks.
+
+## Tests
+- Evidenced unchanged values need no request quote: add focused regression coverage of delivered evidence, explicit checker policy, follows event and no refusal feedback (regression)
+- Observed unchanged behaviour is supported: exercise retained scratch-observation output through decisionCheck (integration)
+- Unsupported new choices remain refused: exercise an unsupported result with no quote, evidence or assumption and require unsupported feedback (unit)
+- Incorrect keep-unchanged claims remain refused: exercise mismatching observed evidence and require an unsupported verdict and refusal despite the marker (regression)
+- File-and-line citations deliver actual evidence: add citation-resolution regression coverage and exercise qualification and delivery from an observed tracked baseline file (integration)
+- Existing decision_check behaviour and full suite remain green: retain the existing tests and run the configured GOFLAGS=-trimpath go test ./... check on the implementation (existing)
+
+## Feasibility
+- The existing TestDecisionCheckerReceivesObservedCitationBytes, TestUnsupportedEvidenceValueIsStillRefused and TestDecisionOutcomeRules ran and passed on the unchanged production tree. The initial generated helper exposed a fixture-routing error and was repaired to route checker responses explicitly; its final observer fixture was captured from the correct scratch overlay, not fabricated provider output.
+- GOFLAGS=-trimpath go test ./... passed on the unchanged production tree (probe: exit 0, 262.0 s). Keep this full-suite requirement in the configured check, outside the bounded per-control acceptance runs.
+- The correct scratch overlay resolves positive file-line suffixes. Its captured report exercises all four checker cases. The bad observer fixture changes the mismatching-evidence case to omit its refusal; the observer must reject that otherwise valid report. These qualify local assertions, not live model interpretation.
+- evidence: {"id":"checker-report-observer","kind":"observer","inputs":[".kogen/intents/shape-decision-check-keep-unchanged/observer-good.json",".kogen/intents/shape-decision-check-keep-unchanged/observer-bad.json","features/steps/shape-decision-check-keep-unchanged__driver/probe_test.go"],"observers":["features/steps/shape-decision-check-keep-unchanged__steps.js"],"checks":[{"name":"good","command":"node features/steps/shape-decision-check-keep-unchanged__steps.js observe .kogen/intents/shape-decision-check-keep-unchanged/observer-good.json","exit":0,"output":"observer accepted\n"},{"name":"bad","command":"node features/steps/shape-decision-check-keep-unchanged__steps.js observe .kogen/intents/shape-decision-check-keep-unchanged/observer-bad.json","exit":1,"output":"observer rejected\n"}]}

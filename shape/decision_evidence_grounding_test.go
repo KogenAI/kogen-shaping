@@ -147,3 +147,134 @@ func TestDocsDirectoryEvidenceReachesDecisionChecker(t *testing.T) {
 	}
 	shpEq(t, "directory still needs observation", strings.Join(problems, "\n"), "- decision 1: this shaping did not list docs/presets")
 }
+
+func TestFileLineCitationUsesObservedBaseline(t *testing.T) {
+	parallel(t)
+	f := newShpFx(t)
+	f.write("limits.go", "package limits\nconst maxFiles = 8\n")
+	f.git("add", "limits.go")
+	f.git("commit", "-qm", "Add baseline limit")
+	f.write("limits.go", "package limits\nconst maxFiles = 9\n")
+	f.newSession()
+	sh := f.shaping()
+	sh.readPaths = map[string]bool{"limits.go": true}
+	for _, citation := range []string{"limits.go:2", "`limits.go:2`", "limits.go"} {
+		intent := "## Decisions\n- Keep maxFiles at 8. (evidence: " + citation + ") (source: request)\n"
+		problems, err := sh.evidenceProblems(intent)
+		if err != nil || len(problems) != 0 {
+			t.Fatalf("%s: problems %v, error %v", citation, problems, err)
+		}
+		evidence, err := sh.decisionEvidence(intent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		shpContains(t, "baseline", evidence, "const maxFiles = 8")
+		if strings.Contains(evidence, "const maxFiles = 9") {
+			t.Fatal("checkout override supplied as evidence")
+		}
+	}
+	sh.readPaths = nil
+	intent := "## Decisions\n- Keep maxFiles at 8. (evidence: limits.go:2) (source: request)\n"
+	problems, err := sh.evidenceProblems(intent)
+	if err != nil || len(problems) == 0 {
+		t.Fatalf("unobserved file: problems %v, error %v", problems, err)
+	}
+	evidence, err := sh.decisionEvidence(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shpContains(t, "unobserved file", evidence, "not observed")
+}
+
+func TestEvidenceItemLineSuffix(t *testing.T) {
+	for _, tc := range []struct{ citation, path string }{
+		{"limits.go:1", "limits.go"}, {"limits.go:002", "limits.go"},
+		{"limits.go:0", "limits.go:0"}, {"limits.go:00", "limits.go:00"},
+		{"limits.go:", "limits.go:"}, {"limits.go:-1", "limits.go:-1"},
+		{"limits.go:2x", "limits.go:2x"},
+	} {
+		if got := parseEvidenceItem(tc.citation).path; got != tc.path {
+			t.Errorf("%q: got %q, want %q", tc.citation, got, tc.path)
+		}
+	}
+}
+
+// Scripted verdicts exercise gate handling and evidence transport, not model reasoning.
+func TestDecisionCheckEvidencedAndUnsupported(t *testing.T) {
+	for _, tc := range []struct {
+		name, statement, citation, evidence, verdict string
+		probe                                        bool
+	}{
+		{"unchanged file", "Keep maxFiles at 8.", "limits.go:2", "const maxFiles = 8", "follows", false},
+		{"unchanged behavior", "Keep helpers in features/steps.", "ran `observe helpers`", "helpers directory: features/steps", "follows", true},
+		{"new choice", "Increase maxFiles to 9.", "", "", "unsupported", false},
+		{"wrong value", "Keep maxFiles at 9.", "limits.go:2", "const maxFiles = 8", "unsupported", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			line := "- " + tc.statement
+			if tc.citation != "" {
+				line += " (evidence: " + tc.citation + ")"
+			}
+			line += " (source: request)"
+			f := newShpFx(t)
+			f.Prov.route = func(req map[string]any) *shpStep {
+				if !decisionRequest(req) {
+					return nil
+				}
+				answer := shpAnswer(shpCall("d", SubmitDecisionCheckTool, map[string]any{"items": []any{map[string]any{"statement": line, "request_quotes": []any{}, "verdict": tc.verdict, "intent_value": "", "request_value": "", "difference": "", "why": "scripted result"}}}))
+				return &answer
+			}
+			f.write("limits.go", "package limits\nconst maxFiles = 8\n")
+			f.git("add", "limits.go")
+			f.git("commit", "-qm", "Add baseline")
+			f.newSession()
+			sh := f.shaping()
+			sh.role = sh.cfg.Models["shape"]
+			sh.request = "Improve controls."
+			sh.readPaths = map[string]bool{"limits.go": true}
+			if tc.probe {
+				sh.probed = map[string]bool{"observe helpers": true}
+				sh.probeTexts = map[string]string{"observe helpers": "helpers directory: features/steps\n"}
+			}
+			intent := "## Decisions\n" + line + "\n"
+			problems, err := sh.evidenceProblems(intent)
+			if err != nil || len(problems) != 0 {
+				t.Fatalf("evidence: %v, %v", problems, err)
+			}
+			feedback, err := sh.decisionCheck(context.Background(), intent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (len(feedback) == 0) != (tc.verdict == "follows") {
+				t.Fatalf("feedback: %v", feedback)
+			}
+			if tc.verdict == "unsupported" && !strings.Contains(strings.Join(feedback, "\n"), "verdict: unsupported") {
+				t.Fatalf("feedback: %v", feedback)
+			}
+			requests := f.Prov.decisionRequests()
+			if len(requests) != 1 {
+				t.Fatalf("requests: %d", len(requests))
+			}
+			input := qcText(requests[0])
+			if tc.evidence != "" {
+				shpContains(t, "delivered evidence", input, tc.evidence)
+			}
+			instructions, _ := requests[0]["instructions"].(string)
+			for _, policy := range []string{"if it shows the stated current value, give follows without requiring a request quote.", "A new choice with neither evidence nor a recorded assumption remains unsupported.", "A citation name alone is not proof.", "Give unsupported when the observed evidence does not establish the claimed value", "Explicit request conflicts still contradict"} {
+				shpContains(t, "checker policy", instructions, policy)
+			}
+			found := false
+			for _, event := range f.events() {
+				if event["event"] == "decision_check" {
+					found = true
+					if event[tc.verdict] != float64(1) {
+						t.Fatalf("event: %v", event)
+					}
+				}
+			}
+			if !found {
+				t.Fatal("missing decision_check event")
+			}
+		})
+	}
+}

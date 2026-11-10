@@ -69,6 +69,20 @@ func parseEvidenceItem(s string) evidenceItem {
 	if len(s) >= 2 && strings.HasPrefix(s, "`") && strings.HasSuffix(s, "`") {
 		s = strings.TrimSpace(s[1 : len(s)-1])
 	}
+	// A positive decimal line suffix identifies the file, not a separate path.
+	if i := strings.LastIndexByte(s, ':'); i > 0 && i+1 < len(s) {
+		digits, positive := true, false
+		for _, c := range s[i+1:] {
+			if c < '0' || c > '9' {
+				digits = false
+				break
+			}
+			positive = positive || c != '0'
+		}
+		if digits && positive {
+			s = s[:i]
+		}
+	}
 	return evidenceItem{path: s, empty: s == ""}
 }
 
