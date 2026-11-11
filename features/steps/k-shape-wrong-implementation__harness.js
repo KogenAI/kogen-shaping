@@ -13,11 +13,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-loop/sys"
@@ -48,8 +46,7 @@ type kwiCandidate struct {
 // kwiJourney is one shaping run: the project files written over the fixture's before its
 // commit, the first candidate, and what the scripted shaper does after submitting it:
 // "resubmit" it twice unchanged, "acknowledge" accounted red, or "change" to the second
-// candidate and resubmit that twice unchanged. timeCap, when set, is the total-time cap of the
-// wrong-implementation runs, given through ShapeInput. refine, when set, shapes the first
+// candidate and resubmit that twice unchanged. refine, when set, shapes the first
 // candidate with a review that reports no property and then refines the published Intent
 // with the case's review: the refiner clarifies intent.md and acknowledges red.
 type kwiJourney struct {
@@ -58,7 +55,6 @@ type kwiJourney struct {
 	first   kwiCandidate
 	then    string
 	second  kwiCandidate
-	timeCap time.Duration
 	refine  bool
 }
 
@@ -125,8 +121,6 @@ func kwiCases() map[string]kwiCase {
 	for i := 1; i <= 8; i++ {
 		manyWrong.wrong = append(manyWrong.wrong, slowed(fmt.Sprintf("slowed f %d", i), measureStep))
 	}
-	slowCorrect := measuring
-	slowCorrect.correct = map[string]string{"f.js": slow(4000, "n * 2")}
 
 	// Keep A and B and add C: calc(op, a, b) keeps add and sub and gains mul.
 	add, sub, mul := "  if (op === 'add') return a + b;\n", "  if (op === 'sub') return a - b;\n", "  if (op === 'mul') return a * b;\n"
@@ -196,7 +190,6 @@ func kwiCases() map[string]kwiCase {
 		}},
 		"caps": {request: boundRequest, review: boundReview, journeys: []kwiJourney{
 			{name: "needs more runs than the cap", files: boundFiles, first: manyWrong, then: "resubmit"},
-			{name: "runs longer than the time cap", files: boundFiles, first: slowCorrect, then: "resubmit", timeCap: 2 * time.Second},
 		}},
 		"plain": {request: "Make node hello.js print hello.", review: kwiReview(), journeys: []kwiJourney{
 			{name: "one command, one output", files: map[string]string{"hello.js": "console.log('hi');\n"}, first: kwiCandidate{
@@ -316,18 +309,8 @@ func kwiRun(t *testing.T, c kwiCase, j kwiJourney) map[string]any {
 		return &st
 	}
 
-	o := map[string]any{"remaining": "", "time_cap_field": true}
+	o := map[string]any{"remaining": ""}
 	in := ShapeInput{Project: f.Root, Slug: shpSlug, Request: c.request, Client: f.Client}
-	if j.timeCap > 0 {
-		// Set by name, so that this harness compiles on a tree without the field; without it the
-		// journey runs uncapped and the observation says so.
-		field := reflect.ValueOf(&in).Elem().FieldByName("WrongImplementationTimeCap")
-		if field.IsValid() && field.Type() == reflect.TypeOf(time.Duration(0)) {
-			field.SetInt(int64(j.timeCap))
-		} else {
-			o["time_cap_field"] = false
-		}
-	}
 	f.newSession()
 	exit, err := Shape(context.Background(), f.S, in)
 

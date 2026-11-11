@@ -27,7 +27,7 @@ func TestSpecialCharHintAcceptance(t *testing.T) {
     map[string]any{"path": "features/steps/is-even__steps.js", "content": steps},
    }}))
    f.newSession()
-   _, err := Shape(context.Background(), f.S, ShapeInput{Project:f.Root, Tools:fixtureTools(f.S), Slug:shpSlug, Request:"Explain undefined literal steps.", Client:f.Client, SubmissionRetryLimit:1})
+   _, err := Shape(context.Background(), f.S, ShapeInput{Project:f.Root, Tools:fixtureTools(f.S), Slug:shpSlug, Request:"Explain undefined literal steps.", Client:f.Client})
    problem := shpWantError(t, err, "intent", "not_ready", "the Intent is not ready to build", 1)
    feedback := strings.Join(problem.Lines, "\n")
    if !strings.Contains(feedback, "undefined step:") { t.Fatalf("did not reach undefined step: %s", feedback) }

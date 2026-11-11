@@ -37,11 +37,12 @@ Then('is-even: the fixture bytes are unchanged', function () {
   assert.ok(['not json', '{"client_id":', ''].includes(this.raw), JSON.stringify(this.raw));
 });
 `
-	f := newShpFx(t, shpSubmit("candidate", map[string]any{"files": []any{
+	candidate := map[string]any{"files": []any{
 		map[string]any{"path": project.IntentMDPath(shpSlug), "content": strings.ReplaceAll(shpScopedIntentMD, "features/steps", folder)},
 		map[string]any{"path": featurePath, "content": feature},
 		map[string]any{"path": stepPath, "content": steps},
-	}}))
+	}}
+	f := newShpFx(t, shpSubmit("c1", candidate), shpSubmit("c2", candidate), shpSubmit("c3", candidate))
 	f.write(project.ConfigPath, strings.ReplaceAll(f.read(project.ConfigPath), "features/steps", folder))
 	f.git("add", project.ConfigPath)
 	f.git("commit", "-qm", "Use the configured non-default Cucumber folder")
@@ -49,14 +50,14 @@ Then('is-even: the fixture bytes are unchanged', function () {
 	f.newSession()
 	exit, err := Shape(context.Background(), f.S, ShapeInput{
 		Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Request: "Keep malformed credential file bytes intact.",
-		Client: f.Client, SubmissionRetryLimit: 1,
+		Client: f.Client,
 	})
 	shpEq(t, "exit", exit, 1)
 	problem := shpWantError(t, err, "intent", "not_ready", "the Intent is not ready to build", 1)
 	shpContains(t, "failed Outline row", strings.Join(problem.Lines, "\n"), `undefined step: Given is-even: a home folder whose ChatGPT credential file contains "{"client_id":" (Examples row line 9)`)
 	shpContains(t, "repair hint", strings.Join(problem.Lines, "\n"), "Escape inner quotes inside the {string} argument")
 	refused := shpNamed(f.events(), "submission_refused")
-	if len(refused) != 1 || refused[0]["gate"] != "step_selfcheck" || len(f.Prov.decisionRequests()) != 0 || len(f.Prov.literalRequests()) != 0 {
+	if len(refused) != 3 || refused[2]["gate"] != "step_selfcheck" || len(f.Prov.decisionRequests()) != 0 || len(f.Prov.literalRequests()) != 0 {
 		t.Fatalf("malformed Outline was not stopped before review: %v", refused)
 	}
 

@@ -804,10 +804,7 @@ func (sh *shaping) wrongImplementationCheck(ctx context.Context, hash string) (c
 	if err != nil {
 		return contractConfirmed{}, err
 	}
-	timeCap := sh.in.WrongImplementationTimeCap
-	if timeCap <= 0 {
-		timeCap = controlsTimeCap
-	}
+	timeCap := controlsTimeCap
 	seconds := int(timeCap / time.Second)
 	feature := strings.Split(string(featureBytes), "\n")
 	stepFiles := intent.StepFiles()

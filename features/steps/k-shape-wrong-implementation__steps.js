@@ -60,7 +60,7 @@ function journey(seen, name) {
 function shown(name, o) {
   const results = Object.entries(o.results || {}).map(([id, text]) => `result of submission ${id}:\n${text}`).join('\n');
   return `journey ${JSON.stringify(name)}: shape ended with ${o.exit}; published=${o.published}; files on disk=${o.files}; ` +
-    `${o.shaper} shaper and ${o.contract} contract check request(s); ${o.runs} acceptance run(s); time cap field=${o.time_cap_field}\n` +
+    `${o.shaper} shaper and ${o.contract} contract check request(s); ${o.runs} acceptance run(s)\n` +
     `${results}\nnot-ready lines:\n${o.remaining}\nprogress:\n${o.progress}`;
 }
 
@@ -133,19 +133,19 @@ function controls(kind) {
   const line = '- add keeps working (kept) | request: answering add | problem: wrong implementation "add removed" passes scenario "Add keeps working"';
   const refusal = 'Wrong-implementation check: 1 problem(s) with whether acceptance rejects a wrong implementation of each property the request asks for; nothing was published.\n' + line;
   const known = {
-    refused: {published: false, files: false, shaper: 3, contract: 1, runs: 5, exit: 'exit 1, err intent/not_ready', time_cap_field: true,
+    refused: {published: false, files: false, shaper: 3, contract: 1, runs: 5, exit: 'exit 1, err intent/not_ready',
       results: {cand: refusal, again: refusal + '\nUnchanged: this package is identical to the one refused at attempt 1; repair it before submitting again.'},
       remaining: line, progress: 'kogen: checking the contract (1 s)\n'},
-    changed: {published: false, files: false, shaper: 4, contract: 2, runs: 10, exit: 'exit 1, err intent/not_ready', time_cap_field: true,
+    changed: {published: false, files: false, shaper: 4, contract: 2, runs: 10, exit: 'exit 1, err intent/not_ready',
       results: {cand: 'Readiness observations\nScenario: Mul multiplies (acceptance.feature line 6)', change: refusal},
       remaining: line, progress: 'kogen: checking the contract (1 s)\n'},
-    published: {published: true, files: true, shaper: 2, contract: 1, runs: 5, exit: 'exit 0, err <nil>', time_cap_field: true,
+    published: {published: true, files: true, shaper: 2, contract: 1, runs: 5, exit: 'exit 0, err <nil>',
       results: {cand: 'Readiness observations\nScenario: Mul multiplies (acceptance.feature line 6)\nAssertionError [ERR_ASSERTION]'},
       remaining: '', progress: 'kogen: checking the contract (1 s)\n'},
-    existing: {published: false, files: false, shaper: 3, contract: 2, runs: 2, exit: 'exit 1, err intent/not_ready', time_cap_field: true,
+    existing: {published: false, files: false, shaper: 3, contract: 2, runs: 2, exit: 'exit 1, err intent/not_ready',
       results: {cand: 'Property check: 1 problem(s) with how acceptance covers the properties the request asks for; nothing was published.\n- sub keeps working (kept) | request: sub exactly as it does now | problem: no scenario exercises it | confirmed: synthetic confirmation'},
       remaining: '- sub keeps working (kept) | request: sub exactly as it does now | problem: no scenario exercises it | confirmed: synthetic confirmation', progress: ''},
-    refining: {published: true, files: true, shaper: 4, contract: 2, runs: 3, exit: 'exit 0, err <nil>', time_cap_field: true, results: {},
+    refining: {published: true, files: true, shaper: 4, contract: 2, runs: 3, exit: 'exit 0, err <nil>', results: {},
       remaining: '', progress: '', refine_exit: 'exit 0, err <nil>', refine_outcome: 'ready', refined: true, refine_runs: 1, refine_progress: 'kogen: checking the contract (1 s)\n'},
   };
   const good = [

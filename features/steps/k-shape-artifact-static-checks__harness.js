@@ -261,7 +261,7 @@ func ksscShape(t *testing.T, name string, c ksscCase, gocache, out string) {
 	before := ksscRead(f.Root, watched)
 
 	f.newSession()
-	exit, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Slug: ksscSlug, Request: ksscRequest, Client: f.Client, SubmissionRetryLimit: 6})
+	exit, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Slug: ksscSlug, Request: ksscRequest, Client: f.Client})
 	seen := map[string]any{"case": name, "root": f.Root, "helper": c.helper, "exit": exit, "error": ksscError(err),
 		"stdout": f.Stdout.String(), "stderr": f.Stderr.String(), "before": before,
 		"checks": []any{map[string]any{"name": layout, "run": ksscLayout}, map[string]any{"name": analysis, "run": ksscAnalysis}}}

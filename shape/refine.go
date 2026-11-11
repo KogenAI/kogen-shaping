@@ -30,8 +30,6 @@ import (
 // RefineInput is one `kogen intent refine <slug> <sha256> <file|->`: the correction request,
 // already read by the caller, and the full baseline hash of the draft it corrects (SHP-11).
 type RefineInput struct {
-	SubmissionRetryLimit int // internal invalid-submission budget; nonpositive means 3
-
 	Project     string // a directory inside the project's repository; empty: the session's directory
 	Slug        string // valid by the caller (3 to 48 lowercase letters, digits and dashes)
 	Hash        string // the full 64-character lowercase SHA-256 from the draft's review card
@@ -288,9 +286,6 @@ var refineHashPattern = regexp.MustCompile(`\A[0-9a-f]{64}\z`)
 func (r *refine) run(ctx context.Context) (exit int, err error) {
 	defer os.RemoveAll(r.scratch)
 	defer r.ev.Finish()
-	if limit := submissionRetryLimit(r.in.SubmissionRetryLimit); limit != 3 {
-		r.ev.Record(map[string]any{"event": "submission_retry_limit", "limit": limit})
-	}
 	r.ev.Record(agent.BudgetEvent(r.client))
 	defer func() {
 		if err == nil {
@@ -827,7 +822,7 @@ type refineOutcome struct {
 
 func (r *refine) countRefusal(out refineOutcome) bool {
 	if r.retry.limit == 0 {
-		r.retry.limit = submissionRetryLimit(r.in.SubmissionRetryLimit)
+		r.retry.limit = submissionRetryLimit
 	}
 	gate := out.gate
 	if gate == "" {
@@ -881,7 +876,7 @@ func (r *refine) converseExternal(ctx context.Context, role project.Role, blocks
 			return nil, nil, refineConstraint(out.reason)
 		case refineInvalid:
 			if r.countRefusal(out) {
-				e := sys.Fail("shape", "refinement_invalid", fmt.Sprintf("no valid ready correction after %d submissions; the original draft is preserved", submissionRetryLimit(r.in.SubmissionRetryLimit)), 1)
+				e := sys.Fail("shape", "refinement_invalid", fmt.Sprintf("no valid ready correction after %d submissions; the original draft is preserved", submissionRetryLimit), 1)
 				e.Lines = strings.Split(out.diagnostic, "\n")
 				return nil, nil, e
 			}
@@ -1026,7 +1021,7 @@ func (r *refine) converse(ctx context.Context, role project.Role, defs []any, in
 			r.ev.NextAttempt()
 			if r.countRefusal(result) {
 				e := sys.Fail("shape", "refinement_invalid",
-					fmt.Sprintf("no valid ready correction after %d submissions; the original draft is preserved", submissionRetryLimit(r.in.SubmissionRetryLimit)), 1)
+					fmt.Sprintf("no valid ready correction after %d submissions; the original draft is preserved", submissionRetryLimit), 1)
 				e.Lines = strings.Split(result.diagnostic, "\n")
 				return nil, nil, usage, e
 			}

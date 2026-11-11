@@ -138,3 +138,12 @@ func TestRenderedDecisionAndControlsGuidance(t *testing.T) {
 		t.Error("external note missing evidence rule")
 	}
 }
+
+func TestShaperPolicyConstantsForFixedValues(t *testing.T) {
+	text := ShaperInstructions()
+	for _, want := range []string{"only when the request or the current code shows an actual variability need", "a fixed value is a constant", "Remove an obsolete form completely"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("policy missing %q", want)
+		}
+	}
+}

@@ -34,11 +34,6 @@ import (
 // ShapeInput is one `kogen intent shape <slug> <file|->`: the request, or the answers to the
 // questions a former run left pending, already read by the caller.
 type ShapeInput struct {
-	SubmissionRetryLimit int // internal invalid-submission budget; nonpositive means 3
-	// WrongImplementationTimeCap is the internal total-time cap of the wrong-implementation runs
-	// per candidate; nonpositive means 300 seconds.
-	WrongImplementationTimeCap time.Duration
-
 	Project     string // a directory inside the project's repository; empty: the session's directory
 	Slug        string // valid by the caller (3 to 48 lowercase letters, digits and dashes)
 	Request     string // the request or the answers: never empty
@@ -105,9 +100,6 @@ func shapeRun(ctx context.Context, s *sys.Session, in ShapeInput) (exit int, err
 			}
 		}
 	}()
-	if limit := submissionRetryLimit(in.SubmissionRetryLimit); limit != 3 {
-		ev.Record(map[string]any{"event": "submission_retry_limit", "limit": limit})
-	}
 	ev.Record(agent.BudgetEvent(in.Client))
 
 	cfg, err := project.LoadConfig(root)
@@ -772,7 +764,7 @@ func (sh *shaping) shape(ctx context.Context, st *state) (int, error) {
 	switch res.kind {
 	case outInvalid:
 		if sh.incomplete {
-			e := sys.Fail("shape", "incomplete_package", fmt.Sprintf("blocked: the shaper could not complete the package within %d attempts", submissionRetryLimit(sh.in.SubmissionRetryLimit)), 1)
+			e := sys.Fail("shape", "incomplete_package", fmt.Sprintf("blocked: the shaper could not complete the package within %d attempts", submissionRetryLimit), 1)
 			gap := sh.incompleteRefusal
 			problems := sh.declaredGaps(sh.proposed)
 			if gap.gate == "validation" {
@@ -802,7 +794,7 @@ func (sh *shaping) shape(ctx context.Context, st *state) (int, error) {
 			}
 			return 0, draftDiagnostic(sh.root, sh.slug, "not_ready", "the Intent is not ready to build", 1, append([]string{"Refusing check: " + sh.lastGate}, problems...), files)
 		}
-		e := sys.Fail("shape", "invalid_output", fmt.Sprintf("the shaper's output was not a valid Intent after %d attempts", submissionRetryLimit(sh.in.SubmissionRetryLimit)), 1)
+		e := sys.Fail("shape", "invalid_output", fmt.Sprintf("the shaper's output was not a valid Intent after %d attempts", submissionRetryLimit), 1)
 		e.Lines = append(append(slices.Clone(res.problems), sh.earliestLines()...), sh.refusalCountsLines()...)
 		return 0, e
 	case outNoTool:
@@ -1504,7 +1496,7 @@ func (sh *shaping) refused(gate string, problems []string) {
 	event := map[string]any{"event": "submission_refused", "attempt": sh.submissions, "gate": gate, "problems": cut}
 	if gate != "question_check" {
 		if sh.retry.limit == 0 {
-			sh.retry.limit = submissionRetryLimit(sh.in.SubmissionRetryLimit)
+			sh.retry.limit = submissionRetryLimit
 		}
 		sh.retryStopped = sh.retry.refuse(gate)
 		event["consecutive"] = sh.retry.consecutive
@@ -1715,8 +1707,8 @@ func (sh *shaping) acceptFiles(ctx context.Context, submitted []proposedFile) (s
 		}
 	}
 	intent, _, err := project.CheckIntent(sh.root, sh.slug, sh.overlay())
-	if err != nil && (sh.retry.total >= 2*submissionRetryLimit(sh.in.SubmissionRetryLimit)-1 ||
-		(sh.retry.gate == "intent" && sh.priorInvalid >= submissionRetryLimit(sh.in.SubmissionRetryLimit)-1) || submissionRetryLimit(sh.in.SubmissionRetryLimit) == 1) {
+	if err != nil && (sh.retry.total >= 2*submissionRetryLimit-1 ||
+		(sh.retry.gate == "intent" && sh.priorInvalid >= submissionRetryLimit-1) || submissionRetryLimit == 1) {
 		if e, ok := sys.AsError(err); ok && e.Reason == "lint" && slices.ContainsFunc(e.Lines, func(line string) bool { return strings.HasPrefix(line, "title:") }) {
 			p := project.IntentMDPath(sh.slug)
 			before := sh.proposed[p]
@@ -2603,9 +2595,5 @@ func shortenTitle(title string) string {
 	return strings.TrimRightFunc(string(r), func(c rune) bool { return unicode.IsSpace(c) || unicode.IsPunct(c) })
 }
 
-func submissionRetryLimit(limit int) int {
-	if limit <= 0 {
-		return 3
-	}
-	return limit
-}
+// submissionRetryLimit is the fixed budget of invalid submissions.
+const submissionRetryLimit = 3

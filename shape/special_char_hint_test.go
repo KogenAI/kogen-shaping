@@ -26,13 +26,14 @@ func TestSpecialCharHintRegression(t *testing.T) {
 			}
 			feature := "Feature: Hint\n  Scenario: Undefined\n    Then " + text + "\n"
 			steps := "const {Then}=require('@cucumber/cucumber');\nThen('" + pattern + "', function() {});\n"
-			f := newShpFx(t, shpSubmit("candidate", map[string]any{"files": []any{
+			candidate := map[string]any{"files": []any{
 				map[string]any{"path": project.IntentMDPath(shpSlug), "content": shpScopedIntentMD},
 				map[string]any{"path": project.FeaturePath(shpSlug), "content": feature},
 				map[string]any{"path": "features/steps/is-even__steps.js", "content": steps},
-			}}))
+			}}
+			f := newShpFx(t, shpSubmit("c1", candidate), shpSubmit("c2", candidate), shpSubmit("c3", candidate))
 			f.newSession()
-			_, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Request: "Explain undefined literal steps.", Client: f.Client, SubmissionRetryLimit: 1})
+			_, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Request: "Explain undefined literal steps.", Client: f.Client})
 			problem := shpWantError(t, err, "intent", "not_ready", "the Intent is not ready to build", 1)
 			feedback := strings.Join(problem.Lines, "\n")
 			if !strings.Contains(feedback, "undefined step:") {
@@ -84,13 +85,14 @@ func TestLiteralExpressionDiagnostics(t *testing.T) {
 func TestSpecialCharHintOnce(t *testing.T) {
 	const feature = "Feature: Hint\n  Scenario: Undefined\n    Then is-even: first a/b\n    Then is-even: second c/d\n"
 	const steps = "const {Then}=require('@cucumber/cucumber');\nThen('is-even: first a/b', function() {});\nThen('is-even: second c/d', function() {});\n"
-	f := newShpFx(t, shpSubmit("candidate", map[string]any{"files": []any{
+	candidate := map[string]any{"files": []any{
 		map[string]any{"path": project.IntentMDPath(shpSlug), "content": shpScopedIntentMD},
 		map[string]any{"path": project.FeaturePath(shpSlug), "content": feature},
 		map[string]any{"path": "features/steps/is-even__steps.js", "content": steps},
-	}}))
+	}}
+	f := newShpFx(t, shpSubmit("c1", candidate), shpSubmit("c2", candidate), shpSubmit("c3", candidate))
 	f.newSession()
-	_, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Request: "Explain undefined literal steps.", Client: f.Client, SubmissionRetryLimit: 1})
+	_, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Request: "Explain undefined literal steps.", Client: f.Client})
 	problem := shpWantError(t, err, "intent", "not_ready", "the Intent is not ready to build", 1)
 	feedback := strings.Join(problem.Lines, "\n")
 	if strings.Count(feedback, "Cucumber Expressions read") != 1 {

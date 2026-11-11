@@ -32,15 +32,11 @@ Feature: Refuse acceptance that passes a wrong implementation
     And k-shape-wrong-implementation: candidate "fails for every implementation" ran acceptance 3 times
     And k-shape-wrong-implementation: candidate "correct implementation disables assertions" is refused with a line naming "f is no slower than a same-run baseline plus 100 ms" and "no pass is reachable"
 
-  Scenario: Running out of the run cap or the time cap refuses the candidate naming that cap
+  Scenario: Running out of the run cap refuses the candidate naming that cap
     When k-shape-wrong-implementation: the "caps" case is shaped
     Then k-shape-wrong-implementation: candidate "needs more runs than the cap" is refused with a line naming "run cap" and "above the cap of 8 runs per candidate"
     And k-shape-wrong-implementation: the result of submission "cand" of candidate "needs more runs than the cap" does not contain "time cap"
     And k-shape-wrong-implementation: candidate "needs more runs than the cap" ran acceptance 2 times
-    And k-shape-wrong-implementation: candidate "runs longer than the time cap" is refused with a line naming "time cap" and "the total time cap of 2 seconds per candidate"
-    And k-shape-wrong-implementation: the result of submission "cand" of candidate "runs longer than the time cap" does not contain "run cap"
-    And k-shape-wrong-implementation: the result of submission "cand" of candidate "runs longer than the time cap" does not contain "no pass is reachable"
-    And k-shape-wrong-implementation: candidate "runs longer than the time cap" ran acceptance 3 times
 
   Scenario: A plain request publishes as before with no extra runs and the same model requests
     When k-shape-wrong-implementation: the "plain" case is shaped
