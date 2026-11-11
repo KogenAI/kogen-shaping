@@ -136,6 +136,16 @@ func (l *decisionLedger) standingByID(id string) (recordedDecision, bool) {
 	return recordedDecision{}, false
 }
 
+// recorded is whether the ledger ever recorded a decision with the identity, standing or not.
+func (l *decisionLedger) recorded(id string) bool {
+	for _, d := range l.Decisions {
+		if d.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
 // fileReceipts are the receipts of a file, by cleaned path, in ledger and item order.
 func (l *decisionLedger) fileReceipts(cleaned string) []receipt {
 	if l == nil {
@@ -675,7 +685,12 @@ func (sh *shaping) carriedDecisionsGate(intent string) (string, outcome, bool) {
 		case 0:
 		case 1:
 			if _, ok := sh.ledger.standingByID(refs[0][1]); !ok {
-				problems = append(problems, "- "+refs[0][1]+" is not a recorded decision that stands; remove its identity or submit a sourced decision")
+				// An identity the ledger never recorded is a label the shaper gave its own new
+				// decision; its sourcing is judged like any other. Only a recorded decision that
+				// no longer stands is claimed wrongly.
+				if sh.ledger.recorded(refs[0][1]) {
+					problems = append(problems, "- "+refs[0][1]+" is not a recorded decision that stands; remove its identity or submit a sourced decision")
+				}
 			} else {
 				problems = append(problems, "- "+refs[0][1]+" does not match its recorded line")
 			}

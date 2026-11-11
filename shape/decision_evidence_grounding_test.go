@@ -6,13 +6,14 @@ import (
 	"testing"
 )
 
-// A citation is not a waiver when the checker says the value is unsupported.
-func TestUnsupportedEvidenceValueIsStillRefused(t *testing.T) {
+// A citation is not a waiver when the checker says the value is unsupported: Kogen marks the
+// line as an assumption with the checker's reason, so the user sees it.
+func TestUnsupportedEvidenceValueIsMarkedNotHidden(t *testing.T) {
 	parallel(t)
 	line := "- Keep maxFiles at 9. (evidence: limits.go) (source: request)"
-	_, problems := decisionOutcome([]decisionItem{{statement: line, verdict: "unsupported", why: "limits.go defines 8, not 9"}}, "Improve the controls.", "## Decisions\n"+line+"\n")
-	if len(problems) == 0 {
-		t.Fatal("an evidence marker hid an unsupported value")
+	_, problems, marks := decisionResolve([]decisionItem{{statement: line, verdict: "unsupported", why: "limits.go defines 8, not 9"}}, "Improve the controls.", "## Decisions\n"+line+"\n", nil)
+	if len(problems) != 0 || len(marks) != 1 || !strings.Contains(marks[0].marked, "(assumption: limits.go defines 8, not 9) (source: request)") {
+		t.Fatalf("an evidence marker hid an unsupported value: %q %v", problems, marks)
 	}
 }
 
@@ -245,11 +246,11 @@ func TestDecisionCheckEvidencedAndUnsupported(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if (len(feedback) == 0) != (tc.verdict == "follows") {
+			if len(feedback) != 0 {
 				t.Fatalf("feedback: %v", feedback)
 			}
-			if tc.verdict == "unsupported" && !strings.Contains(strings.Join(feedback, "\n"), "verdict: unsupported") {
-				t.Fatalf("feedback: %v", feedback)
+			if (len(sh.pendingMarks) == 1) != (tc.verdict == "unsupported") {
+				t.Fatalf("marks: %v", sh.pendingMarks)
 			}
 			requests := f.Prov.decisionRequests()
 			if len(requests) != 1 {

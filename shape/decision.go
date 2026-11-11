@@ -142,6 +142,33 @@ func normalizeNotation(s string) string {
 // statement, quote or value is not found, or where two named values are the same value), the
 // event, and the feedback lines (nil when no problem).
 func decisionOutcome(items []decisionItem, request, intent string) (map[string]any, []string) {
+	event, lines, _ := decisionResolve(items, request, intent, nil)
+	return event, lines
+}
+
+// assumptionMark is one Decisions line that Kogen rewrites itself: an unsupported line the
+// request is silent on gets the assumption marker the checker's own statement fills.
+type assumptionMark struct {
+	line, marked, assumption string
+}
+
+// markAssumption is the line with (assumption: ...) put before its trailing source tag, or false
+// when the line has no such tag or already carries an assumption.
+func markAssumption(line, why string) (string, string, bool) {
+	assumption := strings.NewReplacer("(", "[", ")", "]").Replace(normalizeWhitespace(why))
+	loc := sourceTagRe.FindStringIndex(line)
+	if assumption == "" || loc == nil || strings.Contains(line, "(assumption:") {
+		return "", "", false
+	}
+	tag := strings.TrimSpace(line[loc[0]:])
+	return strings.TrimRight(line[:loc[0]], " \t") + " (assumption: " + assumption + ") " + tag, assumption, true
+}
+
+// decisionResolve is decisionOutcome that also returns the lines Kogen rewrites into the
+// assumption form instead of refusing them. A line whose decisionLineKey is locked (a recorded
+// decision, kept exactly) is never rewritten.
+func decisionResolve(items []decisionItem, request, intent string, locked map[string]bool) (map[string]any, []string, []assumptionMark) {
+	var marks []assumptionMark
 	counts := map[string]int{}
 	events := make([]any, len(items))
 	var problems []string
@@ -190,6 +217,13 @@ func decisionOutcome(items []decisionItem, request, intent string) (map[string]a
 		if it.verdict == "follows" || (marked && !paraphrasedConflict) {
 			continue
 		}
+		if it.verdict == "unsupported" && !paraphrasedConflict && !marked && !requestSpeaks(request, it.quotes) {
+			if mark, ok := decisionMark(intent, it, locked); ok {
+				marks = append(marks, mark)
+				events[i].(map[string]any)["marked_assumption"] = mark.assumption
+				continue
+			}
+		}
 		uncertifiedConflict := marked && paraphrasedConflict
 		if uncertifiedConflict {
 			events[i].(map[string]any)["reported_verdict"] = "contradicts"
@@ -233,7 +267,7 @@ func decisionOutcome(items []decisionItem, request, intent string) (map[string]a
 	}
 	event := map[string]any{"event": "decision_check", "follows": counts["follows"], "contradicts": counts["contradicts"], "unsupported": counts["unsupported"], "items": events}
 	if len(problems) == 0 {
-		return event, nil
+		return event, nil, marks
 	}
 	head := fmt.Sprintf("Decision check: %d stated decisions are not supported by the request; follow the request, cite the repository evidence that decides it with (evidence: ...), or mark the decision as an assumption the user must confirm:", refused)
 	if !unsupported {
@@ -246,7 +280,35 @@ func decisionOutcome(items []decisionItem, request, intent string) (map[string]a
 	if unsupported {
 		feedback = append(feedback, assumptionRule)
 	}
-	return event, append(feedback, problems...)
+	return event, append(feedback, problems...), marks
+}
+
+// requestSpeaks is whether one of the quotes is a passage of the request.
+func requestSpeaks(request string, quotes []string) bool {
+	for _, q := range quotes {
+		if strings.TrimSpace(q) != "" && containsNormalized(request, q) {
+			return true
+		}
+	}
+	return false
+}
+
+// decisionMark finds the single Decisions line the item's statement is and its marked form.
+func decisionMark(intent string, it *decisionItem, locked map[string]bool) (assumptionMark, bool) {
+	var found string
+	for _, line := range decisionLines(intent) {
+		if normalizeWhitespace(line) == normalizeWhitespace(it.statement) {
+			if found != "" && found != line {
+				return assumptionMark{}, false
+			}
+			found = line
+		}
+	}
+	if found == "" || locked[decisionLineKey(found)] {
+		return assumptionMark{}, false
+	}
+	marked, assumption, ok := markAssumption(found, it.why)
+	return assumptionMark{line: found, marked: marked, assumption: assumption}, ok
 }
 
 // A finding can paraphrase a Decision despite the exact-copy
@@ -350,8 +412,15 @@ func (sh *shaping) decisionCheckWithEvidence(ctx context.Context, intent, eviden
 	if err != nil {
 		return nil, err
 	}
-	event, lines := decisionOutcome(items, sh.request, intent)
+	locked := map[string]bool{}
+	if sh.ledger != nil {
+		for _, d := range sh.ledger.standing() {
+			locked[decisionLineKey(d.intentLine())] = true
+		}
+	}
+	event, lines, marks := decisionResolve(items, sh.request, intent, locked)
 	sh.ev.Record(event)
+	sh.pendingMarks = marks
 	return lines, nil
 }
 

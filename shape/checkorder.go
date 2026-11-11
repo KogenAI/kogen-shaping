@@ -2,8 +2,12 @@ package shape
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/KogenAI/kogen-coordinator/project"
 )
 
 // modelRefusal is the feedback lines of one model check that refused a submission.
@@ -109,7 +113,7 @@ func (sh *shaping) postSubmitChecks(ctx context.Context, intent, evidence, hash 
 		return "", outcome{}, true, err
 	}
 	if len(refusals) == 0 {
-		return "", outcome{}, false, nil
+		return "", outcome{}, false, sh.applyAssumptionMarks()
 	}
 	var texts, problems []string
 	for i, r := range refusals {
@@ -132,4 +136,35 @@ func (sh *shaping) refusedAlso(gate string, problems []string) {
 	sh.unresolved = append(sh.unresolved, shapeRefusal{attempt: sh.submissions, gate: gate, problems: cut})
 	sh.ev.Record(map[string]any{"event": "submission_refused", "attempt": sh.submissions, "gate": gate, "problems": cut,
 		"consecutive": sh.retry.consecutive, "total": sh.retry.total})
+}
+
+// applyAssumptionMarks writes the assumption markers the decision check found missing into
+// intent.md and records the rewrite.
+func (sh *shaping) applyAssumptionMarks() error {
+	marks := sh.pendingMarks
+	sh.pendingMarks = nil
+	if len(marks) == 0 {
+		return nil
+	}
+	path := filepath.Join(sh.root, project.IntentMDPath(sh.slug))
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	intent := string(data)
+	var done []any
+	for _, m := range marks {
+		if strings.Contains(intent, m.line) {
+			intent = strings.ReplaceAll(intent, m.line, m.marked)
+			done = append(done, map[string]any{"line": m.line, "marked": m.marked, "assumption": m.assumption})
+		}
+	}
+	if len(done) == 0 {
+		return nil
+	}
+	if err := os.WriteFile(path, []byte(intent), 0o666); err != nil {
+		return err
+	}
+	sh.ev.Record(map[string]any{"event": "decision_marked", "lines": done})
+	return nil
 }

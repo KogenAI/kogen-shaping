@@ -53,14 +53,13 @@ func TestDecisionOutcomeRules(t *testing.T) {
 			[]string{`statement: ` + decision + ` | request_quotes: "` + q + `" | verdict: unsupported | why: w`}},
 		{"request value in the statement only", values(item(decision, []string{q}, "contradicts"), "False", "False"), "unsupported",
 			[]string{`statement: ` + decision + ` | request_quotes: "` + q + `" | verdict: unsupported | why: w`}},
-		{"unsupported without quotes", item(decision, nil, "unsupported"),
-			"unsupported", []string{`statement: ` + decision + ` | request_quotes:  | verdict: unsupported | why: w`}},
+		{"unsupported without quotes is marked by Kogen", item(decision, nil, "unsupported"), "unsupported", nil},
 		{"statement not in intent", values(item("- other", []string{q}, "contradicts"), "other", "True"),
 			"unsupported", []string{`statement: - other | request_quotes: "` + q + `" | verdict: unsupported | why: w`}},
 		{"quote not in request", item(decision, []string{q, "nope"}, "follows"),
 			"unsupported", []string{`statement: ` + decision + ` | request_quotes: "` + q + `", "nope" | verdict: unsupported | why: w`}},
 		{"assumption not fed back", item(assumed, nil, "unsupported"), "unsupported", nil},
-		{"unsupported evidence is fed back", item(evidenced, nil, "unsupported"), "unsupported", []string{`statement: ` + evidenced + ` | request_quotes:  | verdict: unsupported | why: w`}},
+		{"unsupported evidence is marked by Kogen", item(evidenced, nil, "unsupported"), "unsupported", nil},
 		{"assumption contradicting not fed back", values(item(assumed, []string{"nope"}, "contradicts"), "a", "b"), "unsupported", nil},
 	}
 	for _, c := range cases {

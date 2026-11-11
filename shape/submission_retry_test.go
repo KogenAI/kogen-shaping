@@ -250,7 +250,7 @@ func TestRetryReportedGateProgressToReady(t *testing.T) {
 		t.Fatalf("exit %d: %v", exit, err)
 	}
 	events := shpNamed(f.events(), "submission_refused")
-	gates := []string{"decision_record", "carried_decisions", "decision_check"}
+	gates := []string{"decision_record", "decision_check"}
 	shpEq(t, "refusals", len(events), len(gates))
 	for i, g := range gates {
 		shpEq(t, "gate", events[i]["gate"], any(g))

@@ -288,7 +288,6 @@ func TestShapeCarriedDecisionsGateRejectsNonStandingIdentities(t *testing.T) {
 	current := recordedDecision{ID: "D2", Round: 2, Decision: "Use the new message"}
 	sh.ledger = &decisionLedger{Decisions: []recordedDecision{old, current}}
 	for _, tc := range []struct{ name, extra, want string }{
-		{"unrecorded", "- Use an invented record (decision: D3, round 1) (source: request)", "D3 is not a recorded decision that stands"},
 		{"superseded", old.intentLine(), "D1 is not a recorded decision that stands"},
 		{"multiple", "- Use both (decision: D2, round 2) (decision: D1, round 1) (source: request)", "one recorded decision per line"},
 	} {
