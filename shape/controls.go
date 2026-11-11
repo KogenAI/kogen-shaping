@@ -18,6 +18,7 @@ import (
 
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-loop/sys"
+	"github.com/KogenAI/kogen-verification/verify"
 )
 
 // The wrong-implementation check: acceptance can exercise every property the request asks for
@@ -535,7 +536,7 @@ func (sh *shaping) controlsRun(ctx context.Context, expected []project.Scenario,
 	if _, err := sh.repo.Materialize(sh.ready.CandidateTree, tree); err != nil {
 		return res, err
 	}
-	seedIgnored(sh.root, tree)
+	_ = verify.SeedIgnored(sh.root, tree)
 	res.roots = []string{tree}
 	if resolved := resolvedPath(tree); resolved != tree {
 		res.roots = append(res.roots, resolved)

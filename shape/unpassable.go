@@ -545,7 +545,7 @@ func (sh *shaping) unpassableControl(ctx context.Context, ready *verify.Ready) (
 	if _, err := sh.repo.Materialize(ready.CandidateTree, tree); err != nil {
 		return nil, "the candidate tree could not be materialized", nil
 	}
-	seedIgnored(sh.root, tree)
+	_ = verify.SeedIgnored(sh.root, tree)
 	stepsDir := sh.stepsDir()
 	_, files, _ := verify.StepAnalysisIn(tree, stepsDir, ready.Intent, nil)
 	if len(files) == 0 {

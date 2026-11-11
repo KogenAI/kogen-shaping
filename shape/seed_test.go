@@ -43,8 +43,8 @@ func TestStaticChecksStartFromCheckoutBuildOutputs(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if run.Outcome != staticChecked || run.SeededPaths != 1 {
-			t.Fatalf("run %d: outcome %s, seeded %d", i, run.Outcome, run.SeededPaths)
+		if run.Outcome != staticChecked {
+			t.Fatalf("run %d: outcome %s", i, run.Outcome)
 		}
 	}
 	if b, _ := os.ReadFile(counter); len(b) != 0 {
@@ -52,7 +52,7 @@ func TestStaticChecksStartFromCheckoutBuildOutputs(t *testing.T) {
 	}
 }
 
-func TestSeedIgnoredKeepsTrackedContentAndSkipsKogen(t *testing.T) {
+func TestSeededTreeKeepsTrackedContentAndSkipsKogen(t *testing.T) {
 	parallel(t)
 	root, dir := t.TempDir(), t.TempDir()
 	put := func(base, p, text string) {
@@ -75,13 +75,15 @@ func TestSeedIgnoredKeepsTrackedContentAndSkipsKogen(t *testing.T) {
 	put(root, "untracked.txt", "not ignored")
 	put(dir, "ignored.txt", "tracked in the tree")
 
-	n, _ := seedIgnored(root, dir)
+	if err := verify.SeedIgnored(root, dir); err != nil {
+		t.Fatal(err)
+	}
 	read := func(p string) string { b, _ := os.ReadFile(filepath.Join(dir, p)); return string(b) }
 	if got := read("ignored.txt"); got != "tracked in the tree" {
 		t.Errorf("tracked file overwritten: %q", got)
 	}
-	if got := read("deps/a/lib.bin"); got != "dependency" || n != 1 {
-		t.Errorf("deps not seeded: %q, %d paths", got, n)
+	if got := read("deps/a/lib.bin"); got != "dependency" {
+		t.Errorf("deps not seeded: %q", got)
 	}
 	for _, p := range []string{".kogen", "untracked.txt"} {
 		if _, err := os.Lstat(filepath.Join(dir, p)); err == nil {
