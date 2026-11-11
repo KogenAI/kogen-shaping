@@ -535,6 +535,7 @@ func (sh *shaping) controlsRun(ctx context.Context, expected []project.Scenario,
 	if _, err := sh.repo.Materialize(sh.ready.CandidateTree, tree); err != nil {
 		return res, err
 	}
+	seedIgnored(sh.root, tree)
 	res.roots = []string{tree}
 	if resolved := resolvedPath(tree); resolved != tree {
 		res.roots = append(res.roots, resolved)

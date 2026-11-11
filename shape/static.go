@@ -74,7 +74,9 @@ type staticRun struct {
 	Files   []staticFile  `json:"files"`
 	Checks  []staticCheck `json:"checks"`
 
-	attempt int // the submission that ran it (Shape)
+	SeededPaths int   `json:"-"` // ignored paths of the checkout the copy started with
+	SeededMS    int64 `json:"-"`
+	attempt     int   // the submission that ran it (Shape)
 }
 
 // staticRecord is .kogen/local/static-checks/<slug>.json.
@@ -372,6 +374,8 @@ func (g *staticGateRunner) run(ctx context.Context, head, tree, sha string) (*st
 	if err != nil {
 		return nil, err
 	}
+	seeded, took := seedIgnored(g.root, dir)
+	run.SeededPaths, run.SeededMS = seeded, took.Milliseconds()
 	if err := g.rd.Setup(ctx, g.s, dir, false); err != nil {
 		return nil, err
 	}
@@ -518,7 +522,8 @@ func (sh *shaping) staticChecks(ctx context.Context, hash string) (string, outco
 		}
 	}
 	sh.ev.Record(map[string]any{"event": "static_checks", "attempt": sh.submissions, "outcome": run.Outcome, "reused": reused, "dir": run.Dir,
-		"head": run.Head, "tree": run.Tree, "sha256": run.SHA256, "files": run.Files, "checks": run.Checks})
+		"head": run.Head, "tree": run.Tree, "sha256": run.SHA256, "files": run.Files, "checks": run.Checks,
+		"seeded_paths": run.SeededPaths, "seeded_ms": run.SeededMS})
 	if run.Outcome != staticRefused {
 		return "", outcome{}, nil
 	}
