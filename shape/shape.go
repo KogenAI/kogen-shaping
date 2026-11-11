@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -534,6 +535,7 @@ type original struct {
 type shaping struct {
 	retry        retryBudget
 	retryStopped bool
+	progressMu   sync.Mutex // the model checks run together and report progress
 	s            *sys.Session
 	in           ShapeInput
 	repo         *git.Repo
@@ -659,6 +661,8 @@ func (sh *shaping) sinceStart() time.Duration { return sh.ev.clock().Sub(sh.star
 func (sh *shaping) elapsed() int64 { return sh.sinceStart().Milliseconds() / 1000 }
 
 func (sh *shaping) progress(line string) {
+	sh.progressMu.Lock()
+	defer sh.progressMu.Unlock()
 	sh.s.Progress(fmt.Sprintf("%s (%d s)", line, sh.elapsed()))
 }
 
@@ -1486,16 +1490,7 @@ func (sh *shaping) mergedPackage() string {
 // refused records one submission_refused event with its problem lines bounded.
 func (sh *shaping) refused(gate string, problems []string) {
 	sh.lastGate = gate
-	if len(problems) > 20 {
-		problems = problems[:20]
-	}
-	cut := make([]string, len(problems))
-	for i, p := range problems {
-		if r := []rune(p); len(r) > 300 {
-			p = string(r[:300])
-		}
-		cut[i] = p
-	}
+	cut := cutProblems(problems)
 	sh.lastRefusal = cut
 	refusal := shapeRefusal{attempt: sh.submissions, gate: gate, problems: cut}
 	sh.unresolved = append(sh.unresolved, refusal)
@@ -1853,41 +1848,7 @@ func (sh *shaping) checkSubmission(ctx context.Context, files []string) (string,
 		return "accepted: unchanged checked observations acknowledged", outcome{kind: outReady}, nil
 	}
 	sh.readinessReview = nil
-	sh.progress("kogen: checking step code")
-	feedback, err := sh.stepSelfcheck(ctx)
-	if err != nil {
-		return "", outcome{}, err
-	}
-	if feedback != "" {
-		problems := strings.Split(feedback, "\n")[1:]
-		sh.refused("step_selfcheck", problems)
-		return feedback, outcome{kind: outInvalid, problems: problems}, nil
-	}
-	lines, err := sh.decisionCheckWithEvidence(ctx, string(written), evidence)
-	if err != nil {
-		return "", outcome{}, err
-	}
-	if lines != nil {
-		sh.refused("decision_check", lines[1:])
-		return strings.Join(lines, "\n"), outcome{kind: outInvalid, problems: lines[1:]}, nil
-	}
-	lines, err = sh.literalCheck(ctx)
-	if err != nil {
-		return "", outcome{}, err
-	}
-	if lines != nil {
-		sh.refused("literal_check", lines[1:])
-		return strings.Join(lines, "\n"), outcome{kind: outInvalid, problems: lines[1:]}, nil
-	}
-	problems, err := sh.exampleCheck(ctx)
-	if err != nil {
-		return "", outcome{}, err
-	}
-	if len(problems) > 0 {
-		sh.refused("example_check", problems)
-		return "Examples contradict the rules:\n" + strings.Join(problems, "\n"), outcome{kind: outInvalid, problems: problems}, nil
-	}
-	if text, out, err := sh.staticChecks(ctx, hash); err != nil || out.kind == outInvalid {
+	if text, out, done, err := sh.postSubmitChecks(ctx, string(written), evidence, hash); err != nil || done {
 		return text, out, err
 	}
 	sh.progress("kogen: checking readiness")
