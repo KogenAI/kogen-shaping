@@ -99,6 +99,8 @@ func newFx(t *testing.T, script ...turn) *fx {
 	f.write("calc.js", "function add(a, b) { return a + b }\n")
 	f.write("features/steps/calc_steps.js", "Given('a calculator', function () {});\n")
 	f.write(".kogen/project.yaml", "version: 1\ncommands:\n  checks: [{name: unit, run: 'true'}]\n  acceptance: {run: sh accept.sh, steps_dir: features/steps}\n")
+	// The pinned loop takes no role without a provider, and the defaults name none.
+	f.write(".kogen/models.yaml", "models:\n  shape: {provider: chatgpt, model: gpt-6.1-sol, effort: high}\n")
 	script0 := fmt.Sprintf(`#!/bin/sh
 case "$KOGEN_ACCEPTANCE_FEATURES" in */check.feature) : > "$KOGEN_ACCEPTANCE_REPORT"; exit 0;; esac
 cp '%[1]s/report' "$KOGEN_ACCEPTANCE_REPORT"
