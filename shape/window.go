@@ -45,6 +45,8 @@ type window struct {
 	observations []any
 	// documentation is every lookup result of the conversation, snapshotted in each archive.
 	documentation []map[string]any
+	// reads remembers the read_file results of the current working window.
+	reads readMemory
 }
 
 // newShapeWindow is the window of one Shape run: a fresh private folder of the shaping state.
@@ -319,6 +321,7 @@ func (w *window) prepare(p windowPrep, input []any) ([]any, error) {
 			w.title(), before.RenderedBytes, base.RenderedBytes, tools.InputBudgetBytes, tools.OutputReserveTokens, archive.Path, w.title()), 1)
 	}
 	w.history, w.observations = history, observations
+	w.reads.reset()
 	if err := w.validate(p.root); err != nil {
 		return nil, err
 	}

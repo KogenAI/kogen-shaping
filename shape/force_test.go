@@ -365,7 +365,7 @@ func TestShapeForceNoToolBound(t *testing.T) {
 // between a no-tool answer and the request that must be forced.
 func forceResetRoute(w *forceWire, refuse shpStep, pad string, lead int) func(map[string]any) *shpStep {
 	const budget, prose = 524288, 100_000
-	phase := 0
+	phase, reads := 0, 0
 	return func(req map[string]any) *shpStep {
 		raw, _ := json.Marshal(req)
 		var step shpStep
@@ -376,7 +376,9 @@ func forceResetRoute(w *forceWire, refuse shpStep, pad string, lead int) func(ma
 			lead--
 			step = w.prose("lead prose")
 		case phase == 1 && len(raw) < budget-prose+30_000:
-			step = w.calls(shpCall("pad", "read_file", map[string]any{"path": pad}))
+			// Each read starts one line later: a repeated unchanged read answers a short note.
+			reads++
+			step = w.calls(shpCall("pad", "read_file", map[string]any{"path": pad, "start_line": reads, "end_line": 2000}))
 		case phase == 1:
 			phase, step = 2, w.prose(strings.Repeat("long prose ", prose/11))
 		default:

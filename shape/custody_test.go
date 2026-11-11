@@ -17,10 +17,12 @@ func seedPadding(f *shpFx) {
 	f.git("commit", "-qm", "Seed custody regression")
 }
 
+// readPadding reads the padding file n times; every read starts one line later, so no read repeats
+// an earlier result and answers with the unchanged-read note instead of its content.
 func readPadding(n int) []shpStep {
 	var steps []shpStep
 	for i := 0; i < n; i++ {
-		steps = append(steps, shpAnswer(shpCall("pad", "read_file", map[string]any{"path": "padding.txt"})))
+		steps = append(steps, shpAnswer(shpCall("pad", "read_file", map[string]any{"path": "padding.txt", "start_line": i + 1, "end_line": 2000})))
 	}
 	return steps
 }

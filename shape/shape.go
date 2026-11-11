@@ -995,12 +995,27 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 
 		var outputs []any
 		var result outcome
-		for _, c := range calls {
+		for i := 0; i < len(calls); {
+			c := calls[i]
+			i++
 			if err := sh.window.validate(sh.root); err != nil {
 				return outcome{}, usage, err
 			}
 			if result.kind != outNone {
 				outputs = append(outputs, toolOutput(c, "ignored: only one submit counts per response"))
+				continue
+			}
+			if n := readRun(calls[i-1:]); n > 0 {
+				group := calls[i-1 : i-1+n]
+				i += n - 1
+				var answers []tools.Output
+				err := sh.toolSpan(func() (err error) { answers, err = sh.runReadGroup(ctx, group); return })
+				if err != nil {
+					return outcome{}, usage, err
+				}
+				for k, a := range answers {
+					outputs = append(outputs, toolOutput(group[k], a))
+				}
 				continue
 			}
 			switch {
