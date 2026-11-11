@@ -117,7 +117,7 @@ func TestExternalShapeReceivesTheRunnerObserverRefusalAsFeedback(t *testing.T) {
 		if i > 0 {
 			want += unchangedLine(1)
 		}
-		if !strings.HasPrefix(in.Feedback, want+"\n\nCumulative proposal manifest: ") {
+		if !strings.HasPrefix(noTimeLine(in.Feedback), want+"\n\nCumulative proposal manifest: ") {
 			t.Fatalf("feedback = %q", in.Feedback)
 		}
 	}

@@ -644,7 +644,7 @@ func TestShapeDecisionEvidenceExternal(t *testing.T) {
 				return
 			}
 			shpWantError(t, err, "intent", "not_ready", "", 1)
-			shpEq(t, "feedback", strings.SplitN(x.inputs[1].Feedback, "\n\nCumulative proposal manifest: ", 2)[0],
+			shpEq(t, "feedback", strings.SplitN(noTimeLine(x.inputs[1].Feedback), "\n\nCumulative proposal manifest: ", 2)[0],
 				strings.Replace(evHeadline, "%d", "1", 1)+"\n- decision 1: this shaping's session ran no command, so `pytest -q` was not run")
 		})
 	}

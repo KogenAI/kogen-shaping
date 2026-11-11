@@ -207,7 +207,7 @@ func TestShapeForceFallback(t *testing.T) {
 		if exit, err := f.refineWith(x, f.hash0); err != nil || exit != 0 {
 			t.Fatalf("exit %d: %v", exit, err)
 		}
-		refText(t, "feedback", x.inputs[1].Feedback, "invalid: "+strings.TrimPrefix(refineInvalidShape, "invalid: "))
+		refText(t, "feedback", noTimeLine(x.inputs[1].Feedback), "invalid: "+strings.TrimPrefix(refineInvalidShape, "invalid: "))
 		refEqual(t, "package", f.pkg(), refWith(before, refIntentPath, refTitled))
 		shpEq(t, "forced events", len(shpNamed(f.evidenceEvents(), "forced_submit_turn")), 0)
 		noNativeRequests(t, f.shpFx)

@@ -42,6 +42,8 @@ type RefineInput struct {
 	Client *provider.Client
 	// External provides the executor of a shape role with `executor: claude-code`; nil: none.
 	External External
+	// Now is the clock; nil is time.Now. Tests set it.
+	Now func() time.Time
 }
 
 func (in RefineInput) tools() verify.Tools {
@@ -252,7 +254,7 @@ func refineLocked(ctx context.Context, s *sys.Session, in RefineInput, repo *git
 	if err := os.Chmod(evidence, 0o700); err != nil {
 		return 0, err
 	}
-	ev, err := NewEvidence(evidence, slug)
+	ev, err := NewEvidenceWithClock(evidence, slug, in.Now)
 	if err != nil {
 		return 0, err
 	}
@@ -837,9 +839,10 @@ func (r *refine) countRefusal(out refineOutcome) bool {
 // results are `submit_refinement` payloads through the same cumulative rules; Kogen's actual
 // feedback returns to the same session. Nothing is published here.
 func (r *refine) converseExternal(ctx context.Context, role project.Role, blocks []any) (map[string]string, *verify.Ready, error) {
-	stable := refineInstructions() + "\n\n" + externalNote + "\n\n" + blocksText(blocks)
+	stable := refineInstructions() + "\n\n" + externalBrief() + "\n\n" + blocksText(blocks)
+	begun := r.ev.clock()
 	x, err := startExternal(ctx, r.ext, r.extMax, r.repo, r.root, r.s.Getenv("HOME"),
-		filepath.Join(r.evidence, "executor-refine"), r.slug, role, stable, "", schemaOf(SubmitRefinementTool), r.ev, nil)
+		filepath.Join(r.evidence, "executor-refine"), r.slug, role, stable, budgetLine(0), schemaOf(SubmitRefinementTool), r.ev, nil)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -854,6 +857,9 @@ func (r *refine) converseExternal(ctx context.Context, role project.Role, blocks
 			return nil, nil, err
 		}
 		r.s.Progress("kogen: refining " + r.slug + " " + role.Model + "/" + role.Effort + " (external round " + fmt.Sprint(x.rounds+1) + ")")
+		if feedback != "" {
+			feedback = budgetLine(r.ev.clock().Sub(begun)) + "\n\n" + feedback
+		}
 		res, err := x.round(ctx, feedback)
 		if err != nil {
 			return nil, nil, err
@@ -1199,7 +1205,7 @@ func (r *refine) acceptanceChecks() *shaping {
 		r.checks = &shaping{
 			s: r.s, repo: r.scratchR, root: r.scratch, slug: r.slug, cfg: r.cfg, role: r.cfg.Models["shape"],
 			ev: r.ev, rd: r.scratchD, client: r.client, ext: r.ext, extMax: r.extMax,
-			started: time.Now(), proposed: r.proposed,
+			started: r.ev.clock(), proposed: r.proposed,
 			contractSessions: map[string]int{}, contractChecked: map[string]bool{}, contractRefused: map[string]contractConfirmed{},
 			providerErr: func(e *sys.Error) error { return e },
 		}

@@ -45,6 +45,8 @@ type ShapeInput struct {
 	Client *provider.Client
 	// External provides the executor of a shape role with `executor: claude-code`; nil: none.
 	External External
+	// Now is the clock; nil is time.Now. Tests set it.
+	Now func() time.Time
 }
 
 func (in ShapeInput) tools() verify.Tools {
@@ -88,7 +90,7 @@ func shapeRun(ctx context.Context, s *sys.Session, in ShapeInput) (exit int, err
 		return 0, statErr
 	}
 
-	ev, err := NewEvidence(stateDir, slug)
+	ev, err := NewEvidenceWithClock(stateDir, slug, in.Now)
 	if err != nil {
 		return 0, err
 	}
@@ -652,7 +654,9 @@ func (sh *shaping) toolSpan(fn func() error) error {
 	return fn()
 }
 
-func (sh *shaping) elapsed() int64 { return time.Since(sh.started).Milliseconds() / 1000 }
+func (sh *shaping) sinceStart() time.Duration { return sh.ev.clock().Sub(sh.started) }
+
+func (sh *shaping) elapsed() int64 { return sh.sinceStart().Milliseconds() / 1000 }
 
 func (sh *shaping) progress(line string) {
 	sh.s.Progress(fmt.Sprintf("%s (%d s)", line, sh.elapsed()))
@@ -697,7 +701,7 @@ type outcome struct {
 }
 
 func (sh *shaping) shape(ctx context.Context, st *state) (int, error) {
-	sh.started = time.Now()
+	sh.started = sh.ev.clock()
 	t0 := sh.started
 	role := sh.role
 	restored, err := sh.restoreDraftHelpers()
@@ -1089,9 +1093,9 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 // a row end it like the native shaper.
 func (sh *shaping) converseExternal(ctx context.Context, blocks []any) (outcome, *extSession, error) {
 	sh.externalReads = make(map[string]bool)
-	stable := ShaperInstructions() + "\n\n" + externalNote + "\n\n" + blocksText(blocks)
+	stable := ShaperInstructions() + "\n\n" + externalBrief() + "\n\n" + blocksText(blocks)
 	x, err := startExternal(ctx, sh.ext, sh.extMax, sh.repo, sh.root, sh.s.Getenv("HOME"),
-		filepath.Join(sh.ev.Dir, "executor-shape"), sh.slug, sh.role, stable, "", shaperSubmitSchema(), sh.ev,
+		filepath.Join(sh.ev.Dir, "executor-shape"), sh.slug, sh.role, stable, budgetLine(sh.sinceStart()), shaperSubmitSchema(), sh.ev,
 		func(e map[string]any) {
 			if p := externalReadPath(sh.root, e); p != "" {
 				sh.externalReads[p] = true
@@ -1112,6 +1116,9 @@ func (sh *shaping) converseExternal(ctx context.Context, blocks []any) (outcome,
 	for {
 		sh.s.Progress(fmt.Sprintf("kogen: shaping (external round %d, %d s)", x.rounds+1, sh.elapsed()))
 		clear(sh.externalReads)
+		if feedback != "" {
+			feedback = budgetLine(sh.sinceStart()) + "\n\n" + feedback
+		}
 		res, err := x.round(ctx, feedback)
 		if err != nil {
 			return outcome{}, x, err

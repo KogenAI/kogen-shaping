@@ -77,8 +77,8 @@ func TestRefineGivesTheExternalRefinerShapesRefusalText(t *testing.T) {
 	e := shpWantError(t, err, "shape", "refinement_invalid", "no valid ready correction after 3 submissions; the original draft is preserved", 1)
 	shpEq(t, "lines", strings.Join(e.Lines, "\n"), unwrittenFeedback)
 	shpEq(t, "rounds", len(x.inputs), 3)
-	shpEq(t, "feedback 2", x.inputs[1].Feedback, unwrittenFeedback)
-	shpEq(t, "feedback 3", x.inputs[2].Feedback, unwrittenFeedback)
+	shpEq(t, "feedback 2", noTimeLine(x.inputs[1].Feedback), unwrittenFeedback)
+	shpEq(t, "feedback 3", noTimeLine(x.inputs[2].Feedback), unwrittenFeedback)
 	refEqual(t, "package", f.pkg(), before)
 	noNativeRequests(t, f.shpFx)
 }
