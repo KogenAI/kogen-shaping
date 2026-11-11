@@ -271,7 +271,7 @@ func TestClientRespondRefusals(t *testing.T) {
 	})
 	wantProviderFailure(t, "provider.Request.ToolChoice (unsupported route)", err, "unsupported_capability", 4)
 
-	_, err = respond(provider.Request{Role: provider.Role{Model: "gpt-x"}, Input: userInput, Scope: "s", Context: map[string]any{"phase": "shape"}})
+	_, err = respond(provider.Request{Role: provider.Role{Provider: "chatgpt", Model: "gpt-x"}, Input: userInput, Scope: "s", Context: map[string]any{"phase": "shape"}})
 	e = wantProviderFailure(t, "provider.Client.Respond (not signed in)", err, "login", 4)
 	if want := "not signed in; run kogen provider login chatgpt"; e.Detail != want {
 		t.Errorf("provider.Client.Respond: without a login the detail is %q, want %q", e.Detail, want)
@@ -283,7 +283,7 @@ func TestClientRespondRefusals(t *testing.T) {
 
 func TestRequireLogin(t *testing.T) {
 	home := t.TempDir()
-	err := provider.RequireLogin(home, []provider.Role{{Model: "gpt-x"}})
+	err := provider.RequireLogin(home, []provider.Role{{Provider: "chatgpt", Model: "gpt-x"}})
 	e := wantProviderFailure(t, "provider.RequireLogin", err, "login", 4)
 	if got, want := err.Error(), "provider/login: not signed in; run kogen provider login chatgpt"; got != want {
 		t.Errorf("provider.RequireLogin: error %q, want %q", got, want)
@@ -291,7 +291,7 @@ func TestRequireLogin(t *testing.T) {
 	if e.Detail != "not signed in; run kogen provider login chatgpt" {
 		t.Errorf("provider.RequireLogin: detail %q", e.Detail)
 	}
-	if again := provider.RequireLogin(home, []provider.Role{{Provider: "chatgpt"}, {}}); again == nil || again.Error() != err.Error() {
+	if again := provider.RequireLogin(home, []provider.Role{{Provider: "chatgpt"}, {Provider: "chatgpt", Model: "gpt-y"}}); again == nil || again.Error() != err.Error() {
 		t.Errorf("provider.RequireLogin: roles of one provider must refuse once, as %q, got %v", err, again)
 	}
 
@@ -311,7 +311,7 @@ func TestRequireLogin(t *testing.T) {
 		}
 	}
 	var asErr *sys.Error
-	if !errors.As(provider.RequireLogin(home, []provider.Role{{}}), &asErr) {
+	if !errors.As(provider.RequireLogin(home, []provider.Role{{Provider: "chatgpt"}}), &asErr) {
 		t.Errorf("provider.RequireLogin: the refusal is not a *sys.Error")
 	}
 }
@@ -321,7 +321,6 @@ func TestSupportsToolChoice(t *testing.T) {
 		role provider.Role
 		want bool
 	}{
-		{provider.Role{}, true},
 		{provider.Role{Provider: "chatgpt", Model: "gpt-x"}, true},
 		{provider.Role{Provider: "supergrok", Model: "grok-4.7"}, true},
 		{provider.Role{Provider: "opencode-go", Model: "kimi-k3"}, true},

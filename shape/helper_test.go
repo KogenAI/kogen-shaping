@@ -504,6 +504,7 @@ fi
 echo "$KOGEN_ACCEPTANCE_FEATURES" > '%[1]s/feature-path'
 exit $code
 `, f.Aux)
+	f.write(".kogen/models.yaml", "models:\n  shape: {provider: chatgpt, model: gpt-6.1-sol, effort: high}\n")
 	f.write("accept.sh", script)
 	if err := os.Chmod(filepath.Join(f.Root, "accept.sh"), 0o755); err != nil {
 		t.Fatal(err)

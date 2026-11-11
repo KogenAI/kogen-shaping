@@ -73,12 +73,8 @@ func (t *turnCounter) announce(req provider.Request, role project.Role, ev *Evid
 	if !t.forced {
 		return
 	}
-	name := role.Provider
-	if name == "" {
-		name = "chatgpt"
-	}
 	ev.Record(map[string]any{
-		"event": "forced_submit_turn", "owner": t.owner, "target": t.target, "provider": name,
+		"event": "forced_submit_turn", "owner": t.owner, "target": t.target, "provider": role.Provider,
 		"api_forcing_supported": req.ToolChoice != "" || req.RequireTool, "no_tool_turns": t.noTool, "invalid_submissions": t.invalid,
 	})
 }
