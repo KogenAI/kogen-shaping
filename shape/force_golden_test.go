@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 // forceCapture is one rendered request as the provider received it: its normalized body and the
@@ -85,6 +86,8 @@ func forceOrdinary(t *testing.T, w *forceWire, owner string) []forceCapture {
 	}
 	f := newShpFxRun(t, "./accept.sh", w.shapeSubmit("c1", shpFiles()), w.shapeAck("c2"))
 	w.configure(f)
+	// A stopped clock keeps the time line of every request the same from run to run.
+	f.Now = (&shpClock{t: time.Unix(1_800_000_000, 0)}).now
 	f.Prov.contractWire = func(call map[string]any) shpStep { return w.calls(call) }
 	if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 0 {
 		t.Fatalf("exit %d: %v", exit, err)

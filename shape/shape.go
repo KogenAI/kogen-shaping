@@ -898,7 +898,7 @@ func (sh *shaping) providerFailed(e *sys.Error) error {
 func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider.Usage, error) {
 	var usage provider.Usage
 	turns := newTurns("shape")
-	defer shapeTurnCounts(turns, sh.ev, &sh.requests)
+	defer func() { shapeTurnCounts(turns, sh.ev, &sh.requests, sh.sinceStart) }()
 	home := sh.s.Getenv("HOME")
 	if home == "" {
 		home, _ = os.UserHomeDir()
@@ -913,6 +913,9 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 	var last lastSubmission
 	var lastAnswer string
 	for {
+		if budgetSpent(sh.sinceStart()) {
+			return budgetStop(last, lastAnswer, turns.noTool, sh.sinceStart(), sh.requests), usage, nil
+		}
 		sh.s.Progress(fmt.Sprintf("kogen: shaping (request %d, %d s)", sh.requests+1, sh.elapsed()))
 		t0 := time.Now()
 
@@ -928,7 +931,8 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 		if err != nil {
 			return outcome{}, usage, err
 		}
-		input = append(input, map[string]any{"role": "user", "content": "Cumulative proposal manifest: " + string(enc)})
+		input = append(input, map[string]any{"role": "user", "content": "Cumulative proposal manifest: " + string(enc)},
+			map[string]any{"role": "user", "content": budgetLine(sh.sinceStart())})
 		event, err := selectionEvent(input, manifest, sh.measure)
 		if err != nil {
 			return outcome{}, usage, err
@@ -971,9 +975,6 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 			return r, err
 		})
 		if err != nil {
-			if sh.requests >= shapeRequestCap {
-				return shapeRequestStop(last, lastAnswer, turns.noTool), usage, nil
-			}
 			return outcome{}, usage, err
 		}
 		sh.progress(fmt.Sprintf("kogen: shape response %s wall_ms=%d", resp.Usage.Line(), time.Since(t0).Milliseconds()))
@@ -987,10 +988,6 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 			lastAnswer = sh.recordToolFreeAnswer(resp.Items, turns.noTool, redactor)
 		} else {
 			noToolStreak = 0
-		}
-
-		if sh.requests >= shapeRequestCap {
-			return shapeRequestStop(last, lastAnswer, turns.noTool), usage, nil
 		}
 
 		var outputs []any
@@ -1117,7 +1114,11 @@ func (sh *shaping) converseExternal(ctx context.Context, blocks []any) (outcome,
 	defer x.close()
 	defer func() { sh.ev.Record(x.summary()) }()
 	feedback := ""
+	var last lastSubmission
 	for {
+		if feedback != "" && budgetSpent(sh.sinceStart()) {
+			return budgetStop(last, "", 0, sh.sinceStart(), x.rounds), x, nil
+		}
 		sh.s.Progress(fmt.Sprintf("kogen: shaping (external round %d, %d s)", x.rounds+1, sh.elapsed()))
 		clear(sh.externalReads)
 		if feedback != "" {
@@ -1147,6 +1148,9 @@ func (sh *shaping) converseExternal(ctx context.Context, blocks []any) (outcome,
 		case outObservations, outPrecheck, outQuestionRefused:
 		case outBlocked, outQuestions, outReady:
 			return out, x, nil
+		}
+		if out.kind == outInvalid {
+			last = lastSubmission{kind: outInvalid, attempt: sh.submissions, gate: sh.lastGate, problems: sh.lastRefusal, earliest: sh.earliestLines()}
 		}
 		revision, err := CurrentRevision(sh.repo)
 		if err != nil {

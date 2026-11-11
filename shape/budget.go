@@ -31,3 +31,21 @@ func externalBrief() string {
 	guidance := strings.ReplaceAll(shaperPromptFile("external-guidance"), "{{budget}}", fmt.Sprint(int(shapingBudget/time.Minute)))
 	return externalNote + "\n\n" + strings.TrimSuffix(guidance, "\n")
 }
+
+// budgetStop is the outcome of a shaping whose budget ran out before its next provider request:
+// it names the budget, the time spent, the requests made, and the last refusal if there was one.
+func budgetStop(last lastSubmission, answer string, answers int, elapsed time.Duration, requests int) outcome {
+	result := noToolStop(last, answer)
+	result.detail = fmt.Sprintf("the shaper used its %d-minute shaping budget (%s elapsed, %d requests) without a submission that passed; shaping stopped",
+		int(shapingBudget/time.Minute), budgetText(elapsed), requests)
+	if answers > 0 {
+		first, _, _ := strings.Cut(answer, "\n")
+		result.detail += "; last tool-free answer: " + first
+	} else {
+		result.problems = result.problems[:len(result.problems)-1]
+	}
+	return result
+}
+
+// budgetSpent reports whether the budget leaves no time for another provider request.
+func budgetSpent(elapsed time.Duration) bool { return elapsed >= shapingBudget }

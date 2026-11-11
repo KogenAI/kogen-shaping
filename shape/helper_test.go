@@ -406,6 +406,8 @@ type shpFx struct {
 	S      *sys.Session
 	Tmp    string
 	Client *provider.Client
+	// Now, when set, is the clock of the shaping.
+	Now func() time.Time
 }
 
 // isolatedTmps records private TMPDIR roots for tests owning process-wide state.
@@ -695,7 +697,7 @@ func (f *shpFx) shape(request string) (int, error) {
 func (f *shpFx) shapeFrom(request, path string) (int, error) {
 	f.t.Helper()
 	f.newSession()
-	return Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Request: request, RequestPath: path, Client: f.Client})
+	return Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Request: request, RequestPath: path, Client: f.Client, Now: f.Now})
 }
 
 func shpWantError(t *testing.T, err error, class, reason, detail string, exit int) *sys.Error {

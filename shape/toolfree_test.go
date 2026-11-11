@@ -1,7 +1,6 @@
 package shape
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 )
@@ -38,54 +37,4 @@ func TestNativeBoundsRegressionConsecutive(t *testing.T) {
 	shpWantError(t, err, "shape", "invalid_output", "the shaper answered without calling any tool 3 consecutive times (no-tool limit); no submission was made", 1)
 	shpEq(t, "exit", exit, 1)
 	shpEq(t, "requests", len(f.Prov.requests()), 3)
-}
-
-func TestNativeBoundsRegressionCap(t *testing.T) {
-	for _, prose := range []bool{false, true} {
-		t.Run(fmt.Sprint(prose), func(t *testing.T) {
-			w := responsesWire
-			steps := make([]shpStep, 301)
-			for i := range steps {
-				steps[i] = w.readReadme(fmt.Sprint("r", i))
-			}
-			if prose {
-				steps[17] = w.prose("last known answer")
-			}
-			f := w.newShape(t, steps...)
-			exit, err := f.shape("Bound shaping.")
-			if exit != 1 || err == nil {
-				t.Fatalf("cap: exit %d err %v", exit, err)
-			}
-			text := fmt.Sprint(err)
-			if !strings.Contains(text, "300") || !strings.Contains(strings.ToLower(text), "request") {
-				t.Fatalf("missing cap message: %s", text)
-			}
-			if prose && !strings.Contains(text, "last known answer") {
-				t.Fatalf("missing last answer: %s", text)
-			}
-			shpEq(t, "requests", len(f.Prov.requests()), 300)
-			counts := shpNamed(f.events(), "shaping_turn_counts")
-			shpEq(t, "counts length", len(counts), 1)
-			shpEq(t, "cap", counts[0]["request_cap"], any(float64(300)))
-			shpEq(t, "request count", counts[0]["requests"], any(float64(300)))
-			shapeAbsent(t, f)
-		})
-	}
-}
-
-func TestNativeBoundsRegressionCapTerminalSubmission(t *testing.T) {
-	w := responsesWire
-	steps := make([]shpStep, 300)
-	for i := range steps {
-		steps[i] = w.readReadme(fmt.Sprint("r", i))
-	}
-	steps[299] = w.shapeSubmit("ok", shpFiles())
-	f := w.newShape(t, steps...)
-	f.setReport("PASSED", 0)
-	exit, err := f.shape("Add calc.is_even(n).")
-	if exit != 1 || err == nil || !strings.Contains(fmt.Sprint(err), "request cap") {
-		t.Fatalf("cap: exit %d err %v", exit, err)
-	}
-	shpEq(t, "requests", len(f.Prov.requests()), 300)
-	shapeAbsent(t, f)
 }
