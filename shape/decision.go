@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -21,9 +22,10 @@ const decisionInstructions = `You check the stated decisions of one candidate In
 Give one item for every line of the candidate's "## Decisions" section and for every explicit result the intent states for a concrete input in its prose or examples. For each item give:
 - statement: text copied exactly from intent.md (for a Decisions line, the whole line);
 - request_quotes: the passages of the request that support or contradict it, each copied exactly from the request (none when the request is silent);
-- verdict: follows (the request, a recorded answer, or an evidenced or assumed Decision supports the value), contradicts (the request states a different value) or unsupported (none supports it);
+- verdict: follows (the request, a recorded answer, or an evidenced or assumed Decision supports the value), contradicts (the request states a different value), consequence (no quote states it, but it follows from quoted request text and contradicts nothing in the request) or unsupported (none supports it);
 - intent_value, request_value and difference: the two values and what makes them differ, for contradicts only;
 - why: one short reason.
+Give consequence, with the request quote it follows from, for a statement that is a plausible consequence of request text (what the request implies, such as a refusal status or a label for something the request asks for), a testable restatement of a request instruction (a marker, example or measurement that checks what the request asks), or a detail the request leaves to the builder and does not decide otherwise. Never give consequence when the statement differs from any value the request gives, narrows, removes or adds scope the request does not ask for, or has no request passage to quote; give contradicts or unsupported then.
 Compare values, not notation: before comparing, normalise digit grouping (1,000 and 1000), percentages and fractions (50% and 0.5), units of the same quantity (2 minutes and 120 seconds), date layouts, the order of a list whose order does not matter, and letter case where case does not matter.
 A statement that restates the request's value in another notation follows the request.
 Feasibility records are observed evidence, not product decisions requiring request quotes. Their measurements, probe results and observer-control outputs are checked by the feasibility machinery, separately from this check. The candidate view below omits that section; the full Intent remains available to the other checks.
@@ -44,7 +46,7 @@ func decisionSchema() map[string]any {
 		"properties": map[string]any{
 			"statement":      s,
 			"request_quotes": map[string]any{"type": "array", "items": s},
-			"verdict":        map[string]any{"type": "string", "enum": []any{"follows", "contradicts", "unsupported"}},
+			"verdict":        map[string]any{"type": "string", "enum": []any{"follows", "contradicts", "consequence", "unsupported"}},
 			"intent_value":   s,
 			"request_value":  s,
 			"difference":     s,
@@ -104,7 +106,7 @@ func parseDecisionCheck(args map[string]any) ([]decisionItem, error) {
 		it.why, okW = m["why"].(string)
 		quotes, okQ := m["request_quotes"].([]any)
 		if !okS || !okV || !okI || !okR || !okD || !okW || !okQ || len(m) != 7 ||
-			(it.verdict != "follows" && it.verdict != "contradicts" && it.verdict != "unsupported") {
+			!slices.Contains([]string{"follows", "contradicts", "consequence", "unsupported"}, it.verdict) {
 			return nil, decisionInvalid("an item is malformed")
 		}
 		it.quotes = []string{}
@@ -200,6 +202,12 @@ func decisionResolveNotes(items []decisionItem, request, intent string, locked m
 			it.verdict = "unsupported"
 		}
 		modelVerdict := it.verdict
+		// A consequence of quoted request text that contradicts nothing is advisory. It needs
+		// a grounded request quote; otherwise it is judged as unsupported.
+		consequence := it.verdict == "consequence" && requestSpeaks(request, it.quotes) && supported
+		if it.verdict == "consequence" && !consequence {
+			it.verdict = "unsupported"
+		}
 		if it.verdict == "unsupported" && requestStates(request, it.statement, it.quotes) && containsNormalized(intent, it.statement) {
 			// The request says the statement literally: it is supported whatever the model judged.
 			it.verdict = "follows"
@@ -235,6 +243,12 @@ func decisionResolveNotes(items []decisionItem, request, intent string, locked m
 		}
 		marked := it.verdict == "unsupported" && markedStatement(intent, it.statement)
 		if it.verdict == "follows" || (marked && !paraphrasedConflict) {
+			continue
+		}
+		if consequence {
+			events[i].(map[string]any)["advisory"] = true
+			events[i].(map[string]any)["consequence"] = true
+			notes = append(notes, "Decision check (advisory, not refused): "+strings.TrimSpace(it.statement)+" | "+it.why)
 			continue
 		}
 		if it.verdict == "unsupported" && !paraphrasedConflict && !marked && !requestSpeaks(request, it.quotes) {
@@ -291,7 +305,7 @@ func decisionResolveNotes(items []decisionItem, request, intent string, locked m
 			unsupported = true
 		}
 	}
-	event := map[string]any{"event": "decision_check", "follows": counts["follows"], "contradicts": counts["contradicts"], "unsupported": counts["unsupported"], "items": events}
+	event := map[string]any{"event": "decision_check", "follows": counts["follows"], "contradicts": counts["contradicts"], "unsupported": counts["unsupported"], "consequence": counts["consequence"], "items": events}
 	if len(problems) == 0 {
 		return event, nil, marks, notes
 	}
