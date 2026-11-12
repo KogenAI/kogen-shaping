@@ -18,8 +18,8 @@ const scopeBT = "`"
 
 func scopeBase(intent string, head map[string]int, ceiling int) scopeInput {
 	in := scopeInput{
-		pkg:       []scopeFile{{".kogen/intents/x/intent.md", 100}, {".kogen/intents/x/acceptance.feature", 50}, {"features/steps/x__steps.js", 50}},
-		inputs:    []scopeFile{{scopeReadme, head[scopeReadme]}, {scopeRules, 30}},
+		pkg:       []scopeFile{{path: ".kogen/intents/x/intent.md", size: 100}, {path: ".kogen/intents/x/acceptance.feature", size: 50}, {path: "features/steps/x__steps.js", size: 50}},
+		inputs:    []scopeFile{{path: scopeReadme, size: head[scopeReadme]}, {path: scopeRules, size: 30}},
 		head:      head,
 		scenarios: 3, harnesses: 1, ceiling: ceiling,
 	}
@@ -183,7 +183,7 @@ func TestScopePackageCountsTheDeclaredModelAndOutlineRows(t *testing.T) {
 		readme = nil
 	}
 	rules := len(agent.Prompt(agent.TestingRules))
-	estimate := len(intent) + len(feature) + len(shpSteps) + len(shpModel) + len(readme) + rules + tools.InputBudgetBytes
+	estimate := len(intent) + len(feature) + len(shpSteps) + len(shpModel) + len(readme) + rules + scopeChangedFileMaxBytes
 	want := []string{
 		fmt.Sprintf("Scope check: the Intent is estimated at %d bytes of mandatory review material (scenarios 5, acceptance harnesses 1, changed files 1 in areas 1), over the %d-byte review ceiling (tools.InputBudgetBytes).", estimate, tools.InputBudgetBytes),
 		fmt.Sprintf("- %s: %d bytes (Intent package)", project.IntentMDPath(shpSlug), len(intent)),
@@ -192,7 +192,7 @@ func TestScopePackageCountsTheDeclaredModelAndOutlineRows(t *testing.T) {
 		fmt.Sprintf("- %s: %d bytes (Intent package)", model, len(shpModel)),
 		fmt.Sprintf("- README.md: %d bytes (review input)", len(readme)),
 		fmt.Sprintf("- docs/testing-rules.md: %d bytes (review input)", rules),
-		fmt.Sprintf("- big.js: %d bytes (changed file, area .)", tools.InputBudgetBytes),
+		fmt.Sprintf("- big.js: %d bytes (changed file, area .; diff hunks of a %d-byte file)", scopeChangedFileMaxBytes, tools.InputBudgetBytes),
 		scopeGuidance,
 	}
 	shpEq(t, "refusal", text, strings.Join(want, "\n"))
@@ -225,7 +225,7 @@ func TestScopeRefusalIsRecordedBeforeTheDecisionCheckAndEndsNotReady(t *testing.
 		return text
 	}
 	shpContains(t, "first", feedback(1), "Scope check: the Intent is estimated at ")
-	shpContains(t, "changed file", feedback(1), fmt.Sprintf("- big.js: %d bytes (changed file, area .)", len(bigFile)))
+	shpContains(t, "changed file", feedback(1), fmt.Sprintf("- big.js: %d bytes (changed file, area .; diff hunks of a %d-byte file)", scopeChangedFileMaxBytes, len(bigFile)))
 	shpContains(t, "guidance", feedback(1), scopeGuidance)
 	if strings.Contains(feedback(1), "Unchanged:") {
 		t.Fatal("first refusal has the Unchanged note")
@@ -236,4 +236,44 @@ func TestScopeRefusalIsRecordedBeforeTheDecisionCheckAndEndsNotReady(t *testing.
 	for _, ev := range events {
 		shpEq(t, "gate", ev["gate"], any("scope"))
 	}
+}
+
+func TestScopeLargeChangedFileIsCountedAsItsHunksNotWhole(t *testing.T) {
+	// The 221 KB README is a review input, sent whole; the Intent changes 3 lines of it and of
+	// three other large files, which review sends as diff hunks.
+	head := map[string]int{scopeReadme: 221304, "priv/manifest.json": 262578, "cli/mcp.go": 53179, "docs/big.md": 100000}
+	intent := "Change 3 lines of " + scopeBT + "README.md" + scopeBT + ", " + scopeBT + "priv/manifest.json" + scopeBT + ", " +
+		scopeBT + "cli/mcp.go" + scopeBT + " and " + scopeBT + "docs/big.md" + scopeBT + "."
+	in := scopeBase(intent, head, tools.InputBudgetBytes)
+	want := 200 + 221304 + 30 + 3*scopeChangedFileMaxBytes
+	shpEq(t, "estimate", in.estimate(), want)
+	if in.estimate() > tools.InputBudgetBytes*7/10 {
+		t.Fatalf("estimate %d is not well under the %d ceiling", in.estimate(), tools.InputBudgetBytes)
+	}
+	if lines := scopeLines(in); lines != nil {
+		t.Fatalf("refused: %v", lines)
+	}
+}
+
+func TestScopeSmallChangedFileIsStillCountedWhole(t *testing.T) {
+	head := map[string]int{"a/f.js": scopeChangedFileMaxBytes, "a/g.js": 1234, scopeReadme: 10}
+	in := scopeBase("Change "+scopeBT+"a/f.js"+scopeBT+" and "+scopeBT+"a/g.js"+scopeBT+".", head, 1<<30)
+	shpEq(t, "estimate", in.estimate(), 200+10+30+scopeChangedFileMaxBytes+1234)
+}
+
+func TestScopeRefusalStillFiresWhenTheRealReviewMaterialIsOverTheCeiling(t *testing.T) {
+	head := map[string]int{scopeReadme: 221304}
+	var names []string
+	for i := 0; i < 10; i++ {
+		name := fmt.Sprintf("d/f%d.json", i)
+		head[name] = 262578
+		names = append(names, scopeBT+name+scopeBT)
+	}
+	in := scopeBase("Change "+strings.Join(names, " ")+".", head, tools.InputBudgetBytes)
+	lines := scopeLines(in)
+	if lines == nil {
+		t.Fatalf("estimate %d not refused", in.estimate())
+	}
+	shpContains(t, "refusal", lines[0], "over the 524288-byte review ceiling")
+	shpContains(t, "counted at its hunks", strings.Join(lines, "\n"), fmt.Sprintf("- d/f0.json: %d bytes (changed file, area d; diff hunks of a 262578-byte file)", scopeChangedFileMaxBytes))
 }

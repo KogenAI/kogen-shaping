@@ -31,6 +31,13 @@ const (
 	scopeRules  = "docs/testing-rules.md"
 )
 
+// scopeChangedFileMaxBytes is the most one changed file adds to the estimate. Review sends an
+// existing changed file as its diff against the start HEAD (git's default three lines of context
+// per hunk, never the whole file; added files go whole), and the diff does not exist when the
+// Intent is shaped, so a file up to this size (32 KiB) is counted whole and a larger one at this
+// allowance for its hunks. The README at HEAD is not a changed file: review sends it whole.
+const scopeChangedFileMaxBytes = 32 << 10
+
 // scopeSpan is a span of text between a pair of single backticks on one line.
 var scopeSpan = regexp.MustCompile("`([^`\n]+)`")
 
@@ -41,6 +48,7 @@ var scopeBullet = regexp.MustCompile(`^- ([a-z0-9-]{3,48}): (.*)$`)
 type scopeFile struct {
 	path string
 	size int
+	file int // the file's own size when size counts only its diff hunks, else 0
 }
 
 // scopePart is a remaining part of a split Intent.
@@ -99,9 +107,18 @@ func (in scopeInput) changedFiles(text string) []scopeFile {
 			continue
 		}
 		skip[m[1]] = true
-		changed = append(changed, scopeFile{m[1], size})
+		changed = append(changed, scopeChangedFile(m[1], size))
 	}
 	return changed
+}
+
+// scopeChangedFile is a changed file as the estimate counts it: whole up to
+// scopeChangedFileMaxBytes, above that at that allowance for its diff hunks.
+func scopeChangedFile(path string, size int) scopeFile {
+	if size <= scopeChangedFileMaxBytes {
+		return scopeFile{path: path, size: size}
+	}
+	return scopeFile{path: path, size: scopeChangedFileMaxBytes, file: size}
 }
 
 func scopeSum(lists ...[]scopeFile) int {
@@ -135,7 +152,7 @@ func (in scopeInput) partEstimate(p scopePart) int {
 // scopeReviewInputs are the review inputs every review carries: the README at HEAD (0 when
 // absent) and the testing rules.
 func scopeReviewInputs(head map[string]int) []scopeFile {
-	return []scopeFile{{scopeReadme, head[scopeReadme]}, {scopeRules, len(agent.Prompt(agent.TestingRules))}}
+	return []scopeFile{{path: scopeReadme, size: head[scopeReadme]}, {path: scopeRules, size: len(agent.Prompt(agent.TestingRules))}}
 }
 
 func scopeItems(lines []string, kind string, files []scopeFile) []string {
@@ -147,7 +164,11 @@ func scopeItems(lines []string, kind string, files []scopeFile) []string {
 
 func scopeChangedItems(lines []string, changed []scopeFile) []string {
 	for _, f := range changed {
-		lines = append(lines, fmt.Sprintf("- %s: %d bytes (changed file, area %s)", f.path, f.size, path.Dir(f.path)))
+		note := ""
+		if f.file > 0 {
+			note = fmt.Sprintf("; diff hunks of a %d-byte file", f.file)
+		}
+		lines = append(lines, fmt.Sprintf("- %s: %d bytes (changed file, area %s%s)", f.path, f.size, path.Dir(f.path), note))
 	}
 	return lines
 }
@@ -229,7 +250,7 @@ func (sh *shaping) scopeRefusal() (string, outcome, bool) {
 		if err != nil {
 			return "", outcome{}, false
 		}
-		in.pkg = append(in.pkg, scopeFile{p, len(b)})
+		in.pkg = append(in.pkg, scopeFile{path: p, size: len(b)})
 	}
 	in.inputs = scopeReviewInputs(in.head)
 	sh.progress(fmt.Sprintf("kogen: review estimate %d bytes of the %d-byte review ceiling (tools.InputBudgetBytes)", in.estimate(), in.ceiling))
