@@ -19,23 +19,40 @@ import (
 // review ceiling.
 const scopeGate = "scope"
 
-const scopeGuidance = "Above the ceiling this cannot be approved as one Intent: split the work into separately reviewable Intents. " +
-	"Narrow this Intent to its first part so that its estimate fits, and list every remaining part in a ## Split section of intent.md, one bullet per part, `- <slug>: <what the part delivers>`, " +
-	"naming in backticks the files that part changes; a part's estimate is the review inputs plus those files, and each part must fit the ceiling too. " +
+const scopeGuidance = "Above the limit this cannot be reviewed: the Intent package, the README and the testing rules go whole into every review prompt, and the review cuts the changed files' diffs and added files into parts of what remains. " +
+	"Shrink the Intent package (intent.md, the acceptance feature, its step harnesses, the model) so that its estimate fits; changed files do not count, however large or many. " +
+	"If the Intent package cannot shrink, narrow this Intent to its first part and list every remaining part in a ## Split section of intent.md, one bullet per part, `- <slug>: <what the part delivers>`; each part's estimate is the review inputs alone, and its own package must fit as well. " +
 	"A ## Stages plan does not lower the estimate, because the final review carries every stage. " +
-	"Do not satisfy the ceiling by deleting requested behaviour: every behaviour and example the request asks for stays in this Intent or in a part. " +
+	"Do not satisfy the limit by deleting requested behaviour: every behaviour and example the request asks for stays in this Intent or in a part. " +
 	"Resubmitting this candidate unchanged is refused again."
+
+const scopePartsGuidance = "Above MaxReviewParts the review would take too many model calls, one per part: split the work into separately reviewable Intents, narrowing this Intent to its first part and listing every remaining part in a ## Split section of intent.md, one bullet per part, `- <slug>: <what the part delivers>`, naming in backticks the files that part changes. " +
+	"Do not satisfy the limit by deleting requested behaviour. Resubmitting this candidate unchanged is refused again."
 
 const (
 	scopeReadme = "README.md"
 	scopeRules  = "docs/testing-rules.md"
 )
 
-// scopeChangedFileMaxBytes is the most one changed file adds to the estimate. Review sends an
-// existing changed file as its diff against the start HEAD (git's default three lines of context
-// per hunk, never the whole file; added files go whole), and the diff does not exist when the
-// Intent is shaped, so a file up to this size (32 KiB) is counted whole and a larger one at this
-// allowance for its hunks. The README at HEAD is not a changed file: review sends it whole.
+// scopeSourceRoom is the most source bytes one part of a review carries at the least
+// (review.MaterialPartBytes): a review whose mandatory prompt (authority, check results, changed
+// path catalog) leaves less than this under the ceiling stops before anything is sent. Everything
+// else the review handles: it cuts the source (the diff of every changed file, the whole text of
+// every added file) into as many ordered parts as it takes, each reviewed in its own session with
+// the complete authority, and cuts one file's material across parts when it alone exceeds a part.
+// No part count or review time bounds it. The README at HEAD is not a changed file: review sends
+// it whole.
+const scopeSourceRoom = 6000
+
+// MaxReviewParts is the most review parts an Intent may need. Each part is one review model call,
+// so an Intent whose estimate is above it is refused, to be split, rather than spend that many
+// calls on one review.
+const MaxReviewParts = 8
+
+// scopeChangedFileMaxBytes is the most one changed file adds to the source of the part estimate.
+// Review sends an existing changed file as its diff against the start HEAD, which does not exist
+// when the Intent is shaped, so a file up to this size (32 KiB) is counted whole and a larger one
+// at this allowance for its hunks; added files go whole.
 const scopeChangedFileMaxBytes = 32 << 10
 
 // scopeSpan is a span of text between a pair of single backticks on one line.
@@ -44,11 +61,10 @@ var scopeSpan = regexp.MustCompile("`([^`\n]+)`")
 // scopeBullet is a bullet of the ## Split section: the slug of a part and what it delivers.
 var scopeBullet = regexp.MustCompile(`^- ([a-z0-9-]{3,48}): (.*)$`)
 
-// scopeFile is a file with the bytes it adds to the review material.
+// scopeFile is a file with its size in bytes.
 type scopeFile struct {
 	path string
 	size int
-	file int // the file's own size when size counts only its diff hunks, else 0
 }
 
 // scopePart is a remaining part of a split Intent.
@@ -68,6 +84,21 @@ type scopeInput struct {
 	harnesses  int
 	ceiling    int
 }
+
+// reviewParts estimates the parts the review cuts the source of changed into, the way kogen-review
+// does: each part carries the whole authority and the room left under the ceiling for source.
+func (in scopeInput) reviewParts(authority int, changed []scopeFile) int {
+	source := 0
+	for _, f := range changed {
+		source += min(f.size, scopeChangedFileMaxBytes)
+	}
+	room := max(in.ceiling-authority, 1)
+	return max((source+room-1)/room, 1)
+}
+
+// limit is the most mandatory review material an Intent may have: the review ceiling less the
+// room the review keeps for source.
+func (in scopeInput) limit() int { return in.ceiling - scopeSourceRoom }
 
 // scopeSplit separates the ## Split section of an intent.md from the rest of its text.
 func scopeSplit(text string) (string, []scopePart) {
@@ -107,18 +138,9 @@ func (in scopeInput) changedFiles(text string) []scopeFile {
 			continue
 		}
 		skip[m[1]] = true
-		changed = append(changed, scopeChangedFile(m[1], size))
+		changed = append(changed, scopeFile{path: m[1], size: size})
 	}
 	return changed
-}
-
-// scopeChangedFile is a changed file as the estimate counts it: whole up to
-// scopeChangedFileMaxBytes, above that at that allowance for its diff hunks.
-func scopeChangedFile(path string, size int) scopeFile {
-	if size <= scopeChangedFileMaxBytes {
-		return scopeFile{path: path, size: size}
-	}
-	return scopeFile{path: path, size: scopeChangedFileMaxBytes, file: size}
 }
 
 func scopeSum(lists ...[]scopeFile) int {
@@ -139,14 +161,15 @@ func scopeAreas(files []scopeFile) int {
 	return len(areas)
 }
 
-// estimate is the bytes of mandatory review material of the Intent as one review.
+// estimate is the bytes of mandatory review material of the Intent: the authority every part of
+// its review carries whole. Changed files are not in it; review sends them in parts.
 func (in scopeInput) estimate() int {
-	return scopeSum(in.pkg, in.inputs, in.changedFiles(in.intentText))
+	return scopeSum(in.pkg, in.inputs)
 }
 
-// partEstimate is the same for a part, whose own package does not exist yet.
+// partEstimate is the same for a part, whose own package does not exist yet and is not counted.
 func (in scopeInput) partEstimate(p scopePart) int {
-	return scopeSum(in.inputs, in.changedFiles(p.text))
+	return scopeSum(in.inputs)
 }
 
 // scopeReviewInputs are the review inputs every review carries: the README at HEAD (0 when
@@ -164,42 +187,59 @@ func scopeItems(lines []string, kind string, files []scopeFile) []string {
 
 func scopeChangedItems(lines []string, changed []scopeFile) []string {
 	for _, f := range changed {
-		note := ""
-		if f.file > 0 {
-			note = fmt.Sprintf("; diff hunks of a %d-byte file", f.file)
-		}
-		lines = append(lines, fmt.Sprintf("- %s: %d bytes (changed file, area %s%s)", f.path, f.size, path.Dir(f.path), note))
+		lines = append(lines, fmt.Sprintf("- %s: %d bytes (changed file, area %s; review sends its diff in parts)", f.path, f.size, path.Dir(f.path)))
 	}
 	return lines
 }
 
 // scopeLines is the refusal of a candidate whose Intent or one of whose parts is over the
-// ceiling (an estimate equal to it fits), nil when everything fits.
+// limit (an estimate equal to it fits), nil when everything fits.
 func scopeLines(in scopeInput) []string {
 	var lines []string
-	if estimate := in.estimate(); estimate > in.ceiling {
+	if estimate := in.estimate(); estimate > in.limit() {
 		changed := in.changedFiles(in.intentText)
-		lines = append(lines, fmt.Sprintf("Scope check: the Intent is estimated at %d bytes of mandatory review material (scenarios %d, acceptance harnesses %d, changed files %d in areas %d), over the %d-byte review ceiling (tools.InputBudgetBytes).",
-			estimate, in.scenarios, in.harnesses, len(changed), scopeAreas(changed), in.ceiling))
+		lines = append(lines, fmt.Sprintf("Scope check: the Intent is estimated at %d bytes of mandatory review material (scenarios %d, acceptance harnesses %d, changed files %d in areas %d), over the %d-byte limit (the %d-byte review ceiling, tools.InputBudgetBytes, less the %d bytes the review keeps for source).",
+			estimate, in.scenarios, in.harnesses, len(changed), scopeAreas(changed), in.limit(), in.ceiling, scopeSourceRoom))
 		lines = scopeItems(lines, "Intent package", in.pkg)
 		lines = scopeItems(lines, "review input", in.inputs)
 		lines = scopeChangedItems(lines, changed)
 	}
 	for _, p := range in.parts {
 		estimate := in.partEstimate(p)
-		if estimate <= in.ceiling {
+		if estimate <= in.limit() {
 			continue
 		}
 		changed := in.changedFiles(p.text)
-		lines = append(lines, fmt.Sprintf("Scope check: part %q is estimated at %d bytes of mandatory review material (changed files %d in areas %d; its own package is not counted), over the %d-byte review ceiling (tools.InputBudgetBytes).",
-			p.slug, estimate, len(changed), scopeAreas(changed), in.ceiling))
+		lines = append(lines, fmt.Sprintf("Scope check: part %q is estimated at %d bytes of mandatory review material (changed files %d in areas %d; its own package is not counted), over the %d-byte limit (the %d-byte review ceiling, tools.InputBudgetBytes, less the %d bytes the review keeps for source).",
+			p.slug, estimate, len(changed), scopeAreas(changed), in.limit(), in.ceiling, scopeSourceRoom))
 		lines = scopeItems(lines, "review input", in.inputs)
 		lines = scopeChangedItems(lines, changed)
+	}
+	over, tooMany := lines != nil, false
+	if estimate := in.estimate(); estimate <= in.limit() {
+		if n := in.reviewParts(estimate, in.changedFiles(in.intentText)); n > MaxReviewParts {
+			tooMany = true
+			lines = append(lines, fmt.Sprintf("Scope check: the Intent is estimated at %d review parts (authority %d bytes in every part), over MaxReviewParts %d; each part is one review model call.", n, estimate, MaxReviewParts))
+		}
+	}
+	for _, p := range in.parts {
+		if estimate := in.partEstimate(p); estimate <= in.limit() {
+			if n := in.reviewParts(estimate, in.changedFiles(p.text)); n > MaxReviewParts {
+				tooMany = true
+				lines = append(lines, fmt.Sprintf("Scope check: part %q is estimated at %d review parts (authority %d bytes in every part), over MaxReviewParts %d; each part is one review model call.", p.slug, n, estimate, MaxReviewParts))
+			}
+		}
 	}
 	if lines == nil {
 		return nil
 	}
-	return append(lines, scopeGuidance)
+	if over {
+		lines = append(lines, scopeGuidance)
+	}
+	if tooMany {
+		lines = append(lines, scopePartsGuidance)
+	}
+	return lines
 }
 
 // headBlobs are the blobs of the HEAD tree with their sizes; empty without a commit.
@@ -226,7 +266,7 @@ func (sh *shaping) headBlobs() map[string]int {
 }
 
 // scopeRefusal shows the review estimate of a written candidate and refuses it when the Intent
-// or a part of its split would not fit the review ceiling; false when everything fits or the
+// or a part of its split leaves the review no room for source; false when everything fits or the
 // package cannot be counted (later gates report that).
 func (sh *shaping) scopeRefusal() (string, outcome, bool) {
 	intent, scenarios, err := project.CheckIntent(sh.root, sh.slug, nil)
@@ -253,13 +293,13 @@ func (sh *shaping) scopeRefusal() (string, outcome, bool) {
 		in.pkg = append(in.pkg, scopeFile{path: p, size: len(b)})
 	}
 	in.inputs = scopeReviewInputs(in.head)
-	sh.progress(fmt.Sprintf("kogen: review estimate %d bytes of the %d-byte review ceiling (tools.InputBudgetBytes)", in.estimate(), in.ceiling))
+	sh.progress(fmt.Sprintf("kogen: review estimate %d bytes of the %d-byte limit (review ceiling %d, tools.InputBudgetBytes, less %d for source)", in.estimate(), in.limit(), in.ceiling, scopeSourceRoom))
 	lines := scopeLines(in)
 	if lines == nil {
 		if len(in.parts) > 0 {
 			var parts []string
 			for _, p := range in.parts {
-				parts = append(parts, fmt.Sprintf("%s (%d of %d bytes)", p.slug, in.partEstimate(p), in.ceiling))
+				parts = append(parts, fmt.Sprintf("%s (%d of %d bytes)", p.slug, in.partEstimate(p), in.limit()))
 			}
 			sh.progress(fmt.Sprintf("kogen: split: this Intent is part 1 of %d; shape the other parts as their own Intents: %s", len(in.parts)+1, strings.Join(parts, ", ")))
 		}

@@ -58,7 +58,7 @@ function shapeCase(name) {
 
 function shown(o) {
   const feedback = o.feedback.map((text, i) => `result of submission ${i + 1}:\n${text}`).join('\n----\n');
-  return `case ${o.case} (tools.InputBudgetBytes ${o.ceiling}): shape ended with exit ${o.exit}, err ${o.err}; published=${o.published}; ` +
+  return `case ${o.case} (tools.InputBudgetBytes ${o.ceiling}, limit ${o.limit}): shape ended with exit ${o.exit}, err ${o.err}; published=${o.published}; ` +
     `${o.shaper} shaper round(s), ${o.decision} decision check(s), ${o.decisionAtSecond} before the second shaper request; refused gates ${JSON.stringify(o.gates)}; ` +
     `expected estimates ${JSON.stringify(o.expected)}\n${feedback || '(no submission results)'}\nprogress (tail):\n${String(o.progress).slice(-2500)}`;
 }
@@ -69,7 +69,7 @@ function result(o, n) {
   return text;
 }
 
-const ESTIMATE = /kogen: review estimate (\d+) bytes of the (\d+)-byte review ceiling \(tools\.InputBudgetBytes\)/g;
+const ESTIMATE = /kogen: review estimate (\d+) bytes of the (\d+)-byte limit \(review ceiling \d+, tools\.InputBudgetBytes, less 6000 for source\)/g;
 
 // estimates are the review estimate progress lines in order, as [estimate, ceiling].
 function estimates(o) {
@@ -86,25 +86,42 @@ function blocks(text) {
   return out;
 }
 
+// scopeLines are the lines of a result from its first Scope check line on; the result may open
+// with a time-budget line.
+function scopeLines(text) {
+  const lines = text.split('\n');
+  const i = lines.findIndex(l => l.startsWith('Scope check: '));
+  return i < 0 ? [] : lines.slice(i);
+}
+
 const checks = {
   ceiling(o, n) {
     assert.equal(o.ceiling, n, `the run used tools.InputBudgetBytes ${o.ceiling}, want ${n}\n${shown(o)}`);
   },
   refused(o, n) {
     const text = result(o, n);
-    assert.ok(text.startsWith('Scope check: '), `submission ${n} was not refused by the scope check\n${shown(o)}`);
+    assert.ok(text.split('\n').some(l => l.startsWith('Scope check: ')), `submission ${n} was not refused by the scope check\n${shown(o)}`);
   },
   scopeRefusals(o, n) {
     const got = o.gates.filter(g => g === 'scope').length;
     assert.equal(got, n, `the scope check refused ${got} submissions, want ${n}\n${shown(o)}`);
   },
   intentLine(o, n, files, areas) {
-    const want = `Scope check: the Intent is estimated at ${o.expected[n - 1]} bytes of mandatory review material (scenarios 2, acceptance harnesses 1, changed files ${files} in areas ${areas}), over the ${o.ceiling}-byte review ceiling ${CEILING_NOTE}.`;
-    assert.equal(result(o, n).split('\n')[0], want, `the first line of the result of submission ${n} differs\n${shown(o)}`);
+    const want = `Scope check: the Intent is estimated at ${o.expected[n - 1]} bytes of mandatory review material (scenarios 2, acceptance harnesses 2, changed files ${files} in areas ${areas}), over the ${o.limit}-byte limit (the ${o.ceiling}-byte review ceiling, tools.InputBudgetBytes, less the 6000 bytes the review keeps for source).`;
+    assert.equal(scopeLines(result(o, n))[0], want, `the first line of the result of submission ${n} differs\n${shown(o)}`);
   },
   partLine(o, n, slug, files, areas) {
-    const want = `Scope check: part "${slug}" is estimated at ${o.parts[slug]} bytes of mandatory review material (changed files ${files} in areas ${areas}; its own package is not counted), over the ${o.ceiling}-byte review ceiling ${CEILING_NOTE}.`;
+    const want = `Scope check: part "${slug}" is estimated at ${o.parts[slug]} bytes of mandatory review material (changed files ${files} in areas ${areas}; its own package is not counted), over the ${o.limit}-byte limit (the ${o.ceiling}-byte review ceiling, tools.InputBudgetBytes, less the 6000 bytes the review keeps for source).`;
     assert.ok(result(o, n).split('\n').includes(want), `the result of submission ${n} has no line ${JSON.stringify(want)}\n${shown(o)}`);
+  },
+  partsLine(o, n, parts) {
+    const want = `Scope check: the Intent is estimated at ${parts} review parts (authority ${o.expected[n - 1]} bytes in every part), over MaxReviewParts 8; each part is one review model call.`;
+    assert.equal(scopeLines(result(o, n))[0], want, `the first line of the result of submission ${n} differs\n${shown(o)}`);
+  },
+  partsGuidance(o, n) {
+    for (const text of ['Above MaxReviewParts the review would take too many model calls, one per part', 'split the work into separately reviewable Intents', 'Resubmitting this candidate unchanged is refused again.']) {
+      assert.ok(result(o, n).includes(text), `the result of submission ${n} does not contain the guidance ${JSON.stringify(text)}\n${shown(o)}`);
+    }
   },
   noIntentLine(o, n) {
     assert.ok(!result(o, n).includes('Scope check: the Intent'), `the result of submission ${n} refuses the Intent itself\n${shown(o)}`);
@@ -121,7 +138,7 @@ const checks = {
     assert.ok(found.length > 0, `the result of submission ${n} has no unit line\n${shown(o)}`);
     for (const b of found) {
       const est = Number(/ is estimated at (\d+) bytes /.exec(b.head)[1]);
-      const sum = b.items.reduce((s, l) => s + Number(/: (\d+) bytes \(/.exec(l)[1]), 0);
+      const sum = b.items.filter(l => !l.includes('(changed file')).reduce((s, l) => s + Number(/: (\d+) bytes \(/.exec(l)[1]), 0);
       assert.equal(sum, est, `the item lines under ${JSON.stringify(b.head)} add up to ${sum}, not its estimate ${est}\n${shown(o)}`);
     }
   },
@@ -132,15 +149,15 @@ const checks = {
     assert.ok(!result(o, n).includes(text), `the result of submission ${n} contains ${JSON.stringify(text)}\n${shown(o)}`);
   },
   guidance(o, n) {
-    for (const text of ['split the work into separately reviewable Intents', 'list every remaining part in a ## Split section of intent.md',
-      'A ## Stages plan does not lower the estimate', 'Do not satisfy the ceiling by deleting requested behaviour', 'Resubmitting this candidate unchanged is refused again.']) {
+    for (const text of ['Above the limit this cannot be reviewed', 'Shrink the Intent package', 'list every remaining part in a ## Split section of intent.md',
+      'A ## Stages plan does not lower the estimate', 'Do not satisfy the limit by deleting requested behaviour', 'Resubmitting this candidate unchanged is refused again.']) {
       assert.ok(result(o, n).includes(text), `the result of submission ${n} does not contain the guidance ${JSON.stringify(text)}\n${shown(o)}`);
     }
   },
   estimateShown(o, n) {
     const got = estimates(o)[n - 1];
     assert.ok(got, `the progress has no review estimate line for submission ${n}\n${shown(o)}`);
-    assert.deepEqual(got, [o.expected[n - 1], o.ceiling], `the review estimate of submission ${n} is ${got[0]} of ${got[1]}, want the sum ${o.expected[n - 1]} of the review material and the ceiling ${o.ceiling}\n${shown(o)}`);
+    assert.deepEqual(got, [o.expected[n - 1], o.limit], `the review estimate of submission ${n} is ${got[0]} of ${got[1]}, want the sum ${o.expected[n - 1]} of the review material and the limit ${o.limit}\n${shown(o)}`);
   },
   estimateIs(o, n, bytes) {
     const got = estimates(o)[n - 1];
@@ -150,7 +167,7 @@ const checks = {
   split(o, slugs) {
     const names = slugs.split(',');
     const want = `kogen: split: this Intent is part 1 of ${names.length + 1}; shape the other parts as their own Intents: ` +
-      names.map(s => `${s} (${o.parts[s]} of ${o.ceiling} bytes)`).join(', ');
+      names.map(s => `${s} (${o.parts[s]} of ${o.limit} bytes)`).join(', ');
     assert.ok(String(o.progress).includes(want), `the progress has no line ${JSON.stringify(want)}\n${shown(o)}`);
   },
   noSplit(o) {
@@ -177,60 +194,58 @@ const checks = {
 // must reject every known-bad one.
 function controls(kind) {
   const C = 524288;
+  const LIM = C - 6000;
+  const limitNote = `over the ${LIM}-byte limit (the ${C}-byte review ceiling, tools.InputBudgetBytes, less the 6000 bytes the review keeps for source).`;
   const rules = 15677;
-  const guidance = 'Above the ceiling this cannot be approved as one Intent: split the work into separately reviewable Intents. Narrow this Intent to its first part so that its estimate fits, ' +
-    'and list every remaining part in a ## Split section of intent.md, one bullet per part, `- <slug>: <what the part delivers>`, naming in backticks the files that part changes; ' +
-    "a part's estimate is the review inputs plus those files, and each part must fit the ceiling too. A ## Stages plan does not lower the estimate, because the final review carries every stage. " +
-    'Do not satisfy the ceiling by deleting requested behaviour: every behaviour and example the request asks for stays in this Intent or in a part. Resubmitting this candidate unchanged is refused again.';
+  const guidance = 'Above the limit this cannot be reviewed: the Intent package, the README and the testing rules go whole into every review prompt, and the review cuts the changed files\' diffs and added files into parts of what remains. ' +
+    'Shrink the Intent package (intent.md, the acceptance feature, its step harnesses, the model) so that its estimate fits; changed files do not count, however large or many. ' +
+    'If the Intent package cannot shrink, narrow this Intent to its first part and list every remaining part in a ## Split section of intent.md, one bullet per part, `- <slug>: <what the part delivers>`; each part\'s estimate is the review inputs alone, and its own package must fit as well. ' +
+    'A ## Stages plan does not lower the estimate, because the final review carries every stage. ' +
+    'Do not satisfy the limit by deleting requested behaviour: every behaviour and example the request asks for stays in this Intent or in a part. Resubmitting this candidate unchanged is refused again.';
+  const partsGuidance = 'Above MaxReviewParts the review would take too many model calls, one per part: split the work into separately reviewable Intents, narrowing this Intent to its first part and listing every remaining part in a ## Split section of intent.md, one bullet per part, `- <slug>: <what the part delivers>`, naming in backticks the files that part changes. ' +
+    'Do not satisfy the limit by deleting requested behaviour. Resubmitting this candidate unchanged is refused again.';
   const inputs = ['- README.md: 3000 bytes (review input)', `- docs/testing-rules.md: ${rules} bytes (review input)`];
   const pkg = n => [`- .kogen/intents/is-even/intent.md: ${n} bytes (Intent package)`, `- .kogen/intents/is-even/acceptance.feature: ${FEATURE_BYTES} bytes (Intent package)`, `- features/steps/is-even__steps.js: ${STEPS_BYTES} bytes (Intent package)`];
   const changed = [['engine/core.js', 300000], ['engine/rules.js', 250000]];
-  const changedLines = list => list.map(([p, n]) => `- ${p}: ${n} bytes (changed file, area engine)`);
+  const changedLines = list => list.map(([p, n]) => `- ${p}: ${n} bytes (changed file, area engine; review sends its diff in parts)`);
   const sum = list => list.reduce((s, [, n]) => s + n, 0);
   const intentRefusal = (intentBytes, list) => {
-    const est = intentBytes + FEATURE_BYTES + STEPS_BYTES + 3000 + rules + sum(list);
-    return {est, text: [`Scope check: the Intent is estimated at ${est} bytes of mandatory review material (scenarios 2, acceptance harnesses 1, changed files ${list.length} in areas 1), over the ${C}-byte review ceiling ${CEILING_NOTE}.`,
-      ...pkg(intentBytes), ...inputs, ...changedLines(list), guidance].join('\n')};
+    const pad = LIM - 4096 - FEATURE_BYTES - STEPS_BYTES - 3000 - rules;
+    const est = intentBytes + FEATURE_BYTES + STEPS_BYTES + pad + 3000 + rules;
+    return {est, text: [`Scope check: the Intent is estimated at ${est} bytes of mandatory review material (scenarios 2, acceptance harnesses 2, changed files ${list.length} in areas 1), ${limitNote}`,
+      ...pkg(intentBytes), `- features/steps/is-even__padding.js: ${pad} bytes (Intent package)`, ...inputs, ...changedLines(list), guidance].join('\n')};
   };
-  const partRefusal = (slug, list) => {
-    const est = 3000 + rules + sum(list);
-    return {est, text: [`Scope check: part "${slug}" is estimated at ${est} bytes of mandatory review material (changed files ${list.length} in areas 1; its own package is not counted), over the ${C}-byte review ceiling ${CEILING_NOTE}.`,
-      ...inputs, ...changedLines(list), guidance].join('\n')};
-  };
-  const line = n => `kogen: review estimate ${n} bytes of the ${C}-byte review ceiling ${CEILING_NOTE} (0 s)\n`;
-  const splitLine = parts => `kogen: split: this Intent is part 1 of ${parts.length + 1}; shape the other parts as their own Intents: ${parts.map(([s, n]) => `${s} (${n} of ${C} bytes)`).join(', ')} (4 s)\n`;
-  const base = {ceiling: C, rules, exit: 0, err: '<nil>', class: '', reason: '', published: true, intent: '', stdout: '', gates: [], shaper: 3, decision: 2, decisionAtSecond: 0, parts: {}};
-  const fitsEst = 1500 + FEATURE_BYTES + STEPS_BYTES + 3000 + rules + 1000;
+  const manyParts = n => ({est: LIM, text: [`Scope check: the Intent is estimated at ${n} review parts (authority ${LIM} bytes in every part), over MaxReviewParts 8; each part is one review model call.`, partsGuidance].join('\n')});
+  const line = n => `kogen: review estimate ${n} bytes of the ${LIM}-byte limit (review ceiling ${C}, tools.InputBudgetBytes, less 6000 for source) (0 s)\n`;
+  const splitLine = parts => `kogen: split: this Intent is part 1 of ${parts.length + 1}; shape the other parts as their own Intents: ${parts.map(([s, n]) => `${s} (${n} of ${LIM} bytes)`).join(', ')} (4 s)\n`;
+  const base = {ceiling: C, limit: LIM, rules, exit: 0, err: '<nil>', class: '', reason: '', published: true, intent: '', stdout: '', gates: [], shaper: 3, decision: 2, decisionAtSecond: 0, parts: {}};
+  const fitsEst = 1500 + FEATURE_BYTES + STEPS_BYTES + 3000 + rules;
   const fits = {...base, case: 'fits', expected: [fitsEst, fitsEst], progress: line(fitsEst) + line(fitsEst), feedback: ['ack'], decisionAtSecond: 1};
   const r1 = intentRefusal(2200, changed);
-  const e2 = 2400 + FEATURE_BYTES + STEPS_BYTES + 3000 + rules + 300000;
-  const rulesPart = 3000 + rules + 250000;
-  const oversized = {...base, case: 'oversized', expected: [r1.est, e2, e2], gates: ['scope'], parts: {'engine-rules': rulesPart},
-    progress: line(r1.est) + line(e2) + splitLine([['engine-rules', rulesPart]]) + line(e2) + splitLine([['engine-rules', rulesPart]]),
-    feedback: [r1.text, 'ack', 'ack'], intent: 'x\n## Split\n- engine-rules: Move the table.\n'};
-  const allPart = partRefusal('engine-all', changed);
-  const e3 = 2500 + FEATURE_BYTES + STEPS_BYTES + 3000 + rules + 1000;
-  const e4 = 2600 + FEATURE_BYTES + STEPS_BYTES + 3000 + rules + 1000;
-  const corePart = 3000 + rules + 300000;
-  const partOver = {...base, case: 'part-over', expected: [e3, e4, e4], gates: ['scope'], parts: {'engine-all': allPart.est, 'engine-core': corePart, 'engine-rules': rulesPart},
-    progress: line(e3) + line(e4) + splitLine([['engine-core', corePart], ['engine-rules', rulesPart]]) + line(e4) + splitLine([['engine-core', corePart], ['engine-rules', rulesPart]]),
-    feedback: [allPart.text, 'ack', 'ack']};
-  const staged = intentRefusal(2900, changed);
-  const stages = {...oversized, case: 'stages', expected: [staged.est, e2, e2], progress: line(staged.est) + line(e2) + splitLine([['engine-rules', rulesPart]]) + line(e2) + splitLine([['engine-rules', rulesPart]]), feedback: [staged.text, 'ack', 'ack']};
+  const e2 = 2400 + FEATURE_BYTES + STEPS_BYTES + 3000 + rules;
+  const rulesPart = 3000 + rules;
+  const oversized = {...base, case: 'oversized', expected: [LIM + 1, e2, e2], gates: ['scope'], parts: {'engine-rules': rulesPart},
+    progress: line(LIM + 1) + line(e2) + splitLine([['engine-rules', rulesPart]]) + line(e2) + splitLine([['engine-rules', rulesPart]]),
+    feedback: [intentRefusal(4097, changed).text, 'ack', 'ack'], intent: 'x\n## Split\n- engine-rules: Move the table.\n'};
+  const e4 = 2600 + FEATURE_BYTES + STEPS_BYTES + 3000 + rules;
+  const partOver = {...base, case: 'many-parts', expected: [LIM, e4, e4], gates: ['scope'], parts: {'engine-core': rulesPart, 'engine-rules': rulesPart},
+    progress: line(LIM) + line(e4) + splitLine([['engine-core', rulesPart], ['engine-rules', rulesPart]]) + line(e4) + splitLine([['engine-core', rulesPart], ['engine-rules', rulesPart]]),
+    feedback: [manyParts(11).text, 'ack', 'ack']};
+  const stages = {...oversized, case: 'stages'};
   const edgeText = intentRefusal(4097, [['lib/util.js', 1000]]);
-  const edge = {...base, case: 'edge', expected: [C + 1, C], progress: line(C + 1) + line(C) + line(C), gates: ['scope'], feedback: [edgeText.text, 'ack'], decisionAtSecond: 0, decision: 3};
+  const edge = {...base, case: 'edge', expected: [LIM + 1, LIM], progress: line(LIM + 1) + line(LIM) + line(LIM), gates: ['scope'], feedback: [edgeText.text, 'ack'], decisionAtSecond: 0, decision: 3};
   const withEdgeEstimate = (o, n) => ({...o, expected: [n, o.expected[1]]});
 
   const good = [
     [fits, o => checks.ceiling(o, C)], [fits, o => checks.published(o)], [fits, o => checks.estimateShown(o, 1)], [fits, o => checks.noSplit(o)], [fits, o => checks.lacks(o, 1, 'Scope check')],
     [oversized, o => checks.refused(o, 1)], [oversized, o => checks.intentLine(o, 1, 2, 1)], [oversized, o => checks.inputs(o, 1)], [oversized, o => checks.itemsAddUp(o, 1)],
-    [oversized, o => checks.contains(o, 1, '- engine/core.js: 300000 bytes (changed file, area engine)')], [oversized, o => checks.guidance(o, 1)],
+    [oversized, o => checks.contains(o, 1, '- engine/core.js: 300000 bytes (changed file, area engine; review sends its diff in parts)')], [oversized, o => checks.guidance(o, 1)],
     [oversized, o => checks.estimateShown(o, 1)], [oversized, o => checks.estimateShown(o, 2)], [oversized, o => checks.split(o, 'engine-rules')],
     [oversized, o => checks.noDecisionBeforeSecond(o)], [oversized, o => checks.scopeRefusals(o, 1)], [oversized, o => checks.intentHas(o, '## Split')],
-    [partOver, o => checks.refused(o, 1)], [partOver, o => checks.partLine(o, 1, 'engine-all', 2, 1)], [partOver, o => checks.noIntentLine(o, 1)], [partOver, o => checks.itemsAddUp(o, 1)],
-    [partOver, o => checks.noPart(o, 'engine-all')], [partOver, o => checks.split(o, 'engine-core,engine-rules')],
+    [partOver, o => checks.refused(o, 1)], [partOver, o => checks.partsLine(o, 1, 11)], [partOver, o => checks.partsGuidance(o, 1)],
+    [partOver, o => checks.split(o, 'engine-core,engine-rules')],
     [stages, o => checks.refused(o, 1)], [stages, o => checks.intentLine(o, 1, 2, 1)], [stages, o => checks.itemsAddUp(o, 1)],
-    [edge, o => checks.refused(o, 1)], [edge, o => checks.scopeRefusals(o, 1)], [edge, o => checks.estimateIs(o, 1, C + 1)], [edge, o => checks.estimateIs(o, 2, C)], [edge, o => checks.decisionsAtLeast(o, 1)],
+    [edge, o => checks.refused(o, 1)], [edge, o => checks.scopeRefusals(o, 1)], [edge, o => checks.estimateIs(o, 1, LIM + 1)], [edge, o => checks.estimateIs(o, 2, LIM)], [edge, o => checks.decisionsAtLeast(o, 1)],
   ];
   const mutate = (o, change) => {
     const c = JSON.parse(JSON.stringify(o));
@@ -243,10 +258,10 @@ function controls(kind) {
     [none(fits), o => checks.estimateShown(o, 1)],
     [none(oversized), o => checks.refused(o, 1)], [none(oversized), o => checks.split(o, 'engine-rules')], [none(oversized), o => checks.noDecisionBeforeSecond(o)], [none(oversized), o => checks.scopeRefusals(o, 1)],
     [none(partOver), o => checks.refused(o, 1)], [none(partOver), o => checks.split(o, 'engine-core,engine-rules')],
-    [none(stages), o => checks.refused(o, 1)], [none(edge), o => checks.refused(o, 1)], [none(edge), o => checks.estimateIs(o, 1, C + 1)],
+    [none(stages), o => checks.refused(o, 1)], [none(edge), o => checks.refused(o, 1)], [none(edge), o => checks.estimateIs(o, 1, LIM + 1)],
     [mutate(fits, o => { o.ceiling = 1048576; }), o => checks.ceiling(o, C)],
     [mutate(fits, o => { o.progress = o.progress.replace(String(fitsEst), String(fitsEst - 1000)); }), o => checks.estimateShown(o, 1)],
-    [mutate(fits, o => { o.progress = o.progress.replace(String(C), '1048576'); }), o => checks.estimateShown(o, 1)],
+    [mutate(fits, o => { o.progress = o.progress.replace(String(LIM), '1048576'); }), o => checks.estimateShown(o, 1)],
     [mutate(fits, o => { o.progress += splitLine([['engine-rules', rulesPart]]); }), o => checks.noSplit(o)],
     [mutate(fits, o => { o.published = false; }), o => checks.published(o)],
     [mutate(oversized, o => { o.feedback[0] = 'Scope check: the Intent is estimated at 100 bytes' + o.feedback[0].slice(o.feedback[0].indexOf(' bytes of mandatory')); }), o => checks.intentLine(o, 1, 2, 1)],
@@ -255,24 +270,24 @@ function controls(kind) {
     [mutate(oversized, o => { o.feedback[0] = o.feedback[0].replace(`${C}-byte review ceiling`, '1048576-byte review ceiling'); }), o => checks.intentLine(o, 1, 2, 1)],
     [mutate(oversized, o => { o.feedback[0] = o.feedback[0].replace('- README.md: 3000 bytes (review input)\n', ''); }), o => checks.inputs(o, 1)],
     [mutate(oversized, o => { o.feedback[0] = o.feedback[0].replace(`- docs/testing-rules.md: ${rules} bytes (review input)\n`, ''); }), o => checks.itemsAddUp(o, 1)],
-    [mutate(oversized, o => { o.feedback[0] = o.feedback[0].replace('- engine/core.js: 300000 bytes', '- engine/core.js: 4096 bytes'); }), o => checks.itemsAddUp(o, 1)],
-    [mutate(oversized, o => { o.feedback[0] = o.feedback[0].replace('(changed file, area engine)', '(named file, area engine)'); }), o => checks.contains(o, 1, '- engine/core.js: 300000 bytes (changed file, area engine)')],
-    [mutate(oversized, o => { o.feedback[0] = o.feedback[0].replace('split the work into separately reviewable Intents', 'split the work into stages'); }), o => checks.guidance(o, 1)],
+    [mutate(oversized, o => { o.feedback[0] = o.feedback[0].replace('- features/steps/is-even__steps.js: 210 bytes', '- features/steps/is-even__steps.js: 4096 bytes'); }), o => checks.itemsAddUp(o, 1)],
+    [mutate(oversized, o => { o.feedback[0] = o.feedback[0].replace('(changed file, area engine; review sends its diff in parts)', '(named file, area engine)'); }), o => checks.contains(o, 1, '- engine/core.js: 300000 bytes (changed file, area engine; review sends its diff in parts)')],
+    [mutate(oversized, o => { o.feedback[0] = o.feedback[0].replace('Shrink the Intent package', 'shrink the work'); }), o => checks.guidance(o, 1)],
     [mutate(oversized, o => { o.feedback[0] = o.feedback[0].replace('A ## Stages plan does not lower the estimate, because the final review carries every stage. ', ''); }), o => checks.guidance(o, 1)],
     [mutate(oversized, o => { o.feedback[0] = o.feedback[0].replace(' Resubmitting this candidate unchanged is refused again.', ''); }), o => checks.guidance(o, 1)],
-    [mutate(oversized, o => { o.progress = o.progress.replace(String(r1.est), String(r1.est - 250000)); }), o => checks.estimateShown(o, 1)],
+    [mutate(oversized, o => { o.progress = o.progress.replace(String(LIM + 1), String(LIM + 1 - 250000)); }), o => checks.estimateShown(o, 1)],
     [mutate(oversized, o => { o.progress = o.progress.replaceAll('part 1 of 2', 'part 2 of 2'); }), o => checks.split(o, 'engine-rules')],
     [mutate(oversized, o => { o.progress = o.progress.replaceAll(`engine-rules (${rulesPart} of`, `engine-rules (${rulesPart - 3000} of`); }), o => checks.split(o, 'engine-rules')],
     [mutate(oversized, o => { o.decisionAtSecond = 1; }), o => checks.noDecisionBeforeSecond(o)],
     [mutate(oversized, o => { o.gates = ['decision_check']; }), o => checks.scopeRefusals(o, 1)],
     [mutate(oversized, o => { o.intent = 'x'; }), o => checks.intentHas(o, '## Split')],
-    [mutate(partOver, o => { o.feedback[0] = o.feedback[0].replace('part "engine-all"', 'part "engine-core"'); }), o => checks.partLine(o, 1, 'engine-all', 2, 1)],
-    [mutate(partOver, o => { o.feedback[0] = o.feedback[0].replace('its own package is not counted', 'package counted'); }), o => checks.partLine(o, 1, 'engine-all', 2, 1)],
-    [mutate(partOver, o => { o.feedback[0] = intentRefusal(2500, changed).text + '\n' + o.feedback[0]; }), o => checks.noIntentLine(o, 1)],
-    [mutate(partOver, o => { o.progress += splitLine([['engine-all', allPart.est]]); }), o => checks.noPart(o, 'engine-all')],
+    [mutate(partOver, o => { o.feedback[0] = o.feedback[0].replace('11 review parts', '8 review parts'); }), o => checks.partsLine(o, 1, 11)],
+    [mutate(partOver, o => { o.feedback[0] = o.feedback[0].replace('over MaxReviewParts 8', 'over MaxReviewParts 16'); }), o => checks.partsLine(o, 1, 11)],
+    [mutate(partOver, o => { o.feedback[0] = o.feedback[0].replace('each part is one review model call', 'each part is cheap'); }), o => checks.partsLine(o, 1, 11)],
+    [mutate(partOver, o => { o.feedback[0] = o.feedback[0].replace(partsGuidance, ''); }), o => checks.partsGuidance(o, 1)],
     [mutate(stages, o => { o.feedback[0] = o.feedback[0].replace('changed files 2 in areas 1', 'changed files 0 in areas 0'); }), o => checks.intentLine(o, 1, 2, 1)],
-    [mutate(edge, o => { o.progress = line(C) + line(C) + line(C); }), o => checks.estimateIs(o, 1, C + 1)],
-    [mutate(edge, o => { o.progress = line(C + 1) + line(C + 1) + line(C); }), o => checks.estimateIs(o, 2, C)],
+    [mutate(edge, o => { o.progress = line(LIM) + line(LIM) + line(LIM); }), o => checks.estimateIs(o, 1, LIM + 1)],
+    [mutate(edge, o => { o.progress = line(LIM + 1) + line(LIM + 1) + line(LIM); }), o => checks.estimateIs(o, 2, LIM)],
     [mutate(edge, o => { o.gates = ['scope', 'scope']; }), o => checks.scopeRefusals(o, 1)],
     [mutate(edge, o => { o.decision = 0; }), o => checks.decisionsAtLeast(o, 1)],
     [withEdgeEstimate(mutate(oversized, o => {}), r1.est + 1), o => checks.estimateShown(o, 1)],
@@ -299,8 +314,10 @@ if (require.main === module) {
   Then(P + 'the item lines of the result of submission {int} add up to the estimate of each unit', function (n) { checks.itemsAddUp(this.ksr, n); });
   Then(P + 'the result of submission {int} contains {string}', function (n, text) { checks.contains(this.ksr, n, text); });
   Then(P + 'the result of submission {int} does not contain {string}', function (n, text) { checks.lacks(this.ksr, n, text); });
-  Then(P + 'the result of submission {int} tells the shaper to split the work into separately reviewable Intents', function (n) { checks.guidance(this.ksr, n); });
-  Then(P + 'the progress shows the review estimate of submission {int} against the ceiling', function (n) { checks.estimateShown(this.ksr, n); });
+  Then(P + 'the result of submission {int} tells the shaper to shrink the Intent package or split it into parts', function (n) { checks.guidance(this.ksr, n); });
+  Then(P + 'the first line of the result of submission {int} is the review parts line for {int} parts', function (n, parts) { checks.partsLine(this.ksr, n, parts); });
+  Then(P + 'the result of submission {int} tells the shaper to split the work over fewer review parts', function (n) { checks.partsGuidance(this.ksr, n); });
+  Then(P + 'the progress shows the review estimate of submission {int} against the limit', function (n) { checks.estimateShown(this.ksr, n); });
   Then(P + 'the progress shows the review estimate of submission {int} as {int} bytes', function (n, bytes) { checks.estimateIs(this.ksr, n, bytes); });
   Then(P + 'the progress shows the split into the parts {string}', function (slugs) { checks.split(this.ksr, slugs); });
   Then(P + 'the progress shows no split', function () { checks.noSplit(this.ksr); });

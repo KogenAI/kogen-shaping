@@ -29,6 +29,9 @@ const ksrFeature = "Feature: Is even\n  Scenario: Even numbers\n    Given is-eve
 
 const ksrSteps = "// steps\nconst { Given, Then } = require('@cucumber/cucumber');\nGiven('is-even: the number {int}', function () {});\nThen('is-even: it is even', function () {});\nThen('is-even: it is not even', function () {});\n"
 
+// ksrSourceRoom is the bytes the review keeps for source under the ceiling (MaterialPartBytes).
+const ksrSourceRoom = 6000
+
 const ksrPadding = "features/steps/is-even__padding.js"
 
 // The literal sizes of the tracked files of the synthetic project, in bytes.
@@ -62,22 +65,22 @@ func ksrSized(body, extra string, padding bool, size int) string {
 	return ksrIntent(body+" Filler: "+strings.Repeat("f", size-len(short))+".", extra, padding)
 }
 
-// ksrCandidate is one submitted package and the bytes of mandatory review material it holds:
-// its package, the README, the testing rules and the changed files it names.
+// ksrCandidate is one submitted package and the bytes of mandatory review material (the authority)
+// it holds: its package, the README and the testing rules. Changed files it names are not in it.
 type ksrCandidate struct {
 	files map[string]any
 	want  int
 }
 
 // ksrCand is the candidate whose intent.md is intent, with a padding step file of fill bytes
-// when fill is positive and the named bytes of changed files.
+// when fill is positive; the files it names are not counted.
 func ksrCand(intent string, fill, named int) ksrCandidate {
 	files := []any{
 		map[string]any{"path": ".kogen/intents/is-even/intent.md", "content": intent},
 		map[string]any{"path": ".kogen/intents/is-even/acceptance.feature", "content": ksrFeature},
 		map[string]any{"path": "features/steps/is-even__steps.js", "content": ksrSteps},
 	}
-	want := len(intent) + len(ksrFeature) + len(ksrSteps) + ksrReadme + len(agent.Prompt(agent.TestingRules)) + named
+	want := len(intent) + len(ksrFeature) + len(ksrSteps) + ksrReadme + len(agent.Prompt(agent.TestingRules))
 	if fill > 0 {
 		files = append(files, map[string]any{"path": ksrPadding, "content": ksrBlob(fill)})
 		want += fill
@@ -85,12 +88,13 @@ func ksrCand(intent string, fill, named int) ksrCandidate {
 	return ksrCandidate{map[string]any{"files": files}, want}
 }
 
-// ksrPart is the estimate of a split part that names the changed files of the given bytes.
-func ksrPart(named int) int { return ksrReadme + len(agent.Prompt(agent.TestingRules)) + named }
+// ksrPart is the estimate of a split part: the review inputs alone, whatever files it names.
+func ksrPart() int { return ksrReadme + len(agent.Prompt(agent.TestingRules)) }
 
 func TestKShapeSplitOversizedReviewAcceptance(t *testing.T) {
 	name, out := os.Getenv("KSR_CASE"), os.Getenv("KSR_OUT")
 	ceiling := tools.InputBudgetBytes
+	limit := ceiling - ksrSourceRoom
 	core, table, util := "engine/core.js", "engine/rules.js", "lib/util.js"
 	prose := "calc.is_even(n) returns True for even integers; "
 	oneFile := prose + "it uses " + ksrName(util) + "."
@@ -106,29 +110,40 @@ func TestKShapeSplitOversizedReviewAcceptance(t *testing.T) {
 	parts := map[string]int{}
 	switch name {
 	case "fits":
-		cands = []ksrCandidate{ksrCand(ksrIntent(oneFile, "", false), 0, ksrUtil)}
+		cands = []ksrCandidate{ksrCand(ksrIntent(oneFile, "", false), 0, 0)}
 	case "oversized":
-		// Two changed files of 550000 bytes together, then the Intent narrowed to the first with
-		// the second as a split part.
-		cands = []ksrCandidate{ksrCand(ksrIntent(bothFiles, "", false), 0, ksrCore+ksrTable), ksrCand(ksrIntent(coreOnly, splitTable, false), 0, ksrCore)}
-		parts["engine-rules"] = ksrPart(ksrTable)
-	case "part-over":
-		// A split part that names both large files is itself over the ceiling; then two parts that fit.
-		allParts := "## Split\n- engine-all: Rework " + ksrName(core) + " and " + ksrName(table) + " together.\n\n"
+		// An authority one byte over the limit that names two changed files, then the Intent narrowed
+		// to the first with the second as a split part and a package that fits (a small padding file
+		// stays declared, as a proposed file may not be dropped).
+		fill := limit - 4096 - len(ksrFeature) - len(ksrSteps) - ksrReadme - len(agent.Prompt(agent.TestingRules))
+		cands = []ksrCandidate{ksrCand(ksrSized(bothFiles, "", true, 4097), fill, 0), ksrCand(ksrIntent(coreOnly, splitTable, true), 100, 0)}
+		if cands[0].want != limit+1 {
+			t.Fatalf("TestKShapeSplitOversizedReviewAcceptance: the oversized fixture estimates %d bytes, want %d", cands[0].want, limit+1)
+		}
+		parts["engine-rules"] = ksrPart()
+	case "many-parts":
+		// An authority exactly at the limit leaves the review 6000 bytes of source per part; two
+		// changed files at the 32 KiB allowance each are 11 parts, over MaxReviewParts. Then the
+		// Intent narrowed to one small file with the others as split parts.
+		fill := limit - 4096 - len(ksrFeature) - len(ksrSteps) - ksrReadme - len(agent.Prompt(agent.TestingRules))
 		twoParts := "## Split\n- engine-core: Rework " + ksrName(core) + " alone.\n- engine-rules: Move the rule table in " + ksrName(table) + " out of the engine.\n\n"
-		cands = []ksrCandidate{ksrCand(ksrIntent(oneFile, allParts, false), 0, ksrUtil), ksrCand(ksrIntent(oneFile, twoParts, false), 0, ksrUtil)}
-		parts["engine-all"], parts["engine-core"], parts["engine-rules"] = ksrPart(ksrCore+ksrTable), ksrPart(ksrCore), ksrPart(ksrTable)
+		cands = []ksrCandidate{ksrCand(ksrSized(bothFiles, "", true, 4096), fill, 0), ksrCand(ksrIntent(oneFile, twoParts, true), 100, 0)}
+		if cands[0].want != limit {
+			t.Fatalf("TestKShapeSplitOversizedReviewAcceptance: the many-parts fixture estimates %d bytes, want %d", cands[0].want, limit)
+		}
+		parts["engine-core"], parts["engine-rules"] = ksrPart(), ksrPart()
 	case "stages":
 		// A staged plan with one changed file per stage does not lower the estimate of the Intent.
-		cands = []ksrCandidate{ksrCand(ksrIntent(bothFiles, stages, false), 0, ksrCore+ksrTable), ksrCand(ksrIntent(coreOnly, splitTable, false), 0, ksrCore)}
-		parts["engine-rules"] = ksrPart(ksrTable)
+		fill := limit - 4096 - len(ksrFeature) - len(ksrSteps) - ksrReadme - len(agent.Prompt(agent.TestingRules))
+		cands = []ksrCandidate{ksrCand(ksrSized(bothFiles, stages, true, 4097), fill, 0), ksrCand(ksrIntent(coreOnly, splitTable, true), 100, 0)}
+		parts["engine-rules"] = ksrPart()
 	case "edge":
-		// The estimate is one byte over the ceiling in the first candidate and exactly the ceiling
-		// in the second.
-		fill := ceiling - 4096 - len(ksrFeature) - len(ksrSteps) - ksrReadme - len(agent.Prompt(agent.TestingRules)) - ksrUtil
-		cands = []ksrCandidate{ksrCand(ksrSized(oneFile, "", true, 4097), fill, ksrUtil), ksrCand(ksrSized(oneFile, "", true, 4096), fill, ksrUtil)}
-		if cands[0].want != ceiling+1 || cands[1].want != ceiling {
-			t.Fatalf("TestKShapeSplitOversizedReviewAcceptance: the edge fixture estimates %d and %d bytes, want %d and %d", cands[0].want, cands[1].want, ceiling+1, ceiling)
+		// The estimate is one byte over the limit in the first candidate and exactly the limit in
+		// the second.
+		fill := limit - 4096 - len(ksrFeature) - len(ksrSteps) - ksrReadme - len(agent.Prompt(agent.TestingRules))
+		cands = []ksrCandidate{ksrCand(ksrSized(oneFile, "", true, 4097), fill, 0), ksrCand(ksrSized(oneFile, "", true, 4096), fill, 0)}
+		if cands[0].want != limit+1 || cands[1].want != limit {
+			t.Fatalf("TestKShapeSplitOversizedReviewAcceptance: the edge fixture estimates %d and %d bytes, want %d and %d", cands[0].want, cands[1].want, limit+1, limit)
 		}
 	default:
 		t.Fatalf("TestKShapeSplitOversizedReviewAcceptance: KSR_CASE %q is not a case of the harness", name)
@@ -168,7 +183,7 @@ func TestKShapeSplitOversizedReviewAcceptance(t *testing.T) {
 	}
 	x = &shapeExec{t: t, rounds: rounds}
 	exit, err := f.shapeWith(x, "Add calc.is_even(n).")
-	o := map[string]any{"case": name, "ceiling": ceiling, "rules": len(agent.Prompt(agent.TestingRules)), "exit": exit, "err": fmt.Sprint(err),
+	o := map[string]any{"case": name, "ceiling": ceiling, "limit": limit, "rules": len(agent.Prompt(agent.TestingRules)), "exit": exit, "err": fmt.Sprint(err),
 		"class": "", "reason": "", "stdout": f.Stdout.String(), "progress": f.Stderr.String(), "expected": expected, "parts": parts}
 	o["published"] = exit == 0 && err == nil && strings.Contains(f.Stdout.String(), "Next: kogen intent approve is-even")
 	if e, ok := sys.AsError(err); ok {
