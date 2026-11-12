@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -216,6 +217,33 @@ func (sh *shaping) candidatePackage() ([]packageFile, error) {
 	return files, nil
 }
 
+// provenanceParagraph is a request paragraph that is only a provenance statement: one line that
+// starts with the kind of record it names (a Studio issue, ticket, blueprint or plan) and has no
+// code span, so it shows no output and asks for nothing to be displayed.
+var provenanceParagraph = regexp.MustCompile("(?i)^(studio\\s+)?(issue|ticket|blueprint|plan)\\s+[^\\s`]+[^`\\n]*$")
+
+var blankLines = regexp.MustCompile(`\n\s*\n`)
+
+// provenanceOnly is whether literal is an id (it has a digit) that the request gives only in
+// provenance paragraphs: every request paragraph that contains it is one. An id that a request
+// line also shows as output, in a code span or in any other sentence, is a product literal.
+func provenanceOnly(request, literal string) bool {
+	if !strings.ContainsAny(literal, "0123456789") {
+		return false
+	}
+	found := false
+	for _, p := range blankLines.Split(request, -1) {
+		if !strings.Contains(p, literal) {
+			continue
+		}
+		if !provenanceParagraph.MatchString(strings.TrimSpace(p)) {
+			return false
+		}
+		found = true
+	}
+	return found
+}
+
 func literalProblemLine(it literalItem, red *verify.Redactor) string {
 	r := red.Redact
 	if it.status == "changed" {
@@ -250,6 +278,9 @@ func literalOutcome(items []literalItem, sources map[string]string, files []pack
 		case strings.TrimSpace(it.literal) == "" || !hasSource || !strings.Contains(src, it.quote) || !strings.Contains(it.quote, it.literal):
 			it.status = "unverified"
 		case it.status == "superseded" || it.status == "informal":
+		case it.status == "required" && it.source == "request" && provenanceOnly(src, it.literal):
+			// An id that the request gives only to say which Studio record it comes from.
+			it.status = "informal"
 		case inPackage(it.literal):
 			it.status = "present"
 		case strings.TrimSpace(it.packageValue) != "" && it.packageValue != it.literal && inPackage(it.packageValue):
