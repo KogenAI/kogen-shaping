@@ -355,14 +355,10 @@ func astNodes(children []reportChild, out map[string]astNode) {
 	}
 }
 
-// failureDetail words a failed step the way readiness does: where it is, then the first 20 lines
-// of its message.
+// failureDetail words a failed step the way readiness does: where it is, then its message,
+// the first line and the tail when it is long.
 func failureDetail(where, message string) string {
-	lines := strings.Split(message, "\n")
-	text := strings.Join(lines[:min(20, len(lines))], "\n")
-	if len(lines) > 20 {
-		text += fmt.Sprintf("\n[... %d lines omitted ...]", len(lines)-20)
-	}
+	text := verify.MessageExcerpt(message)
 	return verify.Cut(strings.TrimRight(where+"\n"+text, " \t\r\n"))
 }
 
