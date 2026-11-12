@@ -567,7 +567,7 @@ func (sh *shaping) decisionRecordGate(submitted []sourcedDecision) (string, outc
 	}
 	var problems []string
 	var added []checked
-	var keptIDs []string
+	var keptIDs, notes []string
 	used := map[string]bool{}
 	revised := map[string]bool{}
 	for i, d := range submitted {
@@ -589,13 +589,15 @@ func (sh *shaping) decisionRecordGate(submitted []sourcedDecision) (string, outc
 			problems = append(problems, at+"no evidence and no uncertainty; cite what this shaping read or ran, or state the uncertainty you decided under")
 		}
 		revisesStands := false
+		noWhy := false
 		if d.revises != "" {
-			if strings.TrimSpace(d.why) == "" {
-				problems = append(problems, at+"revises "+d.revises+" without why")
-			}
 			if _, ok := sh.ledger.standingByID(d.revises); ok && !revised[d.revises] {
 				revisesStands = true
+				noWhy = strings.TrimSpace(d.why) == ""
 			} else {
+				if strings.TrimSpace(d.why) == "" {
+					problems = append(problems, at+"revises "+d.revises+" without why")
+				}
 				problems = append(problems, at+d.revises+" is not a recorded decision that stands")
 			}
 		}
@@ -614,10 +616,18 @@ func (sh *shaping) decisionRecordGate(submitted []sourcedDecision) (string, outc
 			c.receipts = append(c.receipts, r)
 		}
 		if revisesStands {
-			revised[d.revises] = true
-			if !anyFresh {
-				problems = append(problems, at+fmt.Sprintf("revises %s without evidence this round read or ran, so %s stands", d.revises, d.revises))
+			if noWhy || !anyFresh {
+				reason := "without why"
+				if !anyFresh {
+					reason = "without evidence this round read or ran"
+					if noWhy {
+						reason = "without why or evidence this round read or ran"
+					}
+				}
+				notes = append(notes, at+fmt.Sprintf("revises %s %s, so %s stands and this decision is not recorded", d.revises, reason, d.revises))
+				continue
 			}
+			revised[d.revises] = true
 		}
 		added = append(added, c)
 	}
@@ -625,6 +635,10 @@ func (sh *shaping) decisionRecordGate(submitted []sourcedDecision) (string, outc
 		sh.refused("decision_record", problems)
 		text := strings.Join(append([]string{fmt.Sprintf(decisionRecordHeadline, len(problems))}, problems...), "\n")
 		return text, outcome{kind: outInvalid, problems: problems}, true, nil
+	}
+	if len(notes) > 0 {
+		sh.notes = append(sh.notes, notes...)
+		sh.ev.Record(map[string]any{"event": "decision_note", "round": sh.round, "notes": notes})
 	}
 	recorded, kept := []string{}, []string{}
 	for _, c := range added {

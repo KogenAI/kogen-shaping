@@ -580,6 +580,7 @@ type shaping struct {
 	request        string           // the request text of this shaping
 	decisionChecks int              // decision check calls made
 	pendingMarks   []assumptionMark // lines the last decision check found to be assumptions
+	notes          []string         // advisory notes for the shaper's next answer
 	decisionUsage  provider.Usage   // the native decision checks' tokens
 	decisionRounds int              // the external decision check sessions' rounds
 
@@ -1451,6 +1452,10 @@ func (sh *shaping) submit(ctx context.Context, args map[string]any) (string, out
 	sh.packageKey, sh.unchangedOf, sh.unchanged = "", 0, false
 	sh.priorRefusal, sh.lastCounted, sh.sameOf = sh.lastCounted, nil, 0
 	text, out, err := sh.submitOne(ctx, args)
+	if err == nil && len(sh.notes) > 0 && out.kind != outQuestions {
+		text = "note:\n" + strings.Join(sh.notes, "\n") + "\n" + text
+		sh.notes = nil
+	}
 	// Keep an unresolved completeness failure across unrelated invalid calls.
 	// A package that actually supplies the declared files clears it.
 	if sh.incomplete && len(sh.declaredGaps(sh.proposed)) == 0 {

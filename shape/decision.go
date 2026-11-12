@@ -3,6 +3,7 @@ package shape
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -168,7 +169,17 @@ func markAssumption(line, why string) (string, string, bool) {
 // assumption form instead of refusing them. A line whose decisionLineKey is locked (a recorded
 // decision, kept exactly) is never rewritten.
 func decisionResolve(items []decisionItem, request, intent string, locked map[string]bool) (map[string]any, []string, []assumptionMark) {
+	event, lines, marks, _ := decisionResolveNotes(items, request, intent, locked)
+	return event, lines, marks
+}
+
+// decisionResolveNotes is decisionResolve that also returns the advisory notes: an unsupported
+// statement that carries (evidence: ...) is recorded and passed to the shaper, not refused.
+// Only a contradiction, or an unsupported statement with neither evidence nor an assumption,
+// refuses.
+func decisionResolveNotes(items []decisionItem, request, intent string, locked map[string]bool) (map[string]any, []string, []assumptionMark, []string) {
 	var marks []assumptionMark
+	var notes []string
 	counts := map[string]int{}
 	events := make([]any, len(items))
 	var problems []string
@@ -224,6 +235,11 @@ func decisionResolve(items []decisionItem, request, intent string, locked map[st
 				continue
 			}
 		}
+		if it.verdict == "unsupported" && supported && !paraphrasedConflict && evidenceRe.MatchString(it.statement) {
+			events[i].(map[string]any)["advisory"] = true
+			notes = append(notes, "Decision check (advisory, not refused): "+strings.TrimSpace(it.statement)+" | "+it.why)
+			continue
+		}
 		uncertifiedConflict := marked && paraphrasedConflict
 		if uncertifiedConflict {
 			events[i].(map[string]any)["reported_verdict"] = "contradicts"
@@ -267,7 +283,7 @@ func decisionResolve(items []decisionItem, request, intent string, locked map[st
 	}
 	event := map[string]any{"event": "decision_check", "follows": counts["follows"], "contradicts": counts["contradicts"], "unsupported": counts["unsupported"], "items": events}
 	if len(problems) == 0 {
-		return event, nil, marks
+		return event, nil, marks, notes
 	}
 	head := fmt.Sprintf("Decision check: %d stated decisions are not supported by the request; follow the request, cite the repository evidence that decides it with (evidence: ...), or mark the decision as an assumption the user must confirm:", refused)
 	if !unsupported {
@@ -280,7 +296,7 @@ func decisionResolve(items []decisionItem, request, intent string, locked map[st
 	if unsupported {
 		feedback = append(feedback, assumptionRule)
 	}
-	return event, append(feedback, problems...), marks
+	return event, append(feedback, problems...), marks, notes
 }
 
 // requestSpeaks is whether one of the quotes is a passage of the request.
@@ -353,6 +369,7 @@ func (sh *shaping) decisionCheck(ctx context.Context, intent string) ([]string, 
 }
 
 func (sh *shaping) decisionCheckWithEvidence(ctx context.Context, intent, evidence string) ([]string, error) {
+	intent, sh.pendingMarks = sh.normalizedAssumptions(intent)
 	earlier := sh.earlier
 	if earlier == "" {
 		earlier = "none"
@@ -418,9 +435,10 @@ func (sh *shaping) decisionCheckWithEvidence(ctx context.Context, intent, eviden
 			locked[decisionLineKey(d.intentLine())] = true
 		}
 	}
-	event, lines, marks := decisionResolve(items, sh.request, intent, locked)
+	event, lines, marks, notes := decisionResolveNotes(items, sh.request, intent, locked)
 	sh.ev.Record(event)
-	sh.pendingMarks = marks
+	sh.pendingMarks = append(sh.pendingMarks, marks...)
+	sh.notes = append(sh.notes, notes...)
 	return lines, nil
 }
 
@@ -505,4 +523,57 @@ func decisionIntent(intent string) string {
 		}
 	}
 	return strings.Join(out, "\n")
+}
+
+var evidenceRe = regexp.MustCompile(`\(evidence: [^)]*\S[^)]*\)`)
+
+var (
+	assumptionVariantRe = regexp.MustCompile(`(?i)[(\[](?:assumption|assumed|assuming)\s*[:\-\x{2013}\x{2014}]\s*([^()\[\]]*\S)\s*[)\]]`)
+)
+
+// normalizeAssumptionForm rewrites a recognisable assumption stated in a wrong place or wording
+// ([assumption: x], (Assumed: x), (assumption - x), or after the source tag) into
+// (assumption: x) before the trailing source tag. It reports false when the line is already
+// canonical, states no assumption, or states more than one.
+func normalizeAssumptionForm(line string) (string, bool) {
+	matches := assumptionVariantRe.FindAllStringSubmatchIndex(line, -1)
+	if len(matches) != 1 {
+		return "", false
+	}
+	m := matches[0]
+	text := strings.TrimSpace(line[m[2]:m[3]])
+	canonical := "(assumption: " + text + ")"
+	body := strings.TrimRight(line[:m[0]]+line[m[1]:], " \t\r")
+	loc := sourceTagRe.FindStringIndex(body)
+	if loc == nil {
+		return "", false
+	}
+	tag := strings.TrimSpace(body[loc[0]:])
+	out := strings.TrimRight(body[:loc[0]], " \t") + " " + canonical + " " + tag
+	if out == line {
+		return "", false
+	}
+	return out, true
+}
+
+// normalizedAssumptions is the intent with every Decisions line's assumption put in its
+// canonical form, and the rewrites to apply to intent.md. A recorded decision's line is kept.
+func (sh *shaping) normalizedAssumptions(intent string) (string, []assumptionMark) {
+	locked := map[string]bool{}
+	if sh.ledger != nil {
+		for _, d := range sh.ledger.standing() {
+			locked[decisionLineKey(d.intentLine())] = true
+		}
+	}
+	var marks []assumptionMark
+	for _, line := range decisionLines(intent) {
+		if locked[decisionLineKey(line)] {
+			continue
+		}
+		if fixed, ok := normalizeAssumptionForm(line); ok && strings.Contains(intent, line) {
+			intent = strings.Replace(intent, line, fixed, 1)
+			marks = append(marks, assumptionMark{line: line, marked: fixed, assumption: assumptionVariantRe.FindStringSubmatch(line)[1]})
+		}
+	}
+	return intent, marks
 }

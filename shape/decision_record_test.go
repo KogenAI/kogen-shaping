@@ -227,7 +227,6 @@ func TestShapeDecisionLedger(t *testing.T) {
 		}
 	}
 	shpContains(t, "refused revision", feedback, "- sourced decision 1: this shaping did not read README.md")
-	shpContains(t, "refused revision", feedback, "- sourced decision 1: revises D1 without evidence this round read or ran, so D1 stands")
 	ledger := dlLedger(t, f)
 	shpEq(t, "decisions", len(ledger.Decisions), 3)
 	shpEq(t, "D1 superseded", ledger.Decisions[0].SupersededBy, "D3")
@@ -551,11 +550,11 @@ func TestInlineDecisionRevisionStillRequiresFreshEvidence(t *testing.T) {
 		t.Fatal("submission did not parse")
 	}
 	text, _, refused, err := sh.decisionRecordGate(list)
-	if err != nil || !refused || !strings.Contains(text, "revises D4 without evidence this round read or ran, so D4 stands") {
-		t.Fatalf("stale revision did not stop at the evidence gate: %q, refused=%v, err=%v", text, refused, err)
+	if err != nil || refused || len(sh.notes) != 1 || !strings.Contains(sh.notes[0], "revises D4 without evidence this round read or ran, so D4 stands") {
+		t.Fatalf("stale revision was not kept as a note: %q, refused=%v, err=%v, notes=%q", text, refused, err, sh.notes)
 	}
 	if _, stands := sh.ledger.standingByID("D4"); !stands || len(sh.ledger.Decisions) != 4 {
-		t.Fatalf("refusal changed the ledger: %+v", sh.ledger.Decisions)
+		t.Fatalf("the stale revision changed the ledger: %+v", sh.ledger.Decisions)
 	}
 	sh.ext = nil
 	sh.readTexts = map[string]string{"calc.js": numberedLines(f.read("calc.js"))}
@@ -609,15 +608,13 @@ func TestExternalShapeCanReviseAfterRereadingCarriedEvidence(t *testing.T) {
 			exit, err := f.shapeWith(x, "Use the current helper. The caller chooses the label.")
 			ledger := dlLedger(t, f)
 			if !tc.revises {
-				if err == nil || len(ledger.Decisions) != 1 {
+				if err != nil || len(ledger.Decisions) != 1 || !ledger.Decisions[0].stands() {
 					t.Fatalf("invalid reread allowed a revision: exit %d, err %v, ledger %+v", exit, err, ledger.Decisions)
 				}
-				for _, input := range x.inputs {
-					if strings.Contains(input.Feedback, "revises D1 without evidence this round read or ran") {
-						return
-					}
+				if len(shpNamed(f.events(), "decision_note")) == 0 {
+					t.Fatalf("the kept decision left no note: %v", f.events())
 				}
-				t.Fatalf("revision failed without the expected evidence refusal: %v", x.inputs)
+				return
 			}
 			if err != nil || exit != 5 {
 				t.Fatalf("rereading the source did not reach the UI question: exit %d, err %v, feedback %v", exit, err, x.inputs)
