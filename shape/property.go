@@ -2,6 +2,7 @@ package shape
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 )
@@ -29,6 +30,7 @@ type propertyReport struct {
 	scenarios               []string
 	decision                string
 	issues                  []propertyIssue
+	keptSteps               []int // feature lines of steps asserting a kept behaviour itself
 }
 
 // propertyProblem is one problem Kogen found with how acceptance covers a counted property.
@@ -62,6 +64,7 @@ func propertySchema() map[string]any {
 			"scenarios":  map[string]any{"type": "array", "items": s},
 			"decision":   s,
 			"issues":     map[string]any{"type": "array", "items": issue},
+			"kept_steps": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}},
 		},
 		"required":             []any{"property", "request", "kind", "observable", "scenarios", "decision", "issues"},
 		"additionalProperties": false,
@@ -77,10 +80,28 @@ func parsePropertyReports(v any) ([]propertyReport, string) {
 	out := make([]propertyReport, 0, len(list))
 	for _, raw := range list {
 		m, ok := raw.(map[string]any)
+		rawSteps, hasSteps := m["kept_steps"]
+		if hasSteps {
+			m = maps.Clone(m)
+			delete(m, "kept_steps")
+		}
 		if !ok || !exactKeys(m, "property", "request", "kind", "observable", "scenarios", "decision", "issues") {
 			return nil, "a property must be an object with exactly the fields property, request, kind, observable, scenarios, decision, issues"
 		}
 		var p propertyReport
+		if hasSteps {
+			list, ok := rawSteps.([]any)
+			if !ok {
+				return nil, "a property has a field of the wrong type or value"
+			}
+			for _, raw := range list {
+				n, ok := integerArg(raw)
+				if !ok {
+					return nil, "a property has a field of the wrong type or value"
+				}
+				p.keptSteps = append(p.keptSteps, n)
+			}
+		}
 		var ok1, ok2, ok3, ok4, ok5 bool
 		p.property, ok1 = m["property"].(string)
 		p.request, ok2 = m["request"].(string)

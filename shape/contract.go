@@ -53,7 +53,7 @@ var contractReviewInstructions = strings.Join([]string{
 	"Separately, identify the properties the Request and the Questions and answers ask for: a quality, a bound, a comparison with the old behaviour, or a behaviour that must be kept. Take them from the Request and the answers themselves, not from what the candidate declares. A plain input/output request (a command, call or input with its expected output) asks for none: answer properties [].",
 	"Properties describe requested PRODUCT behaviour. Instructions for the shaper's engineering procedure (inspect files, use probes or proposal tools, keep acceptance offline or bounded, submit a complete package) are not product properties and need no product scenario or wrong-implementation witness. Those instructions still govern shaping. When the requested product itself must provide offline operation, a bound, a test runner or a tool parameter, that is a product property and still needs its own evidence.",
 	"Configured Build checks below are actual effective repository commands, enforced independently before and after implementation. A routine delivery condition that the existing test suite remains green is covered by a configured command only when that command runs the same requested suite and selection. Do not turn that already-covered delivery condition into a product property requiring another acceptance scenario or controls witness, or require a whole-suite acceptance step that exceeds the step limit. A check's name alone is not evidence: true, compilation, a different suite, or a narrowed package/name filter does not cover a requested whole suite. Product behaviour, including changes to a test runner itself, is never covered merely because a test command is configured.",
-	"For each property give property (a short name), request (the exact text copied from the Request or the Questions and answers that asks for it), kind (kept for a behaviour that must be kept, new otherwise), observable (false only when no automatic step can observe it, such as a subjective quality), scenarios (the names, exactly as in acceptance.feature, of the scenarios that exercise it; for a property that is not observable, the scenarios that claim it holds, also through a figure, log line or document sentence standing in for it), decision (for a property that is not observable, the exact text of the candidate intent.md Decisions line that records it as needing human evaluation; otherwise empty) and issues.",
+	"For each property give property (a short name), request (the exact text copied from the Request or the Questions and answers that asks for it), kind (kept for a behaviour that must be kept, new otherwise), observable (false only when no automatic step can observe it, such as a subjective quality), scenarios (the names, exactly as in acceptance.feature, of the scenarios that exercise it; for a property that is not observable, the scenarios that claim it holds, also through a figure, log line or document sentence standing in for it), decision (for a property that is not observable, the exact text of the candidate intent.md Decisions line that records it as needing human evaluation; otherwise empty) and issues. For a kept property you may also give kept_steps: the line numbers in acceptance.feature of the steps that assert only that kept behaviour and nothing new; omit it when no step does.",
 	"An issue is a scenario of the property whose evidence does not establish it, with problem, scenario, quote and why. Its problem is missing when a new property's scenario is red on the unchanged tree only because a file, module, function, command or test it needs does not exist yet (quote: that failure, copied exactly from the readiness observations), or test_count when the step's only evidence is that tests the Build writes exist or pass in some number and the step does not itself assert the property (quote: that code, copied exactly from the step file). A step that first gives the missing piece a do-nothing form and then fails on the property's behaviour has no issue.",
 }, "\n")
 
@@ -709,16 +709,19 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 	// readiness observation once, only when a counted kept scenario is assertion-red.
 	kept := map[string]bool{}
 	keptOwners := map[string][]int{}
+	keptLines := map[string][]int{}
 	for i, p := range props {
 		if p.kind == "kept" && p.observable && propertyCounts(p, sh.request, questions) {
 			for _, name := range ev.declaredScenarios(p.scenarios) {
 				kept[name] = true
+				keptLines[name] = append(keptLines[name], p.keptSteps...)
 				if !slices.Contains(keptOwners[name], i) {
 					keptOwners[name] = append(keptOwners[name], i)
 				}
 				for _, sc := range scenarios {
 					if sc.Outline != nil && normalizeWhitespace(sc.Outline.Name) == name {
 						kept[normalizeWhitespace(sc.Name)] = true
+						keptLines[normalizeWhitespace(sc.Name)] = append(keptLines[normalizeWhitespace(sc.Name)], p.keptSteps...)
 						if !slices.Contains(keptOwners[normalizeWhitespace(sc.Name)], i) {
 							keptOwners[normalizeWhitespace(sc.Name)] = append(keptOwners[normalizeWhitespace(sc.Name)], i)
 						}
@@ -728,7 +731,9 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 		}
 	}
 	var keptProblems []propertyProblem
+	var baselineRefusals []string
 	first := keptAssertionFailures(sh.ready, kept)
+	firstSteps := keptStepStates(sh.ready, keptLines)
 	if len(first) > 0 && sh.lastObservationsPath != "" {
 		sh.progress("kogen: repeating kept assertion observation (execution 2 of 2 maximum)")
 		repeat, err := sh.rd.Check(ctx, sh.s, sh.slug)
@@ -737,6 +742,7 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 		}
 		sh.ready = repeat
 		second := keptAssertionFailures(repeat, kept)
+		baselineRefusals = keptBaselineRefusals(firstSteps, keptStepStates(repeat, keptLines), props)
 		var lines []string
 		for scenario := range first {
 			if detail, ok := second[scenario]; ok {
@@ -749,7 +755,7 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 		}
 		slices.Sort(lines)
 		outcome := "no persistent kept assertion red"
-		if len(lines) > 0 {
+		if len(lines) > 0 || len(baselineRefusals) > 0 {
 			outcome = "persistent kept assertion red"
 		}
 		sh.progress("kogen: kept assertion repeat outcome: " + outcome + " (cap 2 executions)")
@@ -798,10 +804,16 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 			sh.ev.Record(propertyEvent(hash, props, counted, problems))
 		}
 	}
+	// A kept step the unchanged tree disproves is refused whatever the reviewer says.
+	proven := contractConfirmed{properties: baselineRefusals}
 	if len(evidenced) == 0 {
-		sh.ev.Record(contractEvent(hash, "clean", "", total, 0, 0, items, envItems))
+		result := "clean"
+		if !proven.empty() {
+			result = "refused"
+		}
+		sh.ev.Record(contractEvent(hash, result, "", total, 0, len(baselineRefusals), items, envItems))
 		recordProperties()
-		return contractConfirmed{}, nil
+		return proven, nil
 	}
 	args, why, err = sh.contractCall(ctx, "confirmation", reviewInput+"\n\n# Findings to verify\n\n"+strings.Join(evidenced, "\n"))
 	if err != nil {
@@ -819,7 +831,7 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 		return out, err
 	}
 	lines := applyVerdicts(items, envItems, verdicts)
-	lines.properties = applyPropertyVerdicts(props, problems, sent+1, verdicts)
+	lines.properties = append(applyPropertyVerdicts(props, problems, sent+1, verdicts), baselineRefusals...)
 	result := "clean"
 	confirmed := len(lines.contradictions) + len(lines.environment)
 	if !lines.empty() {
