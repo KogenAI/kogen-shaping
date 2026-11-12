@@ -55,8 +55,9 @@ type controlsImpl struct {
 
 // controlsFile is a valid controls.json.
 type controlsFile struct {
-	correct controlsOverlay
-	wrong   []controlsImpl
+	deferred string // the reason, when the shaper deferred the controls to the Build
+	correct  controlsOverlay
+	wrong    []controlsImpl
 }
 
 // controlsRules decide which paths an implementation may write.
@@ -208,6 +209,20 @@ func controlsStepLines(sc project.Scenario, step string, feature []string) []int
 	return out
 }
 
+// controlsDeferral reads {"deferred":"<reason>"}: the shaper's choice to leave the control
+// implementations to the Build. It reports false for any document without a "deferred" field.
+func controlsDeferral(top map[string]any) (reason string, problems []string, isDeferred bool) {
+	v, has := top["deferred"]
+	if !has {
+		return "", nil, false
+	}
+	reason, _ = v.(string)
+	if !exactKeys(top, "deferred") || strings.TrimSpace(reason) == "" {
+		return "", []string{`- controls.json: to defer the controls write exactly {"deferred":"<reason>"} with a reason that is not blank`}, true
+	}
+	return reason, nil, true
+}
+
 // parseControls reads controls.json; the problem lines are empty when it is valid.
 func parseControls(raw []byte, scenarios []project.Scenario, feature []string, rules controlsRules) (*controlsFile, []string) {
 	var doc any
@@ -215,6 +230,12 @@ func parseControls(raw []byte, scenarios []project.Scenario, feature []string, r
 		return nil, []string{"- controls.json: it is not valid JSON"}
 	}
 	top, ok := doc.(map[string]any)
+	if reason, problems, isDeferred := controlsDeferral(top); isDeferred {
+		if len(problems) > 0 {
+			return nil, problems
+		}
+		return &controlsFile{deferred: reason}, nil
+	}
 	var wrongList []any
 	if ok && exactKeys(top, "correct", "wrong") {
 		wrongList, ok = top["wrong"].([]any)
@@ -872,6 +893,17 @@ func (sh *shaping) wrongImplementationCheck(ctx context.Context, hash string) (c
 	feature := strings.Split(string(featureBytes), "\n")
 	stepFiles := intent.StepFiles()
 
+	if raw, err := os.ReadFile(filepath.Join(sh.root, project.IntentDir(sh.slug), "controls.json")); err == nil {
+		var top map[string]any
+		if json.Unmarshal(raw, &top) == nil {
+			if reason, problems, isDeferred := controlsDeferral(top); isDeferred && len(problems) == 0 {
+				sh.ev.Record(map[string]any{"event": "wrong_implementation_check", "package": hash, "result": "deferred", "runs": 0,
+					"seconds": 0, "problems": []string{}, "controls": "deferred", "controls_reason": reason})
+				return contractConfirmed{}, nil
+			}
+		}
+	}
+
 	started := 0
 	begin := time.Now()
 	lines, controls, err := sh.controlsLines(ctx, intent, scenarios, feature, stepFiles, props, timeCap, &started)
@@ -936,7 +968,7 @@ func (sh *shaping) controlsLines(ctx context.Context, intent *project.Intent, sc
 	rel := project.IntentDir(sh.slug) + "/controls.json"
 	raw, err := os.ReadFile(filepath.Join(sh.root, rel))
 	if errors.Is(err, fs.ErrNotExist) {
-		return []string{fmt.Sprintf(`- controls.json: %s does not exist; write it as {"correct":{"files":{"<path>":"<content>","<large path>":{"patch":"<unified diff>"}}},"wrong":[{"name":"<name>","scenario":"<scenario>","step":"<step line>","files":{"<path>":"<content>"}}]}`, rel)}, []controlsEvidence{}, nil
+		return []string{fmt.Sprintf(`- controls.json: %s does not exist; write it as {"correct":{"files":{"<path>":"<content>","<large path>":{"patch":"<unified diff>"}}},"wrong":[{"name":"<name>","scenario":"<scenario>","step":"<step line>","files":{"<path>":"<content>"}}]}, or, only when the correct implementation is too large to write within the shaping budget, {"deferred":"<reason>"}`, rel)}, []controlsEvidence{}, nil
 	}
 	if err != nil {
 		return nil, nil, err
@@ -948,6 +980,9 @@ func (sh *shaping) controlsLines(ctx context.Context, intent *project.Intent, sc
 	cf, problems := parseControls(raw, scenarios, feature, rules)
 	if len(problems) > 0 {
 		return problems, []controlsEvidence{}, nil
+	}
+	if cf.deferred != "" {
+		return nil, []controlsEvidence{}, nil
 	}
 	n := 1 + len(cf.wrong)
 	if n > controlsMaxRuns {

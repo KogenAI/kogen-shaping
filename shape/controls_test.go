@@ -57,6 +57,12 @@ func TestParseControls(t *testing.T) {
 		{"not json", []byte("{"), []string{"- controls.json: it is not valid JSON"}},
 		{"not an object", []byte("[]"), []string{`- controls.json: it must be an object with exactly the fields "correct" and "wrong"`}},
 		{"an extra field", []byte(`{"correct":{"files":{"a":"b"}},"wrong":[],"x":1}`), []string{`- controls.json: it must be an object with exactly the fields "correct" and "wrong"`}},
+		{"deferred with a reason", []byte(`{"deferred":"too large"}`), nil},
+		{"deferred with a blank reason", []byte(`{"deferred":"  "}`), []string{deferredProblem}},
+		{"deferred with an empty reason", []byte(`{"deferred":""}`), []string{deferredProblem}},
+		{"deferred that is not text", []byte(`{"deferred":true}`), []string{deferredProblem}},
+		{"deferred beside the overlays", []byte(`{"deferred":"x","correct":{"files":{"a":"b"}},"wrong":[]}`), []string{deferredProblem}},
+		{"a placeholder is still refused", []byte(`{"correct":{"files":{}},"wrong":[]}`), []string{`- controls.json: the correct implementation: "files" must map at least one path to its whole content or to {"patch":"<unified diff>"}`}},
 		{"wrong is not a list", []byte(`{"correct":{"files":{"a":"b"}},"wrong":{}}`), []string{`- controls.json: it must be an object with exactly the fields "correct" and "wrong"`}},
 		{"correct with another field", []byte(`{"correct":{"files":{"a":"b"},"x":1},"wrong":[]}`), []string{`- controls.json: "correct" must be an object with exactly the field "files"`}},
 		{"a wrong implementation without a field", controlsJSON(`{"a":"b"}`, `{"name":"n","scenario":"s","files":{"a":"b"}}`),
@@ -658,6 +664,53 @@ func TestWrongImplementationRunsOnlyWitnesses(t *testing.T) {
 		sh.wrongImplementationCheck(context.Background(), "h1")
 		events := shpNamed(f.events(), "wrong_implementation_check")
 		if len(events) != 1 || fmt.Sprint(events[0]["controls"]) != "[]" || events[0]["runs"] != float64(1) {
+			t.Fatalf("events = %v", events)
+		}
+	})
+}
+
+const deferredProblem = `- controls.json: to defer the controls write exactly {"deferred":"<reason>"} with a reason that is not blank`
+
+func TestDeferredControlsSkipTheControlRuns(t *testing.T) {
+	exact := "Then is-even: add of 2 and 3 is 5"
+	base := controlsCandidate{feature: controlsCalcFeature(exact), steps: controlsExactDef, correct: map[string]string{"calc.js": controlsCalc("add", "sub")}, wrong: controlsWrongs(exact, controlsCalc("sub"))}
+	with := func(raw string) controlsCandidate { c := base; c.raw = raw; return c }
+	t.Run("a deferral with a reason passes and records it", func(t *testing.T) {
+		f, sh := controlsReal(t, with(`{"deferred":"too large"}`))
+		confirmed, err := sh.wrongImplementationCheck(context.Background(), "h1")
+		if err != nil || !confirmed.empty() {
+			t.Fatalf("confirmed = %+v, err %v", confirmed, err)
+		}
+		events := shpNamed(f.events(), "wrong_implementation_check")
+		if len(events) != 1 || events[0]["controls"] != "deferred" || events[0]["controls_reason"] != "too large" || events[0]["result"] != "deferred" || events[0]["runs"] != float64(0) {
+			t.Fatalf("events = %v", events)
+		}
+		if strings.Contains(f.Stderr.String(), "wrong-implementation check: run") {
+			t.Errorf("a control ran:\n%s", f.Stderr.String())
+		}
+	})
+	t.Run("an empty reason is refused", func(t *testing.T) {
+		_, sh := controlsReal(t, with(`{"deferred":""}`))
+		confirmed, err := sh.wrongImplementationCheck(context.Background(), "h1")
+		if err != nil || len(confirmed.wrong) != 1 || confirmed.wrong[0] != deferredProblem {
+			t.Fatalf("confirmed = %+v, err %v", confirmed, err)
+		}
+	})
+	t.Run("a placeholder is refused", func(t *testing.T) {
+		_, sh := controlsReal(t, with(`{"correct":{"files":{}},"wrong":[]}`))
+		confirmed, err := sh.wrongImplementationCheck(context.Background(), "h1")
+		if err != nil || len(confirmed.wrong) == 0 || !strings.Contains(confirmed.wrong[0], `"files" must map at least one path`) {
+			t.Fatalf("confirmed = %+v, err %v", confirmed, err)
+		}
+	})
+	t.Run("a normal controls.json still runs", func(t *testing.T) {
+		f, sh := controlsReal(t, base)
+		confirmed, err := sh.wrongImplementationCheck(context.Background(), "h1")
+		if err != nil || !confirmed.empty() {
+			t.Fatalf("confirmed = %+v, err %v", confirmed, err)
+		}
+		events := shpNamed(f.events(), "wrong_implementation_check")
+		if len(events) != 1 || events[0]["result"] != "clean" || events[0]["runs"] != float64(3) {
 			t.Fatalf("events = %v", events)
 		}
 	})
