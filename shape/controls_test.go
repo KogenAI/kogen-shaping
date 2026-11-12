@@ -50,6 +50,9 @@ func TestParseControls(t *testing.T) {
 		{"an outline's example step with the outline's name", controlsJSON(`{"calc.js":"y"}`, wrong("m", " Mul <a>  times <b>", "Then is-even: mul of <a> and <b> is <c>", `{"calc.js":"z"}`)), nil},
 		{"keywordless same scenario", controlsJSON(`{"a":"b"}`, wrong("n", "Add keeps working", "is-even: add of 2 and 3 is 5", `{"a":"b"}`)), []string{`- controls.json: wrong implementation "n": step "is-even: add of 2 and 3 is 5" is not a step of scenario "Add keeps working"; write the step line as acceptance.feature writes it, keyword included: "Then is-even: add of 2 and 3 is 5"`}},
 		{"keywordless other scenario", controlsJSON(`{"a":"b"}`, wrong("n", "Add keeps working", "is-even: mul of 2 and 3 is 6", `{"a":"b"}`)), []string{`- controls.json: wrong implementation "n": step "is-even: mul of 2 and 3 is 6" is not a step of scenario "Add keeps working"`}},
+		{"a patch entry", controlsJSON(`{"calc.js":{"patch":"@@"}}`, ""), nil},
+		{"a patch entry that is not a string", controlsJSON(`{"calc.js":{"patch":1}}`, ""), []string{`- controls.json: the correct implementation: "files" must map at least one path to its whole content or to {"patch":"<unified diff>"}`}},
+		{"a patch entry with another field", controlsJSON(`{"calc.js":{"patch":"@@","x":1}}`, ""), []string{`- controls.json: the correct implementation: "files" must map at least one path to its whole content or to {"patch":"<unified diff>"}`}},
 		{"the correct implementation alone", controlsJSON(`{"calc.js":"y"}`, ""), nil},
 		{"not json", []byte("{"), []string{"- controls.json: it is not valid JSON"}},
 		{"not an object", []byte("[]"), []string{`- controls.json: it must be an object with exactly the fields "correct" and "wrong"`}},
@@ -66,8 +69,8 @@ func TestParseControls(t *testing.T) {
 			"- controls.json: wrong implementation 2 needs a name that is not blank and differs from the others",
 			"- controls.json: wrong implementation 3 needs a name that is not blank and differs from the others"}},
 		{"no files", controlsJSON(`{}`, wrong("n", "Add keeps working", "Then is-even: add of 2 and 3 is 5", `{"a":1}`)), []string{
-			`- controls.json: the correct implementation: "files" must map at least one path to its content`,
-			`- controls.json: wrong implementation "n": "files" must map at least one path to its content`}},
+			`- controls.json: the correct implementation: "files" must map at least one path to its whole content or to {"patch":"<unified diff>"}`,
+			`- controls.json: wrong implementation "n": "files" must map at least one path to its whole content or to {"patch":"<unified diff>"}`}},
 		{"paths", controlsJSON(`{"/abs.js":"x","../up.js":"x","a/../b.js":"x"}`, ""), []string{
 			"- controls.json: the correct implementation: ../up.js: a replacement path must be relative and normal",
 			"- controls.json: the correct implementation: /abs.js: a replacement path must be relative and normal",
@@ -328,6 +331,8 @@ type controlsCandidate struct {
 	feature, steps string
 	correct        map[string]string
 	wrong          []controlsWrong
+	base           map[string]string // extra files committed before the check
+	raw            string            // controls.json as written, instead of correct and wrong
 }
 
 // controlsReal is a shaping with a candidate on disk whose acceptance runs for real, with the
@@ -347,6 +352,9 @@ func controlsReal(t *testing.T, c controlsCandidate) (*shpFx, *shaping) {
 	f.write("features/steps/calc_steps.js", "// existing steps\n")
 	f.write("accept.sh", fmt.Sprintf("#!/bin/sh\necho run >> '%s/trace'\nNODE_PATH='%s' '%s' '%s' --strict --require 'features/steps/*.js' --format \"message:$KOGEN_ACCEPTANCE_REPORT\" \"$KOGEN_ACCEPTANCE_FEATURES\"\n",
 		f.Aux, modules, node, filepath.Join(modules, "@cucumber/cucumber/bin/cucumber.js")))
+	for p, content := range c.base {
+		f.write(p, content)
+	}
 	f.git("add", "-A")
 	f.git("commit", "-qm", "real acceptance")
 	f.write(project.IntentMDPath(shpSlug), controlsIntentText)
@@ -355,6 +363,9 @@ func controlsReal(t *testing.T, c controlsCandidate) (*shpFx, *shaping) {
 	raw, err := json.Marshal(map[string]any{"correct": map[string]any{"files": c.correct}, "wrong": append([]controlsWrong{}, c.wrong...)})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if c.raw != "" {
+		raw = []byte(c.raw)
 	}
 	f.write(project.IntentDir(shpSlug)+"/controls.json", string(raw))
 	intent, _, err := project.CheckIntent(f.Root, shpSlug, nil)
@@ -813,4 +824,92 @@ func TestControlsFailureEvidencePreservesFirstLine(t *testing.T) {
 			t.Errorf("unreachable = %q", got)
 		}
 	}
+}
+
+// ---- patch overlays for large files ----
+
+// controlsBigFile is a 60 KB file whose first line is the one the feature's implementation changes.
+func controlsBigFile(offset int) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "exports.offset = %d;\n", offset)
+	for i := 0; b.Len() < 60000; i++ {
+		fmt.Fprintf(&b, "// padding line %05d of a large existing file\n", i)
+	}
+	return b.String()
+}
+
+func controlsOffsetPatch(path string, from, to int) string {
+	return fmt.Sprintf("--- a/%[1]s\n+++ b/%[1]s\n@@ -1,3 +1,3 @@\n-exports.offset = %d;\n+exports.offset = %d;\n // padding line 00000 of a large existing file\n // padding line 00001 of a large existing file\n", path, from, to)
+}
+
+// controlsLargeCandidate is an Intent whose correct implementation changes one line in each of two
+// 60 KB files; calc adds the offsets to every answer.
+func controlsLargeCandidate(t *testing.T, correct, wrongAdd, wrongSub any) (controlsCandidate, string) {
+	t.Helper()
+	const exact = "Then is-even: add of 2 and 3 is 5"
+	doc := map[string]any{
+		"correct": map[string]any{"files": correct},
+		"wrong": []any{
+			map[string]any{"name": "add removed", "scenario": "Add keeps working", "step": exact, "files": wrongAdd},
+			map[string]any{"name": "sub removed", "scenario": "Sub keeps working", "step": "Then is-even: sub of 5 and 3 is 2", "files": wrongSub},
+		},
+	}
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return controlsCandidate{
+		feature: controlsCalcFeature(exact), steps: controlsExactDef, raw: string(raw),
+		base: map[string]string{"big_a.js": controlsBigFile(1), "big_b.js": controlsBigFile(1),
+			"calc.js": "const a = require('./big_a'), b = require('./big_b');\nexports.calc = (op, x, y) => {\n  if (op === 'add') return x + y + a.offset + b.offset;\n  if (op === 'sub') return x - y + a.offset + b.offset;\n};\n"},
+	}, exact
+}
+
+func controlsLargeLines(t *testing.T, c controlsCandidate) []string {
+	t.Helper()
+	_, sh := controlsReal(t, c)
+	started := 0
+	lines, _, err := sh.controlsLines(context.Background(), sh.ready.Intent, mustScenarios(t, c.feature), strings.Split(c.feature, "\n"), sh.ready.Intent.StepFiles(),
+		sh.checkedControlProps(mustScenarios(t, c.feature)), 120*time.Second, &started)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return lines
+}
+
+func TestControlsPatchOverlaysForLargeFiles(t *testing.T) {
+	pa, pb := controlsOffsetPatch("big_a.js", 1, 0), controlsOffsetPatch("big_b.js", 1, 0)
+	patch := func(p string) map[string]any { return map[string]any{"patch": p} }
+	t.Run("whole-file replacements of large files are over the limit", func(t *testing.T) {
+		c, _ := controlsLargeCandidate(t, map[string]string{"big_a.js": controlsBigFile(0), "big_b.js": controlsBigFile(0)},
+			map[string]string{"big_a.js": controlsBigFile(7)}, map[string]string{"big_a.js": controlsBigFile(7)})
+		lines := controlsLargeLines(t, c)
+		if len(lines) == 0 || !strings.Contains(lines[0], "the correct implementation: it has more than 8 files or 65536 bytes") {
+			t.Fatalf("lines = %q", lines)
+		}
+	})
+	t.Run("patches are applied and a wrong patch rejects", func(t *testing.T) {
+		c, _ := controlsLargeCandidate(t, map[string]any{"big_a.js": patch(pa), "big_b.js": patch(pb)},
+			map[string]any{"big_a.js": patch(controlsOffsetPatch("big_a.js", 0, 7))}, map[string]any{"big_b.js": patch(controlsOffsetPatch("big_b.js", 0, 7))})
+		lines := controlsLargeLines(t, c)
+		if len(lines) != 0 {
+			t.Fatalf("lines = %q", lines)
+		}
+	})
+	t.Run("a patch that does not apply names the file", func(t *testing.T) {
+		c, _ := controlsLargeCandidate(t, map[string]any{"big_a.js": patch(pa), "big_b.js": patch(controlsOffsetPatch("big_b.js", 5, 0))},
+			map[string]any{"big_a.js": patch(controlsOffsetPatch("big_a.js", 0, 7))}, map[string]any{"big_a.js": patch(controlsOffsetPatch("big_a.js", 0, 7))})
+		lines := controlsLargeLines(t, c)
+		if len(lines) != 1 || !strings.HasPrefix(lines[0], "- controls.json: the correct implementation: big_b.js: the patch does not apply to the candidate tree") {
+			t.Fatalf("lines = %q", lines)
+		}
+	})
+	t.Run("a patch that names another file is refused", func(t *testing.T) {
+		c, _ := controlsLargeCandidate(t, map[string]any{"big_a.js": patch(controlsOffsetPatch("big_b.js", 1, 0))},
+			map[string]any{"big_a.js": patch(pa)}, map[string]any{"big_a.js": patch(pa)})
+		lines := controlsLargeLines(t, c)
+		if len(lines) != 1 || !strings.HasPrefix(lines[0], "- controls.json: the correct implementation: big_a.js: the patch does not apply to the candidate tree") {
+			t.Fatalf("lines = %q", lines)
+		}
+	})
 }

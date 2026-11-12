@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -40,15 +41,21 @@ const (
 	controlsTimeCap = 300 * time.Second
 )
 
+// controlsOverlay is the "files" of one implementation: whole contents, and for large files
+// unified diffs against the tree the overlay is written over.
+type controlsOverlay struct {
+	files, patches map[string]string
+}
+
 // controlsImpl is one wrong implementation of controls.json.
 type controlsImpl struct {
 	name, scenario, step string
-	files                map[string]string
+	overlay              controlsOverlay
 }
 
 // controlsFile is a valid controls.json.
 type controlsFile struct {
-	correct map[string]string
+	correct controlsOverlay
 	wrong   []controlsImpl
 }
 
@@ -116,27 +123,32 @@ func (r controlsRules) machinery(p string) bool {
 }
 
 // checkFiles validates the "files" of one implementation: its files, and the problem lines.
-func (r controlsRules) checkFiles(impl string, v any) (map[string]string, []string) {
-	files := map[string]string{}
+func (r controlsRules) checkFiles(impl string, v any) (controlsOverlay, []string) {
+	files, patches := map[string]string{}, map[string]string{}
 	m, ok := v.(map[string]any)
-	if ok {
-		for p, c := range m {
-			s, isString := c.(string)
-			if !isString {
-				ok = false
-				break
-			}
+	for p, c := range m {
+		if s, isString := c.(string); isString {
 			files[p] = s
+		} else if o, isObject := c.(map[string]any); isObject && exactKeys(o, "patch") {
+			s, isString := o["patch"].(string)
+			if !isString || s == "" {
+				ok = false
+			}
+			patches[p] = s
+		} else {
+			ok = false
 		}
 	}
-	if !ok || len(files) == 0 {
-		return nil, []string{fmt.Sprintf(`- controls.json: %s: "files" must map at least one path to its content`, impl)}
+	if !ok || len(files)+len(patches) == 0 {
+		return controlsOverlay{}, []string{fmt.Sprintf(`- controls.json: %s: "files" must map at least one path to its whole content or to {"patch":"<unified diff>"}`, impl)}
 	}
-	paths := make([]string, 0, len(files))
+	paths := make([]string, 0, len(files)+len(patches))
 	size := 0
-	for p, c := range files {
-		paths = append(paths, p)
-		size += len(c)
+	for _, group := range []map[string]string{files, patches} {
+		for p, c := range group {
+			paths = append(paths, p)
+			size += len(c)
+		}
 	}
 	sort.Strings(paths)
 	var problems []string
@@ -148,10 +160,10 @@ func (r controlsRules) checkFiles(impl string, v any) (map[string]string, []stri
 			problems = append(problems, fmt.Sprintf("- controls.json: %s: %s: a replacement may not write acceptance machinery (the .kogen/ and steps directories, the Acceptance: files, protected files, .git, node_modules or a Cucumber configuration file)", impl, p))
 		}
 	}
-	if len(files) > controlsMaxFiles || size > controlsMaxBytes {
+	if len(paths) > controlsMaxFiles || size > controlsMaxBytes {
 		problems = append(problems, fmt.Sprintf("- controls.json: %s: it has more than %d files or %d bytes", impl, controlsMaxFiles, controlsMaxBytes))
 	}
-	return files, problems
+	return controlsOverlay{files: files, patches: patches}, problems
 }
 
 // controlsScenarios are the indices of the scenarios that name designates: the scenario of that
@@ -256,7 +268,7 @@ func parseControls(raw []byte, scenarios []project.Scenario, feature []string, r
 		} else if names[name] > 1 {
 			problems = append(problems, fmt.Sprintf("- controls.json: wrong implementation %d needs a name that is not blank and differs from the others", i+1))
 		}
-		files, ps := rules.checkFiles(label, e.m["files"])
+		overlay, ps := rules.checkFiles(label, e.m["files"])
 		problems = append(problems, ps...)
 		scenario := normalizeWhitespace(e.scenario)
 		idx := controlsScenarios(scenarios, scenario)
@@ -281,7 +293,7 @@ func parseControls(raw []byte, scenarios []project.Scenario, feature []string, r
 			}
 			problems = append(problems, problem)
 		}
-		cf.wrong = append(cf.wrong, controlsImpl{name: name, scenario: scenario, step: normalizeWhitespace(e.step), files: files})
+		cf.wrong = append(cf.wrong, controlsImpl{name: name, scenario: scenario, step: normalizeWhitespace(e.step), overlay: overlay})
 	}
 	if len(problems) > 0 {
 		return nil, problems
@@ -461,8 +473,9 @@ func readControlsReport(report []byte, expected []project.Scenario) (map[int]*co
 type controlsRunResult struct {
 	cases    map[int]*controlsCase
 	complete bool
-	cutOff   bool     // the time cap ended the run
-	roots    []string // the copy's path as given and with symlinks resolved
+	cutOff   bool                // the time cap ended the run
+	roots    []string            // the copy's path as given and with symlinks resolved
+	patch    *controlsPatchError // a patch of an overlay did not apply
 }
 
 func controlsEnvPath(p string) string {
@@ -472,34 +485,81 @@ func controlsEnvPath(p string) string {
 	return p
 }
 
+// controlsPatchError is a patch of an overlay that does not apply.
+type controlsPatchError struct{ path, reason string }
+
+func (e *controlsPatchError) Error() string { return e.path + ": " + e.reason }
+
+// checkOverlayPath refuses a path that passes through a symlink or is one.
+func checkOverlayPath(tree, p string) error {
+	dir := tree
+	for _, seg := range strings.Split(path.Dir(p), "/") {
+		if seg == "." {
+			continue
+		}
+		dir = filepath.Join(dir, seg)
+		if st, err := os.Lstat(dir); err == nil && st.Mode()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("%s passes through a symlink", p)
+		}
+	}
+	if st, err := os.Lstat(filepath.Join(tree, filepath.FromSlash(p))); err == nil && st.Mode()&fs.ModeSymlink != 0 {
+		return fmt.Errorf("%s is a symlink", p)
+	}
+	return nil
+}
+
 // writeOverlay writes each file of an implementation over the copy, creating missing
-// directories; no component of a path may be a symlink.
-func writeOverlay(tree string, files map[string]string) error {
-	paths := make([]string, 0, len(files))
-	for p := range files {
+// directories, then applies each patch to its file with git apply; no component of a path may
+// be a symlink, and a patch may change only the file it is given for.
+func writeOverlay(tree string, o controlsOverlay) error {
+	paths := make([]string, 0, len(o.files))
+	for p := range o.files {
 		paths = append(paths, p)
 	}
 	sort.Strings(paths)
 	for _, p := range paths {
-		dir := tree
-		for _, seg := range strings.Split(path.Dir(p), "/") {
-			if seg == "." {
-				continue
-			}
-			dir = filepath.Join(dir, seg)
-			if st, err := os.Lstat(dir); err == nil && st.Mode()&fs.ModeSymlink != 0 {
-				return fmt.Errorf("%s passes through a symlink", p)
-			}
+		if err := checkOverlayPath(tree, p); err != nil {
+			return err
 		}
 		target := filepath.Join(tree, filepath.FromSlash(p))
-		if st, err := os.Lstat(target); err == nil && st.Mode()&fs.ModeSymlink != 0 {
-			return fmt.Errorf("%s is a symlink", p)
-		}
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return err
 		}
-		if err := os.WriteFile(target, []byte(files[p]), 0o644); err != nil {
+		if err := os.WriteFile(target, []byte(o.files[p]), 0o644); err != nil {
 			return err
+		}
+	}
+	paths = paths[:0]
+	for p := range o.patches {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	for _, p := range paths {
+		if err := checkOverlayPath(tree, p); err != nil {
+			return err
+		}
+		patch := o.patches[p]
+		if !strings.HasSuffix(patch, "\n") {
+			patch += "\n"
+		}
+		include := "--include=" + strings.NewReplacer(`\`, `\\`, "*", `\*`, "?", `\?`, "[", `\[`).Replace(p)
+		git := func(args ...string) (string, error) {
+			cmd := exec.Command("git", append([]string{"apply", include}, args...)...)
+			cmd.Dir = tree
+			cmd.Env = append(os.Environ(), "GIT_CEILING_DIRECTORIES="+filepath.Dir(tree))
+			cmd.Stdin = strings.NewReader(patch)
+			out, err := cmd.CombinedOutput()
+			return string(out), err
+		}
+		out, err := git("--numstat", "-")
+		if err == nil && strings.TrimSpace(out) == "" {
+			err, out = errors.New("no change"), "the patch has no change to that file"
+		}
+		if err == nil {
+			out, err = git("-")
+		}
+		if err != nil {
+			return &controlsPatchError{path: p, reason: controlsFirstLine(out)}
 		}
 	}
 	return nil
@@ -521,7 +581,7 @@ func controlsFeatureSelector(featurePath string, witness []project.Scenario, nar
 // the files of each overlay written over it, in order, before the time cap deadline. The run
 // executes only the scenarios of expected when narrow is set, else the whole feature, and must
 // report each of expected exactly once.
-func (sh *shaping) controlsRun(ctx context.Context, expected []project.Scenario, narrow bool, deadline time.Time, overlays ...map[string]string) (controlsRunResult, error) {
+func (sh *shaping) controlsRun(ctx context.Context, expected []project.Scenario, narrow bool, deadline time.Time, overlays ...controlsOverlay) (controlsRunResult, error) {
 	var res controlsRunResult
 	base := sys.TmpPath("kogen-wrong-implementation")
 	defer os.RemoveAll(base)
@@ -541,8 +601,9 @@ func (sh *shaping) controlsRun(ctx context.Context, expected []project.Scenario,
 	if resolved := resolvedPath(tree); resolved != tree {
 		res.roots = append(res.roots, resolved)
 	}
-	for _, files := range overlays {
-		if err := writeOverlay(tree, files); err != nil {
+	for _, o := range overlays {
+		if err := writeOverlay(tree, o); err != nil {
+			errors.As(err, &res.patch)
 			return res, nil
 		}
 	}
@@ -875,7 +936,7 @@ func (sh *shaping) controlsLines(ctx context.Context, intent *project.Intent, sc
 	rel := project.IntentDir(sh.slug) + "/controls.json"
 	raw, err := os.ReadFile(filepath.Join(sh.root, rel))
 	if errors.Is(err, fs.ErrNotExist) {
-		return []string{fmt.Sprintf(`- controls.json: %s does not exist; write it as {"correct":{"files":{"<path>":"<content>"}},"wrong":[{"name":"<name>","scenario":"<scenario>","step":"<step line>","files":{"<path>":"<content>"}}]}`, rel)}, []controlsEvidence{}, nil
+		return []string{fmt.Sprintf(`- controls.json: %s does not exist; write it as {"correct":{"files":{"<path>":"<content>","<large path>":{"patch":"<unified diff>"}}},"wrong":[{"name":"<name>","scenario":"<scenario>","step":"<step line>","files":{"<path>":"<content>"}}]}`, rel)}, []controlsEvidence{}, nil
 	}
 	if err != nil {
 		return nil, nil, err
@@ -904,10 +965,10 @@ func (sh *shaping) controlsLines(ctx context.Context, intent *project.Intent, sc
 		if time.Until(deadline) <= 0 {
 			return timeLine(i), evidence, nil
 		}
-		impl, overlays := "correct implementation", []map[string]string{cf.correct}
+		impl, overlays := "correct implementation", []controlsOverlay{cf.correct}
 		if i > 0 {
 			impl = fmt.Sprintf("wrong implementation \"%s\"", cf.wrong[i-1].name)
-			overlays = append(overlays, cf.wrong[i-1].files)
+			overlays = append(overlays, cf.wrong[i-1].overlay)
 		}
 		sh.progress(fmt.Sprintf("kogen: wrong-implementation check: run %d of %d (%s)", i+1, n, impl))
 		*started++
@@ -927,6 +988,13 @@ func (sh *shaping) controlsLines(ctx context.Context, intent *project.Intent, sc
 		}
 		if run.cutOff {
 			return timeLine(i), evidence, nil
+		}
+		if run.patch != nil {
+			who, tail := "the correct implementation", ""
+			if i > 0 {
+				who, tail = impl, " with the correct implementation applied"
+			}
+			return []string{fmt.Sprintf("- controls.json: %s: %s: the patch does not apply to the candidate tree%s: %s", who, run.patch.path, tail, run.patch.reason)}, evidence, nil
 		}
 		runs = append(runs, run)
 		if i == 0 {
