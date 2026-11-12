@@ -16,7 +16,7 @@ func TestRequestGroundedUnsupportedFeedback(t *testing.T) {
 	}
 	_, lines := decisionOutcome([]decisionItem{{statement: "silent", verdict: "unsupported"}, {statement: "grounded", verdict: "unsupported", quotes: []string{"Initialized Kogen in <path>"}}}, "Initialized Kogen in <path>", "silent\ngrounded")
 	text := strings.Join(lines, "\n")
-	if !strings.Contains(text, assumptionRule) || !strings.Contains(text, "fix for intent.md line 2:") {
+	if strings.Contains(text, assumptionRule) || !strings.Contains(text, "fix for intent.md line 2:") {
 		t.Fatal(text)
 	}
 }

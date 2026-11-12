@@ -183,7 +183,7 @@ func decisionResolveNotes(items []decisionItem, request, intent string, locked m
 	counts := map[string]int{}
 	events := make([]any, len(items))
 	var problems []string
-	refused, conflicts, unsupported := 0, 0, false
+	refused, conflicts, unsupported, malformed := 0, 0, false, false
 	for i := range items {
 		it := &items[i]
 		reported := it.statement
@@ -198,6 +198,11 @@ func decisionResolveNotes(items []decisionItem, request, intent string, locked m
 		}
 		if !supported {
 			it.verdict = "unsupported"
+		}
+		modelVerdict := it.verdict
+		if it.verdict == "unsupported" && requestStates(request, it.statement, it.quotes) && containsNormalized(intent, it.statement) {
+			// The request says the statement literally: it is supported whatever the model judged.
+			it.verdict = "follows"
 		}
 		paraphrasedConflict := false
 		if it.verdict == "contradicts" {
@@ -221,6 +226,10 @@ func decisionResolveNotes(items []decisionItem, request, intent string, locked m
 		counts[it.verdict]++
 		events[i] = map[string]any{"statement": it.statement, "request_quotes": it.quotes, "verdict": it.verdict,
 			"intent_value": it.intentValue, "request_value": it.requestValue, "difference": it.difference, "why": it.why}
+		if modelVerdict != it.verdict {
+			events[i].(map[string]any)["advisory"] = true
+			events[i].(map[string]any)["model_verdict"] = modelVerdict
+		}
 		if reported != it.statement {
 			events[i].(map[string]any)["reported_statement"] = reported
 		}
@@ -245,6 +254,7 @@ func decisionResolveNotes(items []decisionItem, request, intent string, locked m
 			events[i].(map[string]any)["reported_verdict"] = "contradicts"
 		}
 		refused++
+		malformed = malformed || malformedAssumption(statementLine(intent, it.statement))
 		quoted := make([]string, len(it.quotes))
 		for j, q := range it.quotes {
 			quoted[j] = `"` + q + `"`
@@ -293,7 +303,7 @@ func decisionResolveNotes(items []decisionItem, request, intent string, locked m
 		head = fmt.Sprintf("Decision check: %d stated decisions are not supported by the request; resolve each explicit conflict using the requirement below:", refused)
 	}
 	feedback := []string{head}
-	if unsupported {
+	if malformed {
 		feedback = append(feedback, assumptionRule)
 	}
 	return event, append(feedback, problems...), marks, notes
@@ -576,4 +586,52 @@ func (sh *shaping) normalizedAssumptions(intent string) (string, []assumptionMar
 		}
 	}
 	return intent, marks
+}
+
+var (
+	assumptionMarkerRe  = regexp.MustCompile(`(?i)[(\[]\s*assum`)
+	canonicalAssumption = regexp.MustCompile(`\(assumption: [^()]*\S[^()]*\) \(source: (?:request|answer \d+)\)\s*$`)
+	quoteNotation       = strings.NewReplacer("`", "", `"`, "", "'", "", "\u201c", "", "\u201d", "", "\u2018", "", "\u2019", "")
+)
+
+// malformedAssumption is whether the line carries an assumption marker that is not the
+// canonical (assumption: ...) before the trailing source tag.
+func malformedAssumption(line string) bool {
+	return assumptionMarkerRe.MatchString(line) && !canonicalAssumption.MatchString(line)
+}
+
+// statementLine is the intent.md line the statement occurs in, or the statement itself.
+func statementLine(intent, statement string) string {
+	for _, line := range strings.Split(intent, "\n") {
+		if containsNormalized(line, statement) {
+			return line
+		}
+	}
+	return statement
+}
+
+// literalForm is the text compared by the literal check: leading list dash and trailing source
+// tag removed, whitespace normalised, quotes and backticks dropped.
+func literalForm(s string) string {
+	s = sourceTagRe.ReplaceAllString(strings.TrimSpace(s), "")
+	s = strings.TrimPrefix(strings.TrimSpace(s), "- ")
+	return normalizeWhitespace(quoteNotation.Replace(s))
+}
+
+// requestStates is whether the request says the statement literally: its normalised text
+// occurs in the request or equals one of its own request quotes.
+func requestStates(request, statement string, quotes []string) bool {
+	text := literalForm(statement)
+	if text == "" {
+		return false
+	}
+	if strings.Contains(literalForm(request), text) {
+		return true
+	}
+	for _, q := range quotes {
+		if literalForm(q) == text && containsNormalized(request, q) {
+			return true
+		}
+	}
+	return false
 }
