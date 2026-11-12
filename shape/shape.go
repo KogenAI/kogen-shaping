@@ -537,18 +537,24 @@ type original struct {
 type shaping struct {
 	retry        retryBudget
 	retryStopped bool
-	progressMu   sync.Mutex // the model checks run together and report progress
-	s            *sys.Session
-	in           ShapeInput
-	repo         *git.Repo
-	root         string
-	slug         string
-	cfg          *project.Config
-	role         project.Role
-	ev           *Evidence
-	rd           *verify.Readiness
-	client       *provider.Client
-	stateDir     string
+	// batch collects the refusals of one submission's independent gates while they all run;
+	// batching is false outside that.
+	batch    []heldRefusal
+	batching bool
+	// heldRecord is a decision record refusal of a files submission, reported with the later gates.
+	heldRecord *heldRefusal
+	progressMu sync.Mutex // the model checks run together and report progress
+	s          *sys.Session
+	in         ShapeInput
+	repo       *git.Repo
+	root       string
+	slug       string
+	cfg        *project.Config
+	role       project.Role
+	ev         *Evidence
+	rd         *verify.Readiness
+	client     *provider.Client
+	stateDir   string
 	// ext is the executor of an external shape role (nil: the native shaper).
 	ext    executor.Executor
 	extMax int
@@ -1506,24 +1512,43 @@ func (sh *shaping) mergedPackage() string {
 	return ContentHash([]byte(b.String()))
 }
 
-// refused records one submission_refused event with its problem lines bounded.
+// refused records one submission_refused event with its problem lines bounded. While a
+// submission's independent gates are collected, it only holds the refusal for the combined one.
 func (sh *shaping) refused(gate string, problems []string) {
-	sh.lastGate = gate
-	cut := cutProblems(problems)
-	sh.lastRefusal = cut
-	refusal := shapeRefusal{attempt: sh.submissions, gate: gate, problems: cut}
+	h := heldRefusal{gate: gate, problems: cutProblems(problems)}
+	if sh.batching {
+		sh.batch = append(sh.batch, h)
+		return
+	}
+	sh.recordRefusals([]heldRefusal{h})
+}
+
+// recordRefusals records the refusals of one submission, the first as the refusal that counts
+// against the retry budget, together with the others as the budget's one refusal set.
+func (sh *shaping) recordRefusals(held []heldRefusal) {
+	first := held[0]
+	sh.lastGate = first.gate
+	sh.lastRefusal = first.problems
+	refusal := shapeRefusal{attempt: sh.submissions, gate: first.gate, problems: first.problems}
 	sh.unresolved = append(sh.unresolved, refusal)
 	sh.lastCounted = &refusal
-	event := map[string]any{"event": "submission_refused", "attempt": sh.submissions, "gate": gate, "problems": cut}
-	if gate != "question_check" {
+	event := map[string]any{"event": "submission_refused", "attempt": sh.submissions, "gate": first.gate, "problems": first.problems}
+	if first.gate != "question_check" {
 		if sh.retry.limit == 0 {
 			sh.retry.limit = submissionRetryLimit
 		}
-		sh.retryStopped = sh.retry.refuse(gate)
+		set := make([]gateProblems, len(held))
+		for i, h := range held {
+			set[i] = gateProblems{gate: h.gate, problems: h.problems}
+		}
+		sh.retryStopped = sh.retry.refuseSet(set)
 		event["consecutive"] = sh.retry.consecutive
 		event["total"] = sh.retry.total
 	}
 	sh.ev.Record(event)
+	for _, h := range held[1:] {
+		sh.refusedAlso(h.gate, h.problems)
+	}
 }
 
 // envelopeRule is the first problem line of a submission that is not exactly one of questions,
@@ -1649,10 +1674,28 @@ func (sh *shaping) submitOne(ctx context.Context, args map[string]any) (string, 
 				"\nNo proposals from this submission were retained; earlier proposals are unchanged.",
 			outcome{kind: outInvalid, problems: problems}, nil
 	}
+	sh.heldRecord = nil
 	if !sub.blocked {
-		if text, out, refused, err := sh.decisionRecordGate(sub.decisions); err != nil {
+		// A files submission's decision record refusal is held and reported with the refusals of
+		// the gates that check the package; any other submission is refused at once.
+		hold := sub.files != nil
+		if hold {
+			sh.startBatch()
+		}
+		text, out, refused, err := sh.decisionRecordGate(sub.decisions)
+		if hold {
+			if refused && len(sh.batch) > 0 {
+				h := sh.batch[0]
+				h.text = text
+				sh.heldRecord = &h
+				refused = false
+			}
+			sh.batching, sh.batch = false, nil
+		}
+		if err != nil {
 			return "", outcome{}, err
-		} else if refused {
+		}
+		if refused {
 			return text, out, nil
 		}
 	}
@@ -1678,11 +1721,15 @@ func (sh *shaping) submitOne(ctx context.Context, args map[string]any) (string, 
 
 	if problems := sh.publicationProblems(sub.files); len(problems) > 0 {
 		sh.refused("publication", problems)
-		return "invalid submission:\n" + strings.Join(problems, "\n") +
-				"\nNo proposals from this submission were retained; earlier proposals are unchanged.",
-			outcome{kind: outInvalid, problems: problems}, nil
+		text, out := sh.reportHeldRecord("invalid submission:\n"+strings.Join(problems, "\n")+
+			"\nNo proposals from this submission were retained; earlier proposals are unchanged.",
+			outcome{kind: outInvalid, problems: problems})
+		return text, out, nil
 	}
 	text, out, err := sh.acceptFiles(ctx, sub.files)
+	if err == nil {
+		text, out = sh.reportHeldRecord(text, out)
+	}
 	if err == nil && out.kind == outReady {
 		if werr := os.WriteFile(filepath.Join(sh.ev.Dir, unresolvedFile), []byte("[]"), 0o600); werr != nil {
 			return "", outcome{}, werr
@@ -1838,38 +1885,11 @@ func (sh *shaping) checkSubmission(ctx context.Context, files []string) (string,
 	if err != nil {
 		return "", outcome{}, err
 	}
-	if text, out, refused := sh.contractRefusal(hash); refused {
-		return text, out, nil
+	cheap, err := sh.cheapGates(ctx, hash)
+	if err != nil || cheap.done {
+		return cheap.text, cheap.out, err
 	}
-	if text, out, refused := sh.scopeRefusal(); refused {
-		return text, out, nil
-	}
-	written, err := os.ReadFile(filepath.Join(sh.root, project.IntentMDPath(sh.slug)))
-	if err != nil {
-		return "", outcome{}, err
-	}
-	if text, out, refused := sh.carriedDecisionsGate(string(written)); refused {
-		return text, out, nil
-	}
-	if text, out, refused, err := sh.evidenceGate(string(written)); err != nil {
-		return "", outcome{}, err
-	} else if refused {
-		return text, out, nil
-	}
-	evidence, err := sh.decisionEvidence(string(written))
-	if err != nil {
-		return "", outcome{}, err
-	}
-	evidenceHash := ContentHash([]byte(evidence))
-	if review := sh.readinessReview; review != nil && review.ready == sh.ready &&
-		review.packageHash == hash && review.evidenceHash == evidenceHash && sh.rd.Current(sh.s, sh.slug, sh.ready) {
-		sh.ev.Record(map[string]any{"event": "readiness_review_reused", "package": hash})
-		return "accepted: unchanged checked observations acknowledged", outcome{kind: outReady}, nil
-	}
-	sh.readinessReview = nil
-	if text, out, done, err := sh.postSubmitChecks(ctx, string(written), evidence, hash); err != nil || done {
-		return text, out, err
-	}
+	evidenceHash := cheap.evidenceHash
 	if hash, err = sh.packageHash(); err != nil {
 		return "", outcome{}, err
 	}
@@ -1942,6 +1962,64 @@ func (sh *shaping) checkSubmission(ctx context.Context, files []string) (string,
 		sh.readinessReview = &readinessReview{ready: sh.ready, packageHash: hash, evidenceHash: evidenceHash}
 	}
 	return text, result, nil
+}
+
+// cheapResult is what the independent gates that run on every submission leave: the combined
+// refusal or reused acceptance (done), or the evidence the readiness review is keyed by.
+type cheapResult struct {
+	text         string
+	out          outcome
+	done         bool
+	evidenceHash string
+}
+
+// cheapGates runs every gate that needs no other to pass first: the contract refusal an
+// identical package already got, the review scope, the carried decisions, the decision evidence,
+// the step self-check, the static checks and the decision, literal and example checks. All of them
+// run on every submission and their refusals come back as one. Readiness and the contract review
+// are expensive and follow only when none refused.
+func (sh *shaping) cheapGates(ctx context.Context, hash string) (cheapResult, error) {
+	sh.startBatch()
+	defer func() { sh.batching, sh.batch = false, nil }()
+	if text, _, refused := sh.contractRefusal(hash); refused {
+		sh.holdText(text)
+	}
+	if text, _, refused := sh.scopeRefusal(); refused {
+		sh.holdText(text)
+	}
+	written, err := os.ReadFile(filepath.Join(sh.root, project.IntentMDPath(sh.slug)))
+	if err != nil {
+		return cheapResult{}, err
+	}
+	if text, _, refused := sh.carriedDecisionsGate(string(written)); refused {
+		sh.holdText(text)
+	}
+	if text, _, refused, err := sh.evidenceGate(string(written)); err != nil {
+		return cheapResult{}, err
+	} else if refused {
+		sh.holdText(text)
+	}
+	evidence, err := sh.decisionEvidence(string(written))
+	if err != nil {
+		return cheapResult{}, err
+	}
+	evidenceHash := ContentHash([]byte(evidence))
+	if review := sh.readinessReview; review != nil && review.ready == sh.ready && len(sh.batch) == 0 && sh.heldRecord == nil &&
+		review.packageHash == hash && review.evidenceHash == evidenceHash && sh.rd.Current(sh.s, sh.slug, sh.ready) {
+		sh.ev.Record(map[string]any{"event": "readiness_review_reused", "package": hash})
+		return cheapResult{text: "accepted: unchanged checked observations acknowledged", out: outcome{kind: outReady}, done: true}, nil
+	}
+	sh.readinessReview = nil
+	if err := sh.postSubmitChecks(ctx, string(written), evidence, hash); err != nil {
+		return cheapResult{}, err
+	}
+	if text, out, refused := sh.settleBatch(); refused {
+		return cheapResult{text: text, out: out, done: true}, nil
+	}
+	if err := sh.applyAssumptionMarks(); err != nil {
+		return cheapResult{}, err
+	}
+	return cheapResult{evidenceHash: evidenceHash}, nil
 }
 
 func (sh *shaping) certify(ctx context.Context, files []string) (string, outcome, error) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
@@ -86,23 +87,88 @@ func runModelChecks(ctx context.Context, decision, literal, example func(context
 	return refusals, nil
 }
 
-// postSubmitChecks runs the checks after a submission is written. The local ones (the step
-// self-check and the static checks) come first, and a refusal by either skips the model checks.
-// Otherwise the decision, literal and example checks run together and every refusing check
-// reports its problems, in that order. done is whether the submission was refused.
-func (sh *shaping) postSubmitChecks(ctx context.Context, intent, evidence, hash string) (text string, out outcome, done bool, err error) {
+// heldRefusal is one gate's refusal of a submission whose other independent gates still run: the
+// gate, its bounded problem lines and the feedback text the gate gives on its own.
+type heldRefusal struct {
+	gate     string
+	problems []string
+	text     string
+}
+
+// holdText gives the refusal a gate just held its feedback text.
+func (sh *shaping) holdText(text string) {
+	if n := len(sh.batch); n > 0 {
+		sh.batch[n-1].text = text
+	}
+}
+
+// startBatch makes the refusals that follow wait for settleBatch.
+func (sh *shaping) startBatch() {
+	sh.batching, sh.batch = true, nil
+}
+
+// settleBatch ends the collection and, when a gate refused, records every refusal once and
+// returns the one feedback that names each refusing gate's problems, grouped by gate.
+func (sh *shaping) settleBatch() (string, outcome, bool) {
+	held := sh.batch
+	sh.batching, sh.batch = false, nil
+	if h := sh.heldRecord; h != nil {
+		sh.heldRecord = nil
+		held = append([]heldRefusal{*h}, held...)
+	}
+	if len(held) == 0 {
+		return "", outcome{}, false
+	}
+	sh.recordRefusals(held)
+	return combinedRefusal(held)
+}
+
+func combinedRefusal(held []heldRefusal) (string, outcome, bool) {
+	var texts, problems []string
+	for _, h := range held {
+		texts = append(texts, h.text)
+		problems = append(problems, h.problems...)
+	}
+	return strings.Join(texts, "\n\n"), outcome{kind: outInvalid, problems: problems}, true
+}
+
+// reportHeldRecord adds a decision record refusal that no later gate reported to the refusal a
+// submission got from a gate that does not collect.
+func (sh *shaping) reportHeldRecord(text string, out outcome) (string, outcome) {
+	h := sh.heldRecord
+	sh.heldRecord = nil
+	if h == nil || out.kind != outInvalid {
+		return text, out
+	}
+	sh.refusedAlso(h.gate, h.problems)
+	text, out, _ = combinedRefusal([]heldRefusal{*h, {problems: out.problems, text: text}})
+	return text, out
+}
+
+// postSubmitChecks runs the checks after a submission is written: the step self-check, the static
+// checks and the decision, literal and example checks. Each refusing check is held with its
+// problems, in that order, for the combined refusal.
+func (sh *shaping) postSubmitChecks(ctx context.Context, intent, evidence, hash string) error {
 	sh.progress("kogen: checking step code")
 	feedback, err := sh.stepSelfcheck(ctx)
 	if err != nil {
-		return "", outcome{}, true, err
+		return err
 	}
 	if feedback != "" {
-		problems := strings.Split(feedback, "\n")[1:]
-		sh.refused("step_selfcheck", problems)
-		return feedback, outcome{kind: outInvalid, problems: problems}, true, nil
+		sh.refused("step_selfcheck", strings.Split(feedback, "\n")[1:])
+		sh.holdText(feedback)
 	}
-	if text, out, err := sh.staticChecks(ctx, hash); err != nil || out.kind == outInvalid {
-		return text, out, true, err
+	if text, out, err := sh.staticChecks(ctx, hash); err != nil {
+		return err
+	} else if out.kind == outInvalid {
+		sh.holdText(text)
+	}
+	// A package the review scope, the step self-check or the static checks refuse has to change
+	// before a model can judge it, so those refusals still skip the model checks.
+	if slices.ContainsFunc(sh.batch, func(h heldRefusal) bool {
+		return h.gate == scopeGate || h.gate == "step_selfcheck" || h.gate == staticGate
+	}) {
+		return nil
 	}
 	refusals, err := runModelChecks(ctx,
 		func(ctx context.Context) ([]string, error) {
@@ -110,22 +176,13 @@ func (sh *shaping) postSubmitChecks(ctx context.Context, intent, evidence, hash 
 		},
 		sh.literalCheck, sh.exampleCheck)
 	if err != nil {
-		return "", outcome{}, true, err
+		return err
 	}
-	if len(refusals) == 0 {
-		return "", outcome{}, false, sh.applyAssumptionMarks()
+	for _, r := range refusals {
+		sh.refused(r.gate, r.problems())
+		sh.holdText(r.text())
 	}
-	var texts, problems []string
-	for i, r := range refusals {
-		if i == 0 {
-			sh.refused(r.gate, r.problems())
-		} else {
-			sh.refusedAlso(r.gate, r.problems())
-		}
-		texts = append(texts, r.text())
-		problems = append(problems, r.problems()...)
-	}
-	return strings.Join(texts, "\n\n"), outcome{kind: outInvalid, problems: problems}, true, nil
+	return nil
 }
 
 // refusedAlso records a further refusal of the submission refused by sh.refused: its event and
