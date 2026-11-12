@@ -365,7 +365,7 @@ func TestClaudeLineupShapeSubmission(t *testing.T) {
 				func(int, string) (executor.RoundResult, error) {
 					return executor.RoundResult{}, executor.Fail(executor.ReasonProtocol, "no structured_output")
 				}}}, "executor", "protocol"},
-			"round cap": {&shapeExec{cap: 1, rounds: []func(int, string) (executor.RoundResult, error){result(shpFiles()), result(shpFiles())}}, "candidate", "executor_round_limit"},
+			"round cap": {&shapeExec{cap: 1, rounds: []func(int, string) (executor.RoundResult, error){result(shpInvalidFiles()), result(shpFiles())}}, "candidate", "executor_round_limit"},
 		} {
 			t.Run(name, func(t *testing.T) {
 				parallel(t)

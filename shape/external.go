@@ -82,6 +82,9 @@ type extSession struct {
 	dir       string
 	usage     executor.Usage
 	usageSeen bool
+	// ackGranted is set once the shaper has the one round past the cap that only acknowledges
+	// readiness observations of a package that passed every other gate.
+	ackGranted bool
 }
 
 // startExternal starts the role's fresh session on the stable task text.
@@ -154,12 +157,22 @@ func (x *extSession) close() {
 	}
 }
 
+// grantAcknowledgment lets the shaper have one round past the cap, once, when the last round
+// produced a package that passed every gate and only awaits the acknowledgment of its readiness
+// observations: that round approves nothing new, so the cap does not count it. A package changed
+// in it gets no further round.
+func (x *extSession) grantAcknowledgment() {
+	if x.rounds == x.max {
+		x.ackGranted = true
+	}
+}
+
 // round runs one round. The Git execution state is compared with its pin, then the checkout, raw
 // index and HEAD with their identity, before and after the round, whether or not the round
 // succeeded; a difference is an
 // unauthorized mutation, reported with the existing custody reasons and never reverted.
 func (x *extSession) round(ctx context.Context, feedback string) (executor.RoundResult, error) {
-	if x.rounds >= x.max {
+	if x.rounds >= x.max && !(x.ackGranted && x.rounds == x.max) {
 		return executor.RoundResult{}, executor.RoundLimit(x.max)
 	}
 	// The main session's custody comparisons are Kogen checks; other sessions run inside one already.

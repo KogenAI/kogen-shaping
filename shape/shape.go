@@ -1164,6 +1164,7 @@ func (sh *shaping) converseExternal(ctx context.Context, blocks []any) (outcome,
 				return out, x, nil
 			}
 		case outObservations:
+			x.grantAcknowledgment()
 			switch n := repeats.note(text); {
 			case n >= readinessRepeatLimit:
 				sh.ev.Record(map[string]any{"event": "readiness_repeat", "attempt": sh.submissions, "count": n, "path": sh.lastObservationsPath})
