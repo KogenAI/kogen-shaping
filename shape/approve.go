@@ -164,6 +164,9 @@ func approveLocked(ctx context.Context, s *sys.Session, in ApproveInput, repo *g
 	}
 	rd := &verify.Readiness{Root: root, Repo: repo, Config: cfg, Tools: in.Tools, Log: in.Log, Evidence: in.Evidence,
 		Attempt: verify.NewAttempt(root, slug, verify.NewRedactor(s.Env, home))}
+	cache := verify.NewBuildCache() // build outputs for the static checks' fresh copy; removed with the run
+	defer cache.Close()
+	rd.Cache = cache
 	ready := rd.Cached(s, slug)
 	if ready == nil {
 		if ready, err = rd.Check(ctx, s, slug); err != nil {
@@ -180,7 +183,7 @@ func approveLocked(ctx context.Context, s *sys.Session, in ApproveInput, repo *g
 	if !rd.Current(s, slug, ready) {
 		return 0, sys.Fail("intent", "not_ready", "readiness inputs changed; review again", 1)
 	}
-	if err := approveStaticChecks(ctx, s, in, repo, cfg, ready, sha); err != nil {
+	if err := approveStaticChecks(ctx, s, in, repo, cfg, ready, sha, cache); err != nil {
 		return 0, err
 	}
 	if err := project.ValidateSource(source); err != nil {

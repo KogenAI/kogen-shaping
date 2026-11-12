@@ -373,6 +373,10 @@ func (g *staticGateRunner) run(ctx context.Context, head, tree, sha string) (*st
 		return nil, err
 	}
 	_ = verify.SeedIgnored(g.root, dir)
+	// Build outputs a readiness check of this package left in the run's cache (same lockfiles and
+	// toolchain only), so the copy does not compile the dependencies again.
+	key := g.rd.SeedBuild(g.s, dir, g.slug, mat.Paths)
+	defer g.rd.KeepBuild(key, dir) // runs before the copy is removed
 	if err := g.rd.Setup(ctx, g.s, dir, false); err != nil {
 		return nil, err
 	}
@@ -530,7 +534,7 @@ func (sh *shaping) staticChecks(ctx context.Context, hash string) (string, outco
 
 // approveStaticChecks is the gate in `kogen intent approve`: it reuses the result Shape recorded
 // for the identical package and otherwise runs the checks on the candidate tree of ready.
-func approveStaticChecks(ctx context.Context, s *sys.Session, in ApproveInput, repo *git.Repo, cfg *project.Config, ready *verify.Ready, sha string) error {
+func approveStaticChecks(ctx context.Context, s *sys.Session, in ApproveInput, repo *git.Repo, cfg *project.Config, ready *verify.Ready, sha string, cache *verify.BuildCache) error {
 	root, slug := repo.Dir, in.Slug
 	if b, err := os.ReadFile(staticRecordPath(root, slug)); err == nil {
 		var rec staticRecord
@@ -540,7 +544,7 @@ func approveStaticChecks(ctx context.Context, s *sys.Session, in ApproveInput, r
 			return nil
 		}
 	}
-	rd := &verify.Readiness{Root: root, Repo: repo, Config: cfg, Tools: in.Tools, Log: in.Log, Evidence: in.Evidence}
+	rd := &verify.Readiness{Root: root, Repo: repo, Config: cfg, Tools: in.Tools, Log: in.Log, Evidence: in.Evidence, Cache: cache}
 	run, err := newStaticGateRunner(s, repo, rd, cfg, root, slug, s.Progress).run(ctx, ready.Head, ready.CandidateTree, sha)
 	if err != nil {
 		return err
