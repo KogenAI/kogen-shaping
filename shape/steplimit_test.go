@@ -57,12 +57,43 @@ func TestStepLimitItemFollowsStepTimeout(t *testing.T) {
 	if !ok {
 		t.Fatal("stepLimitItem: a whole-suite body must be refused")
 	}
-	want := fmt.Sprintf("runs a whole test suite with go test and no narrowing; narrow it to one named test or package, or split the step, so it finishes below the %d s step limit", int(verify.StepTimeout.Seconds()))
+	want := fmt.Sprintf("runs a whole test suite with go test and no narrowing; narrow it to one named test or package, or split the step, so it finishes below the %d s step limit (for example go test -run '^TestName$' ./package)", int(verify.StepTimeout.Seconds()))
 	if it.Check != "step_limit" || it.Target != d.Pattern || it.File != d.File || it.Detail != want || it.OK || it.Warning {
 		t.Errorf("stepLimitItem = %+v, want check step_limit, target %q, file %q, detail %q", it, d.Pattern, d.File, want)
 	}
 	d.Body = `execSync('go test ./shape')`
 	if it, ok := stepLimitItem(d); ok || strings.Contains(it.Detail, "step limit") {
 		t.Errorf("stepLimitItem: a one-package body must be accepted, got %+v", it)
+	}
+}
+
+// Command shapes a step body wraps around a whole-suite run. Each one runs the whole suite and
+// must be refused; the narrowed twins below each must stay accepted.
+func TestWholeSuiteRunnerWrappedCommands(t *testing.T) {
+	cases := []struct {
+		name, body, want string
+	}{
+		{"subshell", `execSync('(cd app && mix test)')`, "mix test"},
+		{"sh -c", `execSync("sh -c 'cd app && mix test'")`, "mix test"},
+		{"bash -lc", `execSync('bash -lc "go test -count=1 ./..."')`, "go test"},
+		{"env prefix", `execSync('env MIX_ENV=test mix test')`, "mix test"},
+		{"timeout prefix", `execSync('timeout 100 mix test')`, "mix test"},
+		{"nice prefix", `execSync('nice -n 10 go test ./...')`, "go test"},
+		{"stderr redirect", `execSync('mix test 2>&1')`, "mix test"},
+		{"output redirect", `execSync('npm test > out.log')`, "npm test"},
+		{"mix exclude value", `execSync('mix test --exclude integration')`, "mix test"},
+		{"mix seed value", `spawnSync('mix', ['test', '--seed', '0'])`, "mix test"},
+
+		{"subshell narrowed", `execSync('(cd app && mix test test/one_test.exs)')`, ""},
+		{"sh -c narrowed", `execSync("sh -c 'mix test --only tag'")`, ""},
+		{"env prefix narrowed", `execSync('env MIX_ENV=test go test -run TestOne ./...')`, ""},
+		{"redirect narrowed", `execSync('mix test test/one_test.exs 2>&1')`, ""},
+		{"mix exclude with file", `execSync('mix test --exclude slow test/one_test.exs')`, ""},
+		{"timeout other command", `execSync('timeout 100 make lint')`, ""},
+	}
+	for _, c := range cases {
+		if got := wholeSuiteRunner(c.body); got != c.want {
+			t.Errorf("%s: wholeSuiteRunner(%q) = %q, want %q", c.name, c.body, got, c.want)
+		}
 	}
 }

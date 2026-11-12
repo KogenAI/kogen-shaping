@@ -24,9 +24,19 @@ func stepLimitItem(d verify.StepDef) (verify.StepItem, bool) {
 	}
 	return verify.StepItem{
 		Check: "step_limit", Target: d.Pattern, File: d.File,
-		Detail: fmt.Sprintf("runs a whole test suite with %s and no narrowing; narrow it to one named test or package, or split the step, so it finishes below the %d s step limit",
-			runner, int(verify.StepTimeout.Seconds())),
+		Detail: fmt.Sprintf("runs a whole test suite with %s and no narrowing; narrow it to one named test or package, or split the step, so it finishes below the %d s step limit (for example %s)",
+			runner, int(verify.StepTimeout.Seconds()), narrowingExample[runner]),
 	}, true
+}
+
+// narrowingExample names, for each runner, a command that runs one test, so the shaper sees the
+// exact edit instead of only the rule.
+var narrowingExample = map[string]string{
+	"go test":   "go test -run '^TestName$' ./package",
+	"mix test":  "mix test test/one_test.exs, or mix test --only tag",
+	"npm test":  "npm test -- <one spec file or name filter>",
+	"pnpm test": "pnpm test -- <one spec file or name filter>",
+	"yarn test": "yarn test <one spec file or name filter>",
 }
 
 // srcToken is one token of step definition source: a string literal (its value), a punctuation
@@ -87,6 +97,15 @@ func argvAt(toks []srcToken, i int) ([]string, int, bool) {
 
 // wholeSuite is the runner when the program and arguments run a whole test suite, else "".
 func wholeSuite(words []string) string {
+	words = commandWords(words)
+	if len(words) >= 3 && slices.Contains([]string{"sh", "bash", "zsh"}, words[0]) && isCommandFlag(words[1]) {
+		for _, inner := range shellCommands(words[2]) {
+			if r := wholeSuite(inner); r != "" {
+				return r
+			}
+		}
+		return ""
+	}
 	if len(words) < 2 {
 		return ""
 	}
@@ -107,9 +126,16 @@ func wholeSuite(words []string) string {
 		if args[0] != "test" {
 			return ""
 		}
-		for _, a := range args[1:] {
-			if !strings.HasPrefix(a, "-") || a == "--only" || a == "--failed" || a == "--stale" ||
-				strings.HasPrefix(a, "--only=") {
+		for i := 1; i < len(args); i++ {
+			a := args[i]
+			if a == "--only" || a == "--failed" || a == "--stale" || strings.HasPrefix(a, "--only=") {
+				return ""
+			}
+			if slices.Contains(mixValueFlags, a) {
+				i++ // the value of a flag that does not select tests is not a path
+				continue
+			}
+			if !strings.HasPrefix(a, "-") {
 				return ""
 			}
 		}
@@ -131,6 +157,73 @@ func wholeSuite(words []string) string {
 		return prog + " test"
 	}
 	return ""
+}
+
+// mixValueFlags are the mix test flags that take a separate value and run the same tests.
+var mixValueFlags = []string{"--exclude", "--include", "--seed", "--max-failures", "--timeout", "--formatter", "--max-cases", "--slowest", "--trace-timeout"}
+
+// commandWords is the command itself: without a leading ( or { and a trailing ) or }, redirections,
+// and the env, exec, time, nohup, timeout and nice prefixes that only wrap it.
+func commandWords(words []string) []string {
+	var out []string
+	skip := false
+	for i, w := range words {
+		if skip {
+			skip = false
+			continue
+		}
+		if i == 0 {
+			w = strings.TrimLeft(w, "({")
+		}
+		if i == len(words)-1 {
+			w = strings.TrimRight(w, ")}")
+		}
+		switch {
+		case w == "":
+		case isRedirect(w):
+			op := strings.TrimLeft(w, "0123456789")
+			skip = op == ">" || op == ">>" || op == "<" // a bare operator: the next word is its target
+		default:
+			out = append(out, w)
+		}
+	}
+	for len(out) > 1 {
+		switch w := out[0]; {
+		case slices.Contains([]string{"env", "exec", "time", "nohup", "command"}, w), isAssignment(w):
+			out = out[1:]
+		case w == "timeout":
+			out = out[1:]
+			for len(out) > 0 && strings.HasPrefix(out[0], "-") {
+				out = out[1:]
+			}
+			if len(out) > 0 {
+				out = out[1:] // the duration
+			}
+		case w == "nice":
+			out = out[1:]
+			for len(out) > 0 && strings.HasPrefix(out[0], "-") {
+				flag := out[0]
+				out = out[1:]
+				if flag == "-n" && len(out) > 0 {
+					out = out[1:]
+				}
+			}
+		default:
+			return out
+		}
+	}
+	return out
+}
+
+// isRedirect reports whether the word is a redirection such as >out, 2>, >> or <in.
+func isRedirect(w string) bool {
+	w = strings.TrimLeft(w, "0123456789")
+	return strings.HasPrefix(w, ">") || strings.HasPrefix(w, "<")
+}
+
+// isCommandFlag reports whether the word is a shell option cluster that includes -c.
+func isCommandFlag(w string) bool {
+	return len(w) > 1 && w[0] == '-' && strings.Contains(w[1:], "c") && strings.Trim(w[1:], "abcefhilmnptuvxCo") == ""
 }
 
 // shellCommands splits one shell string at && || ; | & and newlines, outside quotes, into the
