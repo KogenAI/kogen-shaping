@@ -155,7 +155,7 @@ func (f *bindingFx) check() error {
 	return bindingCollision(context.Background(), f.Root, "fixture", s, verify.Tools{})
 }
 
-func TestBindingCollisionStartsOneLoaderPerStepFilePair(t *testing.T) {
+func TestBindingCollisionStartsOneLoaderForAllStepFilePairs(t *testing.T) {
 	f := newBindingFx(t)
 	// Each file defines only its own Intent's text: no text is matched on both sides.
 	f.addIntent("oa", "Given('oa: step 1', () => {});\n")
@@ -164,8 +164,8 @@ func TestBindingCollisionStartsOneLoaderPerStepFilePair(t *testing.T) {
 	if err := f.check(); err != nil {
 		t.Fatalf("no collision: %v", err)
 	}
-	if got := f.loaders(); got != 3 {
-		t.Fatalf("loaders = %d, want 3 (one per step-file pair)", got)
+	if got := f.loaders(); got != 1 {
+		t.Fatalf("loaders = %d, want 1 (all three step-file pairs in one Node process)", got)
 	}
 }
 
@@ -180,8 +180,8 @@ func TestBindingCollisionRefusesTheFirstCollidingPairInIntentOrder(t *testing.T)
 	if got := strings.Join(e.Lines, "|"); got != "features/steps/fixture_steps.js|features/steps/ob_steps.js" {
 		t.Fatalf("lines = %q", got)
 	}
-	if got := f.loaders(); got != 2 {
-		t.Fatalf("loaders = %d, want 2 (oa, then the colliding ob)", got)
+	if got := f.loaders(); got != 1 {
+		t.Fatalf("loaders = %d, want 1", got)
 	}
 }
 
@@ -219,4 +219,25 @@ func TestBindingCollisionLoadFailuresAndMissingResultsDoNotRefuse(t *testing.T) 
 	if err := f.check(); err != nil {
 		t.Fatalf("loader without a result: %v", err)
 	}
+}
+
+// Pairs are independent although they share one process: the own step file is loaded for every
+// pair, so a module cached by an earlier pair would hide its definitions from the later ones.
+func TestBindingCollisionOwnFileIsLoadedAgainForEveryPair(t *testing.T) {
+	f := newBindingFx(t)
+	f.addIntent("oa", "Given('oa: step 1', () => {});\n")
+	f.addIntent("ob", "Given('ob: step 1', () => {});\n")
+	f.addIntent("oc", "Given('own: step 1', () => {});\n")
+	approveWantError(t, f.check(), "intent", "step_ownership_collision",
+		"Intents fixture and oc have overlapping step bindings in features/steps/fixture_steps.js and features/steps/oc_steps.js", 1)
+}
+
+// A step file that ends the process loses only its own pair's result; the pairs after it are
+// still evaluated.
+func TestBindingCollisionProcessExitLosesOnlyItsPair(t *testing.T) {
+	f := newBindingFx(t)
+	f.addIntent("oa", "process.exit(3);\n")
+	f.addIntent("ob", "Given('own: step 1', () => {});\n")
+	approveWantError(t, f.check(), "intent", "step_ownership_collision",
+		"Intents fixture and ob have overlapping step bindings in features/steps/fixture_steps.js and features/steps/ob_steps.js", 1)
 }
