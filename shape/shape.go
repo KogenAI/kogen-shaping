@@ -1132,6 +1132,7 @@ func (sh *shaping) converseExternal(ctx context.Context, blocks []any) (outcome,
 	defer func() { sh.ev.Record(x.summary()) }()
 	feedback := ""
 	var last lastSubmission
+	repeats := readinessRepeats{}
 	for {
 		if feedback != "" && budgetSpent(sh.sinceStart()) {
 			return budgetStop(last, "", 0, sh.sinceStart(), x.rounds), x, nil
@@ -1162,7 +1163,15 @@ func (sh *shaping) converseExternal(ctx context.Context, blocks []any) (outcome,
 			if sh.retryStopped {
 				return out, x, nil
 			}
-		case outObservations, outPrecheck, outQuestionRefused:
+		case outObservations:
+			switch n := repeats.note(text); {
+			case n >= readinessRepeatLimit:
+				sh.ev.Record(map[string]any{"event": "readiness_repeat", "attempt": sh.submissions, "count": n, "path": sh.lastObservationsPath})
+				return readinessRepeatStop(sh.submissions, n, sh.lastObservationsPath), x, nil
+			case n == 2:
+				text += readinessRepeatNotice(n)
+			}
+		case outPrecheck, outQuestionRefused:
 		case outBlocked, outQuestions, outReady:
 			return out, x, nil
 		}
