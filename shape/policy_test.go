@@ -18,7 +18,7 @@ type policySnapshot struct {
 func policyBytes() []byte {
 	names := map[string][]string{}
 	main := (&shaping{}).mainTools()
-	names["default"] = append(append([]string{}, main...), ProposeFilesTool, SubmitTool)
+	names["default"] = append(append([]string{}, main...), ProposeFilesTool, CheckPackageTool, SubmitTool)
 	snap := policySnapshot{Prompt: ShaperInstructions(), Tools: map[string][]map[string]any{}}
 	for name, n := range names {
 		snap.Tools[name] = ShaperToolDefinitions(n...)
@@ -57,7 +57,7 @@ func TestShaperPolicyRequest(t *testing.T) {
 		t.Fatal("request did not use local instructions")
 	}
 	got, _ := json.Marshal(req["tools"])
-	names := append((&shaping{}).mainTools(), ProposeFilesTool, SubmitTool)
+	names := append((&shaping{}).mainTools(), ProposeFilesTool, CheckPackageTool, SubmitTool)
 	want, _ := json.Marshal(ShaperToolDefinitions(names...))
 	if !bytes.Equal(got, want) {
 		t.Fatalf("request tools differ from local policy\ngot %s\nwant %s", got, want)

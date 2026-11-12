@@ -21,7 +21,7 @@ const (
 	pfStepsPath   = "features/steps/is-even__steps.js"
 	pfCustody     = ".kogen/local/shaping/is-even/proposed/"
 
-	pfNativeTools = "read_file, view_image, list_files, search_text, probe, documentation, propose_files, submit"
+	pfNativeTools = "read_file, view_image, list_files, search_text, probe, documentation, propose_files, check_package, submit"
 )
 
 // pfIntentDraft is a first, shorter version of the Intent that later proposals replace.

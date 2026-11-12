@@ -716,7 +716,7 @@ func (sh *shaping) shape(ctx context.Context, st *state) (int, error) {
 	}
 
 	defs := ShaperToolDefinitions(sh.mainTools()...)
-	defs = append(defs, ShaperToolDefinitions(ProposeFilesTool, SubmitTool)...)
+	defs = append(defs, ShaperToolDefinitions(ProposeFilesTool, CheckPackageTool, SubmitTool)...)
 	sh.toolDefs = agent.AsAny(defs)
 
 	protected, err := project.Protected(sh.root, sh.cfg)
@@ -1021,6 +1021,13 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 			case c.Name == ProposeFilesTool:
 				var text string
 				err := sh.toolSpan(func() (err error) { text, err = sh.proposeFiles(c.Args()); return })
+				if err != nil {
+					return outcome{}, usage, err
+				}
+				outputs = append(outputs, toolOutput(c, text))
+			case c.Name == CheckPackageTool:
+				var text string
+				err := sh.toolSpan(func() (err error) { text, err = sh.checkPackage(c.Args()); return })
 				if err != nil {
 					return outcome{}, usage, err
 				}

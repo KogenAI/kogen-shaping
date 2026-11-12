@@ -94,6 +94,8 @@ func shaperToolDefinition(name string) map[string]any {
 		d := probeDefinition(true)
 		d["description"] = fmt.Sprint(d["description"]) + " " + batchSentence
 		return d
+	case CheckPackageTool:
+		return checkPackageDef()
 	case ProposeFilesTool:
 		return fun(name,
 			"Retain complete owned Intent or step files without checking them. Each file supplies path and exactly one of content (whole text) or from_probe (a successful captured output handle from this invocation). Use captured output for programmatically generated controls.json or other large proof artifacts without retyping repository files. Same path/protection rules as submit. Proposals accumulate privately; malformed or unsafe mixed calls retain nothing. End with submit to check the complete package.",
