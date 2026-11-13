@@ -85,3 +85,33 @@ func TestExternalShaperChangedReadinessFailuresAreNotARepeat(t *testing.T) {
 		t.Fatalf("changed failures carry a repeat notice")
 	}
 }
+
+// TestExternalShaperAcknowledgesRedOfAPackageKogenMarked: Kogen marks an unsupported decision
+// line as an assumption on every submission, so the package it checks differs from the one the
+// shaper submitted. The shaper that acknowledges the returned red by resubmitting the same
+// artifact must finish at once; it must not be handed the same red again until the repeat stop.
+func TestExternalShaperAcknowledgesRedOfAPackageKogenMarked(t *testing.T) {
+	parallel(t)
+	f := newShpFx(t)
+	f.useExternalShape()
+	const line = "- Use a heading named Fix. (source: request)"
+	whys := []string{"The request does not name a heading.", "No quote from the request supports this heading.", "Nothing in the request chooses the heading."}
+	calls := 0
+	mark := func(n int, _ string) (executor.RoundResult, error) {
+		calls++
+		// The reviewer words its reason differently on every call, as a model does.
+		return result(map[string]any{"items": []any{map[string]any{"statement": line, "request_quotes": []any{},
+			"verdict": "unsupported", "intent_value": "", "request_value": "", "difference": "", "why": whys[(calls-1)%len(whys)]}}})(n, "")
+	}
+	ack := map[string]any{"files": []any{map[string]any{"path": ".kogen/intents/is-even/acceptance.feature", "content": shpFeature}}}
+	x := &shapeExec{t: t,
+		rounds:   []func(int, string) (executor.RoundResult, error){result(shpFilesWithDecisions(line)), result(ack), result(ack), result(ack)},
+		decision: []func(int, string) (executor.RoundResult, error){mark}}
+	exit, err := f.shapeWith(x, "Add calc.is_even(n). Non-integers raise TypeError.")
+	if err != nil || exit != 0 {
+		t.Fatalf("acknowledging the marked package's red did not finish: exit %d, err %v\nstderr: %s", exit, err, f.Stderr)
+	}
+	if len(x.inputs) != 2 {
+		t.Fatalf("%d rounds, want the acknowledgment (round 2) to finish shaping", len(x.inputs))
+	}
+}

@@ -223,5 +223,13 @@ func (sh *shaping) applyAssumptionMarks() error {
 		return err
 	}
 	sh.ev.Record(map[string]any{"event": "decision_marked", "lines": done})
+	// The marked text is the shaper's proposal from now on. Left only on disk, every
+	// resubmission would be written back unmarked and marked again in whatever words the check
+	// found that time: the package would differ each time, no checked readiness could be
+	// acknowledged and the same red would come back until shaping stopped.
+	if rel := project.IntentMDPath(sh.slug); sh.proposed[rel] != "" {
+		sh.proposed[rel] = intent
+		return sh.keepProposals()
+	}
 	return nil
 }

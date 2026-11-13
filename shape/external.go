@@ -86,6 +86,9 @@ type extSession struct {
 	// ackGranted is set once the shaper has the one round past the cap that only acknowledges
 	// readiness observations of a package that passed every other gate.
 	ackGranted bool
+	// apiTotal is the last cumulative model time the session reported: Claude Code counts a
+	// resumed session's API time from its first round, so a round's own time is the difference.
+	apiTotal int64
 }
 
 // startExternal starts the role's fresh session on the stable task text.
@@ -207,7 +210,7 @@ func (x *extSession) round(ctx context.Context, feedback string) (executor.Round
 	ended := x.ev.Millis()
 	var model *int64
 	if rerr == nil {
-		model = roundModelMS(x.dir, x.rounds)
+		model = x.ownModelMS(roundModelMS(x.dir, x.rounds))
 	}
 	if main {
 		x.ev.ShaperRound(started, ended, model)
@@ -269,6 +272,21 @@ func (x *extSession) afterRound(before identity, res executor.RoundResult) error
 
 // mainSession is the base name of the main Shape session's directory.
 const mainSession = "executor-shape"
+
+// ownModelMS turns the session's cumulative model time reported after a round into that round's
+// own: the increase over the previous report. A total that did not grow starts over, so the
+// reported value stands.
+func (x *extSession) ownModelMS(total *int64) *int64 {
+	if total == nil {
+		return nil
+	}
+	own := *total - x.apiTotal
+	if own < 0 {
+		own = *total
+	}
+	x.apiTotal = *total
+	return &own
+}
 
 // roundModelMS is the model time Claude Code reports for round n of the session in dir: the
 // duration_api_ms of the last result line of the retained raw stream round-<n>.jsonl. It is nil

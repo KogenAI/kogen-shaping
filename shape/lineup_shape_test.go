@@ -815,7 +815,13 @@ func TestExecutorRoundTiming(t *testing.T) {
 				switch e["session"] {
 				case "executor-shape":
 					main++
-					shpEq(t, "round "+fmt.Sprint(e["round"]), e["model_ms"], tc.want)
+					// The stream's duration_api_ms is the session's cumulative total, and every
+					// round here writes the same one: the second round added nothing of its own.
+					want := tc.want
+					if want != nil && e["round"] == float64(2) {
+						want = float64(0)
+					}
+					shpEq(t, "round "+fmt.Sprint(e["round"]), e["model_ms"], want)
 				case "executor-contract-review-1":
 					review++
 					shpEq(t, "review model_ms", e["model_ms"], nil)
