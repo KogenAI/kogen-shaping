@@ -251,7 +251,7 @@ func decisionResolveNotes(items []decisionItem, request, intent string, locked m
 			notes = append(notes, "Decision check (advisory, not refused): "+strings.TrimSpace(it.statement)+" | "+it.why)
 			continue
 		}
-		if it.verdict == "unsupported" && !paraphrasedConflict && !marked && !requestSpeaks(request, it.quotes) {
+		if it.verdict == "unsupported" && !paraphrasedConflict && !marked && (!requestSpeaks(request, it.quotes) || silentOnDetail(it.statement, it.why)) {
 			if mark, ok := decisionMark(intent, it, locked); ok {
 				marks = append(marks, mark)
 				events[i].(map[string]any)["marked_assumption"] = mark.assumption
@@ -321,6 +321,21 @@ func decisionResolveNotes(items []decisionItem, request, intent string, locked m
 		feedback = append(feedback, assumptionRule)
 	}
 	return event, append(feedback, problems...), marks, notes
+}
+
+// silentOnDetail is whether the checker itself says the request does not decide the detail the
+// statement fills in (a status, label, name or parameter), so the quote it gave only names the
+// topic. A statement that removes, replaces or folds away something existing is never such a
+// detail: it narrows scope, and the quote then still counts.
+var (
+	silentWhyRe    = regexp.MustCompile(`(?i)\b(does not|doesn't|do not|did not|never|no)\s+(\w+\s+){0,2}(name|specify|state|give|say|mention|cover|define|decide|list)\b|\b(gives?|names?|specif(y|ies)|states?|mentions?|says?|decides?)\s+(no|nothing|not)\b|\bbut not\b|\bnot (covered|named|specified|stated|given|decided|mentioned)\b|\bno (request quote|evidence)\b|\bsilent\b`)
+	changesExistRe = regexp.MustCompile(`(?i)\b(remov\w*|replac\w*|fold(ed|s)? (in|into)|no longer|nothing remains|delet\w*|drop(s|ped)?|deprecat\w*|retir\w*)\b`)
+)
+
+var codeSpanRe = regexp.MustCompile("`[^`]*`")
+
+func silentOnDetail(statement, why string) bool {
+	return !evidenceRe.MatchString(statement) && silentWhyRe.MatchString(why) && !changesExistRe.MatchString(codeSpanRe.ReplaceAllString(statement+" "+why, " "))
 }
 
 // requestSpeaks is whether one of the quotes is a passage of the request.
