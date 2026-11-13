@@ -95,8 +95,8 @@ func TestConfigModels(t *testing.T) {
 	}
 	for role, want := range map[string][2]string{"shape": {"gpt-6.1-sol", "high"}, "build": {"gpt-6.1-sol", "medium"}, "review": {"gpt-6.1-terra", "medium"}} {
 		got := cfg.Models[role]
-		if got.Model != want[0] || got.Effort != want[1] || got.Provider != "" || got.Executor != "" || got.External() {
-			t.Errorf("project.Config.Models[%s] = %+v, want the default model %s with effort %s on no provider and the native executor", role, got, want[0], want[1])
+		if got.Model != want[0] || got.Effort != want[1] || got.Provider != project.DefaultProvider || got.Executor != "" || got.External() {
+			t.Errorf("project.Config.Models[%s] = %+v, want the default model %s with effort %s on the default provider %s and the native executor", role, got, want[0], want[1], project.DefaultProvider)
 		}
 	}
 	if len(cfg.Setup)+len(cfg.Fix)+len(cfg.Checks)+len(cfg.Protect) != 0 || cfg.Acceptance != nil || cfg.AcceptanceConfigured() {

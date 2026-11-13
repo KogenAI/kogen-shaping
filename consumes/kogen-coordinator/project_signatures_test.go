@@ -8,6 +8,7 @@ import (
 
 func TestProjectSignatures(t *testing.T) {
 	const _ string = project.ConfigPath
+	const _ string = project.DefaultProvider
 	var (
 		_ func(string, string) string                                                                         = project.ApprovalPath
 		_ func(string) string                                                                                 = project.IntentDir
