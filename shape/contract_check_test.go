@@ -507,6 +507,12 @@ func TestContractCheckUnevidencedAndRefutedFindingsNeverRefuse(t *testing.T) {
 		}
 		// Only the two evidenced findings are sent to the confirmation, numbered from 1.
 		shpContains(t, "confirmation", ccInput(f.Prov.contractRequests()[1]), "\n\n# Findings to verify\n\n1. scenario: Even numbers")
+		if n := len(f.Prov.contractRequests()); n < 2 {
+			t.Fatalf("%d contract requests, want a review and a confirmation; the candidate was not refused (exit %d, err %v)", n, exit, err)
+		}
+		if n := len(f.Prov.requests()); n < 2 {
+			t.Fatalf("%d shaper requests, want the refusal list as feedback to a second one (exit %d, err %v)", n, exit, err)
+		}
 		shpContains(t, "confirmation", ccInput(f.Prov.contractRequests()[1]), "\n2. scenario: Even numbers")
 		if strings.Contains(ccInput(f.Prov.contractRequests()[1]), "3. scenario") {
 			t.Fatal("an unevidenced finding was sent to confirmation")

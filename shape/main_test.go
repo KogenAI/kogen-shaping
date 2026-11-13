@@ -90,6 +90,9 @@ func resolveTestTools() error {
 			}
 		}
 	}
+	if os.Getenv("KOGEN_CUCUMBER") == "" {
+		return fmt.Errorf("shape tests need Cucumber: KOGEN_CUCUMBER is unset and testdata/tools/cucumber/node_modules is missing; run npm ci --prefix testdata/tools/cucumber")
+	}
 	if os.Getenv("KOGEN_QUINT") == "" {
 		if path, err := filepath.Abs(filepath.Join("..", "testdata", "tools", "quint", "node_modules", "@informalsystems", "quint", "dist", "src", "cli.js")); err == nil {
 			if st, err := os.Stat(path); err == nil && st.Mode().IsRegular() {
