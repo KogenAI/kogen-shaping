@@ -21,8 +21,8 @@ func fixture(t *testing.T, names ...string) (project string, requests []string) 
 	dir := t.TempDir()
 	project = filepath.Join(dir, "project")
 	os.MkdirAll(project, 0o755)
-	for _, args := range [][]string{{"init", "-q"}, {"-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "pin"}} {
-		if out, err := exec.Command("git", append([]string{"-C", project}, args...)...).CombinedOutput(); err != nil {
+	for _, args := range [][]string{{"init", "-q"}, {"commit", "-q", "--allow-empty", "-m", "pin"}} {
+		if out, err := fixtureGit(project, args...).CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v %s", args, err, out)
 		}
 	}
@@ -142,7 +142,7 @@ func TestBudgetCutsARunningShaping(t *testing.T) {
 func TestRunsStartFromThePinnedCommit(t *testing.T) {
 	project, reqs := fixture(t, "pinned-one.md")
 	pin := strings.TrimSpace(gitOut(t, project, "rev-parse", "HEAD"))
-	gitOut(t, project, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "later")
+	gitOut(t, project, "commit", "-q", "--allow-empty", "-m", "later")
 	var head string
 	shaper := func(ctx context.Context, s *sys.Session, in shape.ShapeInput) (int, error) {
 		head = strings.TrimSpace(gitOut(t, in.Project, "rev-parse", "HEAD"))
@@ -161,11 +161,21 @@ func TestRunsStartFromThePinnedCommit(t *testing.T) {
 
 func gitOut(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+	out, err := fixtureGit(dir, args...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v: %v %s", args, err, out)
 	}
 	return string(out)
+}
+
+// fixtureGit runs git in a fixture repository isolated from the user's and the system's git
+// configuration, so a fixture commit uses the fixture identity below and none of the
+// developer's hooks or settings.
+func fixtureGit(dir string, args ...string) *exec.Cmd {
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1",
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com")
+	return cmd
 }
 
 func TestSlugOf(t *testing.T) {
