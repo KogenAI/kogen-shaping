@@ -6,3 +6,5 @@ github.com/KogenAI/kogen-loop v0.0.0-20261111104243-16bc90355dfb h1:oICLvgo6hCyV
 github.com/KogenAI/kogen-loop v0.0.0-20261111104243-16bc90355dfb/go.mod h1:yPduvTAVdxH5egqW82Uis/ZhemRb5gNSdzTll/f6bG0=
 github.com/KogenAI/kogen-verification v0.0.0-20261112210413-c346a0910417 h1:S1XaIbl26ksiuEyL6FqQ9xm6YR2M+1MJJ4dNPGoWlM8=
 github.com/KogenAI/kogen-verification v0.0.0-20261112210413-c346a0910417/go.mod h1:b3TIpodtSQnpvmfgd8lXd5PtiNNn4Y/fQM+IsTj8tQA=
+golang.org/x/text v0.43.0 h1:1QivrlhwAsnMOcqgOdl9my7s9OyZl8O5/UGUTJVXoWc=
+golang.org/x/text v0.43.0/go.mod h1:hbSIYA/amXcRXTFSZqh8tWHEoqRvvbKPJ2uz/KU+a+s=
