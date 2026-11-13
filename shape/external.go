@@ -28,6 +28,7 @@ type External func(role project.Role) (executor.Executor, error)
 // claims no Kogen capability for the harness's own tools.
 const externalNote = "# This session\n\n" +
 	"You are a read-only external session. You may inspect the checkout with your own tools, but you must not change any file, the Git index or HEAD, including the files you propose: they are submitted in your final structured result and Kogen checks and publishes them.\n" +
+	"Every file of the checkout is read-only to you, including a draft that Kogen retained from an earlier attempt: its controls.json, acceptance.feature, intent.md and steps may be read but never edited, rewritten or generated into place with a shell command, a script (node, python, sed, redirects) or an edit tool. Propose controls.json, like every other file, only as an entry of the `files` of `submit` with its whole content; build its content in a scratch directory outside the checkout when you need a script, and put it in the proposal.\n" +
 	"The native tools named in the rules above (probe, view_image, documentation records, shape_batch, propose_files) are not available here. Kogen's own scratch checking, readiness, Feasibility checks and documentation records are not produced by your research; what you fetch or run with your tools is observed by the harness only, not retained by Kogen as a documentation event.\n" +
 	"A command this external session ran is no evidence of a submitted decision; cite the files read and put what the command showed in the decision's uncertainty.\n" +
 	"The final structured result is the arguments of the submission described above (for Shape `submit`; for Refine `submit_refinement`). Kogen returns its actual feedback to this same session.\n" +
@@ -452,6 +453,7 @@ func (a identity) changedTo(b identity) error {
 	for _, p := range changed[:min(len(changed), 20)] {
 		e.Lines = append(e.Lines, "changed: "+p)
 	}
+	e.Lines = append(e.Lines, "instead: leave every checkout file as it was, a retained draft included, and propose the file (controls.json too) as an entry of the files of submit with its whole content; do not write it with a shell command, a script or an edit tool")
 	return e
 }
 

@@ -399,6 +399,40 @@ func TestClaudeLineupShapeSubmission(t *testing.T) {
 	})
 }
 
+// TestClaudeLineupShapeRetainedControlsEditRefusal: a retained draft file in the checkout is as
+// read-only as any other; a session that rewrites it is refused, and both the refusal and the
+// session's instructions say to propose controls.json through submit instead.
+func TestClaudeLineupShapeRetainedControlsEditRefusal(t *testing.T) {
+	parallel(t)
+	for _, want := range []string{"controls.json", "retained from an earlier attempt", "`files` of `submit`", "never edited"} {
+		if !strings.Contains(externalNote, want) {
+			t.Fatalf("the external instructions do not say %q", want)
+		}
+	}
+	f := newShpFx(t)
+	f.useExternalShape()
+	controls := ".kogen/intents/is-even/controls.json"
+	for _, raw := range shpFiles()["files"].([]any) {
+		file := raw.(map[string]any)
+		f.write(file["path"].(string), file["content"].(string))
+	}
+	f.write(controls, `{"deferred":"retained draft"}`)
+	f.write(".kogen/local/shaping/is-even/not-ready.json", `{"gate":"contract_review","problems":["repair the draft"]}`)
+	x := &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){
+		func(n int, root string) (executor.RoundResult, error) {
+			f.write(controls, `{"deferred":"rewritten by the session"}`)
+			return result(shpFiles())(n, root)
+		}}}
+	_, err := f.shapeWith(x, "Add calc.is_even(n).")
+	se, ok := sys.AsError(err)
+	if !ok || se.Class != "candidate" || se.Reason != "baseline_changed" {
+		t.Fatalf("error %v", err)
+	}
+	for _, want := range []string{"changed: " + controls, "controls.json too", "files of submit"} {
+		shpContains(t, "stop", se.Render(), want)
+	}
+}
+
 // TestClaudeLineupShapeCheckoutGuard: Kogen compares the checkout (tracked, tracked-ignored and
 // nonignored files, modes), the raw index and HEAD around every external round; a session change
 // stops before publication with the existing custody reasons and is left as it is.
