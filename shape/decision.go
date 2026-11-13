@@ -344,6 +344,18 @@ func decisionMark(intent string, it *decisionItem, locked map[string]bool) (assu
 			found = line
 		}
 	}
+	if found == "" {
+		// The checker may name one sentence of a longer line. It identifies the line only
+		// when exactly one Decisions line holds it.
+		for _, line := range decisionLines(intent) {
+			if containsNormalized(line, it.statement) {
+				if found != "" && found != line {
+					return assumptionMark{}, false
+				}
+				found = line
+			}
+		}
+	}
 	if found == "" || locked[decisionLineKey(found)] {
 		return assumptionMark{}, false
 	}
