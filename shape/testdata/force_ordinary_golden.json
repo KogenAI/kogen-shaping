@@ -43,16 +43,16 @@
   ],
   "shape/chat": [
     {
-      "bytes": 56581,
-      "body_sha256": "03d87d5cc795613e585146a65fbdcfe8575593095eac3e80e9f0bbe096796953",
+      "bytes": 57006,
+      "body_sha256": "dad30b9e777afdaa320f1ba7c82aa6ccad9eb89558dc305fbeec49f3f0e4150f",
       "headers": {
         "Accept": "application/json",
         "Content-Type": "application/json"
       }
     },
     {
-      "bytes": 60636,
-      "body_sha256": "e9823a1233704f668db999600784a371717bd83d20b61bbdb5d07aba639b9f22",
+      "bytes": 61061,
+      "body_sha256": "699305a6760bd048388599baf557410088ff616eca9283fff5fab4e653fcca1e",
       "headers": {
         "Accept": "application/json",
         "Content-Type": "application/json"
@@ -61,8 +61,8 @@
   ],
   "shape/responses": [
     {
-      "bytes": 56534,
-      "body_sha256": "bfea0d1b6080c93a17601c106abfe9568f23de7151e354b63c849b31f271c2f5",
+      "bytes": 56959,
+      "body_sha256": "0cb4eb0f2885587caf2001c031496070126fed57df2b392710be0de3c89d1f5e",
       "headers": {
         "Accept": "text/event-stream",
         "Authorization": "Bearer access",
@@ -72,8 +72,8 @@
       }
     },
     {
-      "bytes": 60552,
-      "body_sha256": "4b6b9da2b945dcf2b6db404fdc17deb67fb75c65682b360375b1d72a031287aa",
+      "bytes": 60977,
+      "body_sha256": "1476ed6216ead59a7220e512c06a6dad0d0a06d37efa9d1311becae02f24b275",
       "headers": {
         "Accept": "text/event-stream",
         "Authorization": "Bearer access",

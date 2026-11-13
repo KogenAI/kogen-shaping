@@ -141,7 +141,7 @@ func TestRenderedDecisionAndControlsGuidance(t *testing.T) {
 
 func TestShaperPolicyConstantsForFixedValues(t *testing.T) {
 	text := ShaperInstructions()
-	for _, want := range []string{"only when the request or the current code shows an actual variability need", "a fixed value is a constant", "Remove an obsolete form completely"} {
+	for _, want := range []string{"only when the request or the current code demonstrates a variability need that must stay supported", "a fixed value is a constant", "no setting, flag or environment variable", "Remove an obsolete form completely"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("policy missing %q", want)
 		}
