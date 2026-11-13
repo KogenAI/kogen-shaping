@@ -377,6 +377,7 @@ func (sh *shaping) literalCheck(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	items = withRequestLiterals(sh.request, items)
 	home := sh.s.Getenv("HOME")
 	if home == "" {
 		home, _ = os.UserHomeDir()
