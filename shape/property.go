@@ -66,7 +66,7 @@ func propertySchema() map[string]any {
 			"issues":     map[string]any{"type": "array", "items": issue},
 			"kept_steps": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}},
 		},
-		"required":             []any{"property", "request", "kind", "observable", "scenarios", "decision", "issues"},
+		"required":             []any{"property", "request", "kind", "observable", "scenarios", "decision", "issues", "kept_steps"},
 		"additionalProperties": false,
 	}
 }

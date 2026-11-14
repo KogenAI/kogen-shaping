@@ -1,0 +1,1 @@
+{"deferred":"The correct implementation is a one-line schema change plus a Go test whose name the Build chooses; the controls would have to restate a test file the Build writes, so the Build writes the implementation and the scenarios' scratch mutations act as the wrong implementations."}

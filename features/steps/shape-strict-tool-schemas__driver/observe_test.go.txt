@@ -1,0 +1,115 @@
+package shape
+
+import (
+	"fmt"
+	"sort"
+	"testing"
+)
+
+func obsWalk(path string, schema any) []string {
+	m, ok := schema.(map[string]any)
+	if !ok {
+		return nil
+	}
+	var out []string
+	if props, ok := m["properties"].(map[string]any); ok {
+		required := map[string]bool{}
+		if list, ok := m["required"].([]any); ok {
+			for _, r := range list {
+				if s, ok := r.(string); ok {
+					required[s] = true
+				}
+			}
+		}
+		names := make([]string, 0, len(props))
+		for n := range props {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		for _, n := range names {
+			if !required[n] {
+				out = append(out, fmt.Sprintf("%s: declared property %q is not in required", path, n))
+			}
+			out = append(out, obsWalk(path+"."+n, props[n])...)
+		}
+		if m["additionalProperties"] != false {
+			out = append(out, path+": additionalProperties is not false")
+		}
+	}
+	if items, ok := m["items"]; ok {
+		out = append(out, obsWalk(path+"[]", items)...)
+	}
+	for _, key := range []string{"anyOf", "oneOf", "allOf"} {
+		if list, ok := m[key].([]any); ok {
+			for i, s := range list {
+				out = append(out, obsWalk(fmt.Sprintf("%s.%s[%d]", path, key, i), s)...)
+			}
+		}
+	}
+	return out
+}
+
+func TestShapeStrictToolSchemasObserver(t *testing.T) {
+	defs := map[string]map[string]any{
+		"literal":  literalToolDef(),
+		"question": questionToolDef(),
+		"decision": decisionToolDef(),
+		"review":   contractReviewToolDef(),
+		"confirm":  contractConfirmationToolDef(),
+		"example":  {"strict": true, "parameters": exampleSchema()},
+	}
+	names := make([]string, 0, len(defs))
+	for n := range defs {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		if defs[n]["strict"] != true {
+			t.Errorf("%s: tool is not strict", n)
+		}
+		for _, p := range obsWalk(n, defs[n]["parameters"]) {
+			t.Error(p)
+		}
+	}
+}
+
+func obsReport(extra map[string]any) []any {
+	m := map[string]any{"property": "p", "request": "r", "kind": "kept", "observable": true, "scenarios": []any{"S"}, "decision": "", "issues": []any{}}
+	for k, v := range extra {
+		m[k] = v
+	}
+	return []any{m}
+}
+
+func TestShapeKeptStepsObserver(t *testing.T) {
+	schema := propertySchema()
+	props, _ := schema["properties"].(map[string]any)
+	if _, ok := props["kept_steps"]; !ok {
+		t.Fatalf("kept_steps is no longer declared")
+	}
+	required := map[string]bool{}
+	for _, r := range schema["required"].([]any) {
+		required[r.(string)] = true
+	}
+	if !required["kept_steps"] {
+		t.Errorf("kept_steps is not in the property report's required list")
+	}
+	for _, c := range []struct {
+		name  string
+		extra map[string]any
+		want  []int
+	}{
+		{"omitted", nil, nil},
+		{"empty", map[string]any{"kept_steps": []any{}}, nil},
+		{"lines", map[string]any{"kept_steps": []any{float64(3), float64(5)}}, []int{3, 5}},
+	} {
+		got, problem := parsePropertyReports(obsReport(c.extra))
+		if problem != "" || len(got) != 1 {
+			t.Errorf("%s: report refused: %q", c.name, problem)
+			continue
+		}
+		if fmt.Sprint(got[0].keptSteps) != fmt.Sprint(c.want) {
+			t.Errorf("%s: keptSteps = %v, want %v", c.name, got[0].keptSteps, c.want)
+		}
+	}
+}
