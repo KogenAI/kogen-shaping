@@ -1501,12 +1501,16 @@ type shapeRefusal struct {
 }
 
 // earliestLines are the lines that name the earliest unresolved refusal, nil unless there are at
-// least two unresolved refusals and the earliest differs from the last in its gate or problems.
+// least two unresolved refusals and the earliest differs from the counted last one in its gate or problems.
 func (sh *shaping) earliestLines() []string {
 	if len(sh.unresolved) < 2 {
 		return nil
 	}
+	// The last refusal is the one that counted: the first of the latest submission's refusals.
 	first, last := sh.unresolved[0], sh.unresolved[len(sh.unresolved)-1]
+	for i := len(sh.unresolved) - 1; i > 0 && sh.unresolved[i-1].attempt == last.attempt; i-- {
+		last = sh.unresolved[i-1]
+	}
 	if first.gate == last.gate && slices.Equal(first.problems, last.problems) {
 		return nil
 	}
@@ -1904,38 +1908,27 @@ func (sh *shaping) checkSubmission(ctx context.Context, files []string) (string,
 		return "", outcome{}, err
 	}
 	sh.progress("kogen: checking readiness")
+	if len(cheap.held) > 0 {
+		// Readiness does not depend on the cheap gates: a refusal of it is reported with theirs.
+		// Any other result is not acknowledged and leaves the cheap refusals alone. A package the
+		// contract review already refused was ready, so it is not checked again.
+		if !slices.ContainsFunc(cheap.held, func(h heldRefusal) bool { return h.gate == contractGate }) {
+			ready := sh.ready
+			_, _, err := sh.certify(ctx, files)
+			sh.ready, sh.lastFresh, sh.lastObservations = ready, false, ""
+			if gate, problems, text, ok := readinessRefusal(err); ok {
+				cheap.held = append(cheap.held, heldRefusal{gate: gate, problems: cutProblems(problems), text: text})
+			}
+		}
+		text, out, _ := sh.settleHeld(cheap.held)
+		return text, out, nil
+	}
 	text, result, err := sh.certify(ctx, files)
-	var unwritten *unwrittenTestsError
-	if errors.As(err, &unwritten) {
-		sh.refused("unwritten_tests", unwritten.items)
-		return unwritten.text(), outcome{kind: outInvalid, problems: unwritten.items}, nil
-	}
-	var observer *runnerObserverError
-	if errors.As(err, &observer) {
-		sh.refused("runner_observer", observer.items)
-		return observer.text(), outcome{kind: outInvalid, problems: observer.items}, nil
-	}
-	var preparation *preparationError
-	if errors.As(err, &preparation) {
-		sh.refused("preparation", preparation.items)
-		return preparation.text(), outcome{kind: outInvalid, problems: preparation.items}, nil
-	}
-	var unpassable *unpassableError
-	if errors.As(err, &unpassable) {
-		sh.refused("unpassable_step", unpassable.items)
-		return unpassable.text(), outcome{kind: outInvalid, problems: unpassable.items}, nil
+	if gate, problems, refusal, ok := readinessRefusal(err); ok {
+		sh.refused(gate, problems)
+		return refusal, outcome{kind: outInvalid, problems: problems}, nil
 	}
 	if err != nil {
-		e, ok := sys.AsError(err)
-		if ok && (e.Reason == "not_ready" || e.Reason == "parse" || e.Reason == "lint") {
-			// Not-ready problems as they are; a lint or parse error with its own first line.
-			problems := e.Lines
-			if e.Reason != "not_ready" {
-				problems = append([]string{e.Error()}, e.Lines...)
-			}
-			sh.refused("readiness", problems)
-			return "not ready:\n" + strings.Join(problems, "\n"), outcome{kind: outInvalid, problems: problems}, nil
-		}
 		return "", outcome{}, err
 	}
 	if sh.lastFresh && !sh.contractChecked[hash] {
@@ -1974,20 +1967,51 @@ func (sh *shaping) checkSubmission(ctx context.Context, files []string) (string,
 	return text, result, nil
 }
 
-// cheapResult is what the independent gates that run on every submission leave: the combined
-// refusal or reused acceptance (done), or the evidence the readiness review is keyed by.
+// readinessRefusal is the gate, problem lines and feedback text of the refusal a readiness error
+// stands for; ok is false for no error and for a failure that is not a refusal.
+func readinessRefusal(err error) (gate string, problems []string, text string, ok bool) {
+	var unwritten *unwrittenTestsError
+	if errors.As(err, &unwritten) {
+		return "unwritten_tests", unwritten.items, unwritten.text(), true
+	}
+	var observer *runnerObserverError
+	if errors.As(err, &observer) {
+		return "runner_observer", observer.items, observer.text(), true
+	}
+	var preparation *preparationError
+	if errors.As(err, &preparation) {
+		return "preparation", preparation.items, preparation.text(), true
+	}
+	var unpassable *unpassableError
+	if errors.As(err, &unpassable) {
+		return "unpassable_step", unpassable.items, unpassable.text(), true
+	}
+	if e, isSys := sys.AsError(err); isSys && (e.Reason == "not_ready" || e.Reason == "parse" || e.Reason == "lint") {
+		// Not-ready problems as they are; a lint or parse error with its own first line.
+		problems = e.Lines
+		if e.Reason != "not_ready" {
+			problems = append([]string{e.Error()}, e.Lines...)
+		}
+		return "readiness", problems, "not ready:\n" + strings.Join(problems, "\n"), true
+	}
+	return "", nil, "", false
+}
+
+// cheapResult is what the independent gates that run on every submission leave: the held
+// refusals, the reused acceptance (done), or the evidence the readiness review is keyed by.
 type cheapResult struct {
 	text         string
 	out          outcome
 	done         bool
+	held         []heldRefusal // the cheap gates' refusals, not yet recorded
 	evidenceHash string
 }
 
 // cheapGates runs every gate that needs no other to pass first: the contract refusal an
 // identical package already got, the review scope, the carried decisions, the decision evidence,
 // the step self-check, the static checks and the decision, literal and example checks. All of them
-// run on every submission and their refusals come back as one. Readiness and the contract review
-// are expensive and follow only when none refused.
+// run on every submission and their refusals come back as one, with the readiness refusal when it
+// refuses too. The contract review is expensive and follows only when none refused.
 func (sh *shaping) cheapGates(ctx context.Context, hash string) (cheapResult, error) {
 	sh.startBatch()
 	defer func() { sh.batching, sh.batch = false, nil }()
@@ -2023,8 +2047,8 @@ func (sh *shaping) cheapGates(ctx context.Context, hash string) (cheapResult, er
 	if err := sh.postSubmitChecks(ctx, string(written), evidence, hash); err != nil {
 		return cheapResult{}, err
 	}
-	if text, out, refused := sh.settleBatch(); refused {
-		return cheapResult{text: text, out: out, done: true}, nil
+	if held := sh.collectBatch(); len(held) > 0 {
+		return cheapResult{held: held}, nil
 	}
 	if err := sh.applyAssumptionMarks(); err != nil {
 		return cheapResult{}, err

@@ -22,7 +22,7 @@ func refusalGates(f *shpFx) [][]string {
 }
 
 // A decision record refusal on a files submission is reported with the decision and literal
-// checks' refusals, today's text for each, and no readiness or contract review runs.
+// checks' refusals, today's text for each, and no contract review runs.
 func TestDecisionRecordRefusalIsReportedWithTheLaterGates(t *testing.T) {
 	parallel(t)
 	args := shpFiles()
@@ -52,10 +52,60 @@ func TestDecisionRecordRefusalIsReportedWithTheLaterGates(t *testing.T) {
 		}
 	}
 	names := strings.Join(eventNames(f.events()), ",")
-	for _, name := range []string{"contract_review", "unpassable_check"} {
-		if strings.Contains(names, name) {
-			t.Fatalf("%s ran on a refused submission", name)
+	if strings.Contains(names, "contract_review") {
+		t.Fatal("contract_review ran on a refused submission")
+	}
+}
+
+// A draft that fails a cheap gate and the readiness check gets both refusals in one round, each
+// with its own text, the readiness one last; the submission counts once and no contract review runs.
+func TestCheapGateAndReadinessRefusalsAreReportedTogether(t *testing.T) {
+	parallel(t)
+	args := shpFiles()
+	args["decisions"] = []any{map[string]any{"decision": "A"}}
+	f := newShpFx(t, shpSubmit("c1", args), shpSubmit("c2", args), shpSubmit("c3", args))
+	decision, literal := orderDecisionRefusal(), orderLiteralRefusal()
+	f.Prov.route = func(req map[string]any) *shpStep {
+		switch {
+		case decisionRequest(req):
+			return &decision
+		case literalRequest(req):
+			return &literal
 		}
+		return nil
+	}
+	f.setReport("UNDEFINED", 1)
+	if _, err := f.shape(orderRequest); err == nil {
+		t.Fatal("a refused package was published")
+	}
+	rounds := refusalGates(f)
+	if len(rounds) == 0 || strings.Join(rounds[0], ",") != "decision_record,decision_check,literal_check,readiness" {
+		t.Fatalf("first round refused by %v", rounds)
+	}
+	refused := shpNamed(f.events(), "submission_refused")
+	shpEq(t, "first refusal counts once", refused[0]["total"], any(float64(1)))
+	var readiness []any
+	for _, e := range refused {
+		if e["gate"] == "readiness" {
+			readiness, _ = e["problems"].([]any)
+			break
+		}
+	}
+	lines := make([]string, len(readiness))
+	for i, l := range readiness {
+		lines[i], _ = l.(string)
+	}
+	fed := shpOutputs(f.Prov.requests()[1])["c1"]
+	if len(lines) == 0 || !strings.HasSuffix(fed, "not ready:\n"+strings.Join(lines, "\n")) {
+		t.Fatalf("feedback does not end with the readiness refusal %q:\n%s", lines, fed)
+	}
+	for _, want := range []string{"sourced decision 1: no evidence and no uncertainty", "Decision check: ", "Literal check: "} {
+		if !strings.Contains(fed, want) {
+			t.Fatalf("feedback lacks %q:\n%s", want, fed)
+		}
+	}
+	if strings.Contains(strings.Join(eventNames(f.events()), ","), "contract_review") {
+		t.Fatal("contract_review ran on a refused submission")
 	}
 }
 

@@ -102,20 +102,26 @@ func (sh *shaping) holdText(text string) {
 	}
 }
 
-// startBatch makes the refusals that follow wait for settleBatch.
+// startBatch makes the refusals that follow wait for collectBatch.
 func (sh *shaping) startBatch() {
 	sh.batching, sh.batch = true, nil
 }
 
-// settleBatch ends the collection and, when a gate refused, records every refusal once and
-// returns the one feedback that names each refusing gate's problems, grouped by gate.
-func (sh *shaping) settleBatch() (string, outcome, bool) {
+// collectBatch ends the collection and returns the refusals held, the decision record refusal
+// first.
+func (sh *shaping) collectBatch() []heldRefusal {
 	held := sh.batch
 	sh.batching, sh.batch = false, nil
 	if h := sh.heldRecord; h != nil {
 		sh.heldRecord = nil
 		held = append([]heldRefusal{*h}, held...)
 	}
+	return held
+}
+
+// settleHeld records the refusals of one submission once and returns the one feedback that names
+// each refusing gate's problems, grouped by gate.
+func (sh *shaping) settleHeld(held []heldRefusal) (string, outcome, bool) {
 	if len(held) == 0 {
 		return "", outcome{}, false
 	}

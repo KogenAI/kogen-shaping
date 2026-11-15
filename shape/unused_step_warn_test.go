@@ -131,14 +131,17 @@ func TestUnusedStepWarnShapeRefusals(t *testing.T) {
 	parallel(t)
 	wrapper := uswHeader + "const { spawnSync } = require('node:child_process');\n" + uswGiven +
 		"Then('is-even: it is even', function () { const r = spawnSync('sh', ['-c', 'go run ./cmd/evencheck 4']); assert.equal(r.status, 2); });\n" + uswOdd
-	cases := []struct{ name, steps, line string }{
-		{"undefined step", uswHeader + uswGiven + uswEven, "acceptance.feature line 7: undefined step: Then is-even: it is not even"},
-		{"ambiguous step", uswHeader + uswGiven + uswEven + uswEven + uswOdd, "acceptance.feature line 4: ambiguous step: Then is-even: it is even matches 2 definitions: is-even: it is even in " + uswStepFile + "; is-even: it is even in " + uswStepFile},
+	cases := []struct{ name, steps, line, also string }{
+		{"undefined step", uswHeader + uswGiven + uswEven, "acceptance.feature line 7: undefined step: Then is-even: it is not even", ""},
+		{"ambiguous step", uswHeader + uswGiven + uswEven + uswEven + uswOdd, "acceptance.feature line 4: ambiguous step: Then is-even: it is even matches 2 definitions: is-even: it is even in " + uswStepFile + "; is-even: it is even in " + uswStepFile, ""},
 		{"over-escaped RegExp", uswHeader + "Given(/^is-even: the number \\\\d+$/, function () {});\n" + uswEven + uswOdd,
-			"acceptance.feature line 3: undefined step: Given is-even: the number 4\nacceptance.feature line 6: undefined step: Given is-even: the number 3"},
-		{"file that does not load", "throw new Error('boom at load');\n" + uswHeader + uswGiven + uswEven + uswOdd, "- load " + uswStepFile + ": Error: boom at load"},
+			"acceptance.feature line 3: undefined step: Given is-even: the number 4\nacceptance.feature line 6: undefined step: Given is-even: the number 3", ""},
+		{"file that does not load", "throw new Error('boom at load');\n" + uswHeader + uswGiven + uswEven + uswOdd, "- load " + uswStepFile + ": Error: boom at load", ""},
 		{"exit-code wrapper", wrapper, "- exit_code " + uswStepFile + ": step definition is-even: it is even asserts an exit code but obtains it through go run, " +
-			"which changes exit codes; build the binary (go build) and run it instead"},
+			"which changes exit codes; build the binary (go build) and run it instead",
+			// The readiness check refuses the same defect too and is reported after the self-check.
+			"\n\nnot ready:\nexit_code " + uswStepFile + ": step definition is-even: it is even asserts an exit code but obtains it through go run, " +
+				"which changes exit codes; build the binary (go build) and run it instead"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -152,7 +155,7 @@ func TestUnusedStepWarnShapeRefusals(t *testing.T) {
 			}
 			reqs := f.Prov.requests()
 			shpEq(t, "requests", len(reqs), 2)
-			shpEq(t, "feedback", shpOutputs(reqs[1])["c1"], selfcheckHeadline+"\n"+c.line)
+			shpEq(t, "feedback", shpOutputs(reqs[1])["c1"], selfcheckHeadline+"\n"+c.line+c.also)
 			checks := uswSelfchecks(f)
 			shpEq(t, "step_selfcheck events", len(checks), 2)
 			shpEq(t, "first self-check ok", checks[0]["ok"], any(false))
