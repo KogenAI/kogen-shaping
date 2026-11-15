@@ -188,6 +188,10 @@ func decisionResolveNotes(items []decisionItem, request, intent string, locked m
 // cited HEAD bytes show its values. A shown one follows; one that is not shown is refused as
 // unsupported, never marked as an assumption nor passed on as advisory. A nil keep applies no rule.
 func decisionResolveKeep(items []decisionItem, request, intent string, locked map[string]bool, keep func(statement string) (bool, bool)) (map[string]any, []string, []assumptionMark, []string) {
+	return decisionResolveRepeated(items, request, intent, locked, keep, nil)
+}
+
+func decisionResolveRepeated(items []decisionItem, request, intent string, locked map[string]bool, keep func(string) (bool, bool), refusalNote func(string) string) (map[string]any, []string, []assumptionMark, []string) {
 	var marks []assumptionMark
 	var notes []string
 	counts := map[string]int{}
@@ -285,6 +289,10 @@ func decisionResolveKeep(items []decisionItem, request, intent string, locked ma
 			events[i].(map[string]any)["reported_verdict"] = "contradicts"
 		}
 		refused++
+		note := ""
+		if refusalNote != nil {
+			note = refusalNote(it.statement)
+		}
 		malformed = malformed || malformedAssumption(statementLine(intent, it.statement))
 		quoted := make([]string, len(it.quotes))
 		for j, q := range it.quotes {
@@ -303,6 +311,9 @@ func decisionResolveKeep(items []decisionItem, request, intent string, locked ma
 			} else {
 				problems = append(problems, fmt.Sprintf("fix for %s: Replace %q with the request's requirement %q. Align the acceptance expectations with that requirement.", where, it.intentValue, it.requestValue))
 			}
+			if note != "" {
+				problems = append(problems, note)
+			}
 			continue
 		}
 		grounded := false
@@ -320,6 +331,9 @@ func decisionResolveKeep(items []decisionItem, request, intent string, locked ma
 			problems = append(problems, fmt.Sprintf("fix for %s: the request speaks to this in the quoted passages; make the statement follow them or remove it; an assumption does not override request text.", where))
 		} else {
 			unsupported = true
+		}
+		if note != "" {
+			problems = append(problems, note)
 		}
 	}
 	event := map[string]any{"event": "decision_check", "follows": counts["follows"], "contradicts": counts["contradicts"], "unsupported": counts["unsupported"], "consequence": counts["consequence"], "items": events}
@@ -503,7 +517,20 @@ func (sh *shaping) decisionCheckWithEvidence(ctx context.Context, intent, eviden
 			locked[decisionLineKey(d.intentLine())] = true
 		}
 	}
-	event, lines, marks, notes := decisionResolveKeep(items, sh.request, intent, locked, sh.keepExisting)
+	event, lines, marks, notes := decisionResolveRepeated(items, sh.request, intent, locked, sh.keepExisting, func(statement string) string {
+		key := normalizeWhitespace(statement)
+		if first, ok := sh.refusedStatements[key]; ok {
+			if first < sh.submissions {
+				return fmt.Sprintf("note: this statement is unchanged since submission %d and was refused for the same reason; change the statement itself, not the text around it", first)
+			}
+			return ""
+		}
+		if sh.refusedStatements == nil {
+			sh.refusedStatements = map[string]int{}
+		}
+		sh.refusedStatements[key] = sh.submissions
+		return ""
+	})
 	sh.ev.Record(event)
 	sh.pendingMarks = append(sh.pendingMarks, marks...)
 	sh.notes = append(sh.notes, notes...)

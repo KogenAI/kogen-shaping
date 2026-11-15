@@ -1,0 +1,10 @@
+{
+  "None": false,
+  "Path": ".kogen/models/shape-repeated-decision-statement-says-so/model.qnt",
+  "Invariants": [
+    "NotesOnlyForEarlierRefusals"
+  ],
+  "Seed": "17",
+  "Samples": "100",
+  "Steps": "12"
+}

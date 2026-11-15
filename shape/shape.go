@@ -587,12 +587,14 @@ type shaping struct {
 	submissions  int // submissions made in this run
 	priorInvalid int // invalid submissions before the current attempt
 
-	request        string           // the request text of this shaping
-	decisionChecks int              // decision check calls made
-	pendingMarks   []assumptionMark // lines the last decision check found to be assumptions
-	notes          []string         // advisory notes for the shaper's next answer
-	decisionUsage  provider.Usage   // the native decision checks' tokens
-	decisionRounds int              // the external decision check sessions' rounds
+	request string // the request text of this shaping
+	// refusedStatements retains the earliest actual refusal in this active run.
+	refusedStatements map[string]int
+	decisionChecks    int              // decision check calls made
+	pendingMarks      []assumptionMark // lines the last decision check found to be assumptions
+	notes             []string         // advisory notes for the shaper's next answer
+	decisionUsage     provider.Usage   // the native decision checks' tokens
+	decisionRounds    int              // the external decision check sessions' rounds
 
 	rounds        []map[string]any // the questions and answers of the shaping state, in round order
 	literalChecks int              // literal check calls made
