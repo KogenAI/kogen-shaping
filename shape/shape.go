@@ -678,6 +678,13 @@ func (sh *shaping) progress(line string) {
 	sh.s.Progress(fmt.Sprintf("%s (%d s)", line, sh.elapsed()))
 }
 
+// bareProgress prints a line as it is, without the elapsed-time suffix of progress.
+func (sh *shaping) bareProgress(line string) {
+	sh.progressMu.Lock()
+	defer sh.progressMu.Unlock()
+	sh.s.Progress(line)
+}
+
 func (sh *shaping) overlay() map[string][]byte { return overlayOf(sh.proposed) }
 
 func overlayOf(proposed map[string]string) map[string][]byte {

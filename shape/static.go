@@ -220,7 +220,10 @@ type staticGateRunner struct {
 	root     string
 	slug     string
 	progress func(string)
-	redact   *verify.Redactor
+	// judged receives the lines of failed checks; Shape sets it to print them without its elapsed-time suffix.
+	judged func(string)
+	redact *verify.Redactor
+	base   *staticBaseMemo
 }
 
 func newStaticGateRunner(s *sys.Session, repo *git.Repo, rd *verify.Readiness, cfg *project.Config, root, slug string, progress func(string)) *staticGateRunner {
@@ -228,7 +231,7 @@ func newStaticGateRunner(s *sys.Session, repo *git.Repo, rd *verify.Readiness, c
 	if home == "" {
 		home, _ = os.UserHomeDir()
 	}
-	return &staticGateRunner{s: s, repo: repo, rd: rd, cfg: cfg, root: root, slug: slug, progress: progress, redact: verify.NewRedactor(s.Env, home)}
+	return &staticGateRunner{s: s, repo: repo, rd: rd, cfg: cfg, root: root, slug: slug, progress: progress, judged: progress, redact: verify.NewRedactor(s.Env, home), base: loadStaticBase(root, slug)}
 }
 
 // bounded is command output as feedback and evidence carry it: redacted, then cut.
@@ -269,6 +272,88 @@ func (g *staticGateRunner) shapedFiles() ([]string, error) {
 	}
 	sort.Strings(files)
 	return slices.Compact(files), nil
+}
+
+// baseTreeID identifies what a base run sees: the files of the candidate tree without the shaped
+// files, by mode, object and path. It is a pure function of that content.
+func (g *staticGateRunner) baseTreeID(tree string, shapedPaths []string) (string, error) {
+	entries, err := g.repo.TreeEntries(tree)
+	if err != nil {
+		return "", err
+	}
+	h := sha256.New()
+	for _, e := range entries {
+		if slices.Contains(shapedPaths, e.Path) {
+			continue
+		}
+		fmt.Fprintf(h, "%s %s %s %s\x00", e.Mode, e.Type, e.Object, e.Path)
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// staticBase is the raw outcome of one check's base run (without the shaped files).
+type staticBase struct {
+	Name   string `json:"name"`
+	Run    string `json:"run"`
+	Tree   string `json:"tree"`
+	Status int    `json:"status"`
+	Output string `json:"output"`
+}
+
+// staticBaseMemo holds base-run results keyed by check name, check command and base tree. It is
+// kept in .kogen/local/static-base/<slug>.json so later Shape rounds and Approve reuse it; an
+// entry for another name, command or tree is never matched. A nil memo remembers nothing.
+type staticBaseMemo struct {
+	path    string
+	entries []staticBase
+}
+
+func staticBasePath(root, slug string) string {
+	return filepath.Join(root, ".kogen/local/static-base", slug+".json")
+}
+
+func loadStaticBase(root, slug string) *staticBaseMemo {
+	m := &staticBaseMemo{path: staticBasePath(root, slug)}
+	if b, err := os.ReadFile(m.path); err == nil {
+		var rec struct {
+			Version int          `json:"version"`
+			Entries []staticBase `json:"entries"`
+		}
+		if json.Unmarshal(b, &rec) == nil && rec.Version == 1 {
+			m.entries = rec.Entries
+		}
+	}
+	return m
+}
+
+func (m *staticBaseMemo) lookup(name, run, tree string) (sys.Result, bool) {
+	if m == nil {
+		return sys.Result{}, false
+	}
+	for _, e := range m.entries {
+		if e.Name == name && e.Run == run && e.Tree == tree {
+			return sys.Result{Status: e.Status, Output: e.Output}, true
+		}
+	}
+	return sys.Result{}, false
+}
+
+// store remembers a finished base run (a timeout is not a function of the tree and is not kept).
+// The retained output is redacted; a failure to write only costs the reuse.
+func (m *staticBaseMemo) store(name, run, tree string, res sys.Result, redact *verify.Redactor) {
+	if m == nil || res.TimedOut {
+		return
+	}
+	m.entries = slices.DeleteFunc(m.entries, func(e staticBase) bool { return e.Name == name && e.Run == run })
+	m.entries = append(m.entries, staticBase{name, run, tree, res.Status, redact.Redact(res.Output)})
+	b, err := json.Marshal(struct {
+		Version int          `json:"version"`
+		Entries []staticBase `json:"entries"`
+	}{1, m.entries})
+	if err != nil || os.MkdirAll(filepath.Dir(m.path), 0o755) != nil {
+		return
+	}
+	_ = os.WriteFile(m.path, append(b, '\n'), 0o666)
 }
 
 // shapedCopy is the shaped files as the copy holds them.
@@ -396,6 +481,7 @@ func (g *staticGateRunner) run(ctx context.Context, head, tree, sha string) (*st
 		}
 	}
 	opts := sys.Options{Timeout: verify.StepTimeout, KillGroupOnExit: true}
+	baseTree := ""
 
 	for i := range run.Checks {
 		c := &run.Checks[i]
@@ -425,12 +511,24 @@ func (g *staticGateRunner) run(ctx context.Context, head, tree, sha string) (*st
 			return nil, err
 		}
 		c.Trace = g.bounded(traced.Output)
-		var baseline sys.Result
-		if err := without(dir, shaped, func() (err error) {
-			baseline, err = g.s.Run(c.Run, dir, opts)
-			return err
-		}); err != nil {
-			return nil, err
+		if baseTree == "" {
+			if baseTree, err = g.baseTreeID(tree, shapedPaths); err != nil {
+				return nil, err
+			}
+		}
+		baseline, baseReused := g.base.lookup(c.Name, c.Run, baseTree)
+		if !baseReused {
+			if err := without(dir, shaped, func() (err error) {
+				baseline, err = g.s.Run(c.Run, dir, opts)
+				return err
+			}); err != nil {
+				return nil, err
+			}
+			g.base.store(c.Name, c.Run, baseTree, baseline, g.redact)
+		}
+		reusedMark := ""
+		if baseReused {
+			reusedMark = " (base result reused)"
 		}
 		_, baselineUnavailable := staticUnavailableReason(baseline)
 		named := namedPaths(shapedPaths, res.Output)
@@ -447,12 +545,12 @@ func (g *staticGateRunner) run(ctx context.Context, head, tree, sha string) (*st
 			}
 			c.Status = staticAttributable
 			c.Paths = staticEntries(named, res.Output, traced.Output)
-			g.progress(fmt.Sprintf("kogen: static check %s failed (exit %d) because of the shaped files: %s", c.Name, res.Status, listOr(c.Paths, "(not named by the check)")))
+			g.judged(fmt.Sprintf("kogen: static check %s failed (exit %d) because of the shaped files%s: %s", c.Name, res.Status, reusedMark, listOr(c.Paths, "(not named by the check)")))
 			continue
 		}
 		c.Status = staticPreexisting
 		c.Paths = staticEntries(namedPaths(others, res.Output, traced.Output), res.Output, traced.Output)
-		g.progress(fmt.Sprintf("kogen: static check %s failed (exit %d) without the shaped files too: pre-existing failure in %s; the shaped files are not established by this check", c.Name, res.Status, listOr(c.Paths, "(no path named)")))
+		g.judged(fmt.Sprintf("kogen: static check %s failed (exit %d) without the shaped files too%s: pre-existing failure in %s; the shaped files are not established by this check", c.Name, res.Status, reusedMark, listOr(c.Paths, "(no path named)")))
 	}
 
 	run.Outcome = staticChecked
@@ -513,6 +611,7 @@ func (sh *shaping) staticChecks(ctx context.Context, hash string) (string, outco
 		sh.progress(fmt.Sprintf("kogen: static checks: the candidate is unchanged since submission %d; their result stands", run.attempt))
 	} else {
 		g := newStaticGateRunner(sh.s, sh.repo, sh.rd, sh.cfg, sh.root, sh.slug, sh.progress)
+		g.judged = sh.bareProgress
 		if run, err = g.run(ctx, head, tree, hash); err != nil {
 			return "", outcome{}, err
 		}

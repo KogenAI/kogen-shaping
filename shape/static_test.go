@@ -276,3 +276,49 @@ func TestStaticChecksNoneApply(t *testing.T) {
 		t.Fatalf("run %+v, err %v, progress %q", run, err, progress)
 	}
 }
+
+// TestStaticBaseRunReused: the base run of a failing check is computed once per check name,
+// command and base tree, and a later gate runner (the next round, or Approve) reuses it.
+func TestStaticBaseRunReused(t *testing.T) {
+	parallel(t)
+	f := staticFx(t, `    - name: stale
+      run: '! grep -q BAD app.txt'
+`)
+	f.write("app.txt", "BAD\n")
+	cfg, err := project.LoadConfig(f.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, _, _ := f.session()
+	head := f.Repo.Head()
+	tree, err := f.Repo.Tree(head, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	round := func(cfg *project.Config) (*staticRun, string) {
+		var progress []string
+		g := newStaticGateRunner(s, f.Repo, &verify.Readiness{Root: f.Root, Repo: f.Repo, Config: cfg}, cfg, f.Root, approveSlug, func(l string) { progress = append(progress, l) })
+		run, err := g.run(context.Background(), head, tree, "package")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return run, strings.Join(progress, "\n")
+	}
+	const mark = "without the shaped files too (base result reused): pre-existing failure"
+	first, out := round(cfg)
+	if first.Checks[0].Status != staticPreexisting || strings.Contains(out, "reused") {
+		t.Fatalf("round 1: %s\n%s", first.Checks[0].Status, out)
+	}
+	second, out := round(cfg)
+	if second.Checks[0].Status != staticPreexisting || !strings.Contains(out, mark) {
+		t.Fatalf("round 2: %s\n%s", second.Checks[0].Status, out)
+	}
+	renamed := &project.Config{Checks: []project.Check{{Name: "renamed", Run: cfg.Checks[0].Run}}}
+	if _, out := round(renamed); strings.Contains(out, "reused") {
+		t.Errorf("a changed name reused the base result:\n%s", out)
+	}
+	changed := &project.Config{Checks: []project.Check{{Name: "stale", Run: cfg.Checks[0].Run + " && true"}}}
+	if _, out := round(changed); strings.Contains(out, "reused") {
+		t.Errorf("a changed command reused the base result:\n%s", out)
+	}
+}

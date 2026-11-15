@@ -1,0 +1,1 @@
+{"deferred":"The correct implementation threads a memo through the per-round gate runner, the shaping state and the Approve path (shape/static.go, shape/shape.go, shape/approve.go) with its own retention; it cannot be written and validated as a bounded overlay within the shaping budget, so the Build writes it."}
