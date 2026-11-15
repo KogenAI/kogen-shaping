@@ -383,7 +383,7 @@ func TestShapeQuestionCheckCitedEvidence(t *testing.T) {
 	})
 	t.Run("native reads and probes are shown, the rest with their reason", func(t *testing.T) {
 		parallel(t)
-		question := "Needed? (evidence: lib/weather.js; ran `" + probe + "`; lib/other.js; lib/weather.js; nope.js; lib/; ran `echo hi`)"
+		question := "Needed? (evidence: lib/weather.js; ran `" + probe + "`; lib/other.js; lib/weather.js; nope.js; lib/; lib; drafts/; ran `echo hi`)"
 		f := newShpFx(t,
 			shpAnswer(shpCall("r1", "read_file", map[string]any{"path": "./lib/weather.js"}), shpCall("p1", "probe", map[string]any{"command": probe})),
 			ask(question), shpUI(1))
@@ -402,7 +402,9 @@ func TestShapeQuestionCheckCitedEvidence(t *testing.T) {
 			"Question 1 cites lib/other.js: not shown (this shaping did not read lib/other.js)",
 			"Question 1 cites lib/weather.js (read by this shaping):\n" + numbered,
 			"Question 1 cites nope.js: not shown (nope.js is not a file tracked at HEAD)",
-			"Question 1 cites lib/: not shown (lib/ is not a file tracked at HEAD)",
+			"Question 1 cites lib/: not shown (lib/ is a directory; cite the files this shaping read)",
+			"Question 1 cites lib: not shown (lib is a directory; cite the files this shaping read)",
+			"Question 1 cites drafts/: not shown (drafts/ is not a file tracked at HEAD)",
 			"Question 1 cites ran `echo hi`: not shown (no probe of this shaping ran `echo hi`)",
 		}, "\n\n")
 		i := strings.Index(text, "\n\n# Cited evidence\n\n")

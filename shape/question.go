@@ -276,6 +276,8 @@ func (sh *shaping) citedEvidence(questions []map[string]any) (string, [][]string
 				}
 				p := cleanCitedPath(it.path)
 				switch {
+				case !tracked[p] && headDirectory(tracked, p):
+					blocks = append(blocks, head+cited+": not shown ("+it.path+" is a directory; cite the files this shaping read)")
 				case strings.HasSuffix(it.path, "/") || !tracked[p]:
 					blocks = append(blocks, head+cited+": not shown ("+it.path+" is not a file tracked at HEAD)")
 				case sh.ext != nil && !sh.inspected:
