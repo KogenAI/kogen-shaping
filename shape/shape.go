@@ -1811,7 +1811,7 @@ func (sh *shaping) acceptFiles(ctx context.Context, submitted []proposedFile) (s
 		}
 	}
 	intent, _, err := project.CheckIntent(sh.root, sh.slug, sh.overlay())
-	if err != nil && (sh.retry.total >= 2*submissionRetryLimit-1 ||
+	if err != nil && (titleOnlyLint(err) || sh.retry.total >= 2*submissionRetryLimit-1 ||
 		(sh.retry.gate == "intent" && sh.priorInvalid >= submissionRetryLimit-1) || submissionRetryLimit == 1) {
 		if e, ok := sys.AsError(err); ok && e.Reason == "lint" && slices.ContainsFunc(e.Lines, func(line string) bool { return strings.HasPrefix(line, "title:") }) {
 			p := project.IntentMDPath(sh.slug)
@@ -1828,6 +1828,7 @@ func (sh *shaping) acceptFiles(ctx context.Context, submitted []proposedFile) (s
 						return "", outcome{}, err
 					}
 					sh.ev.Record(map[string]any{"event": "title_shortened", "original": original, "title": short})
+					sh.bareProgress("kogen: shortened the title to 50 characters: " + short)
 					intent, _, err = project.CheckIntent(sh.root, sh.slug, sh.overlay())
 				}
 			}
@@ -2698,6 +2699,12 @@ func titleLength(s string) int {
 		prev = r
 	}
 	return n
+}
+
+// titleOnlyLint reports whether err is a lint failure whose lines all start with "title:".
+func titleOnlyLint(err error) bool {
+	e, ok := sys.AsError(err)
+	return ok && e.Reason == "lint" && len(e.Lines) > 0 && !slices.ContainsFunc(e.Lines, func(line string) bool { return !strings.HasPrefix(line, "title:") })
 }
 
 // shortenTitle cuts a title after the last whole word that fits in 50 characters and

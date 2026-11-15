@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/KogenAI/kogen-executor/executor"
+	"strings"
 	"testing"
 )
 
@@ -261,14 +262,17 @@ func TestRetryReportedGateProgressToReady(t *testing.T) {
 
 func TestRetryTotalCapPreservesTitleFallback(t *testing.T) {
 	const long = "Add an is-even check for integers and also reject every string"
+	const short = "Add an is-even check for integers and also reject"
 	bad := dlAsk("Which wording?", map[string]any{"decision": "unsupported"})
 	outside := map[string]any{"files": []any{map[string]any{"path": "calc.js", "content": "x"}}}
-	f := newShpFx(t, shpSubmit("1", bad), shpSubmit("2", outside), shpSubmit("3", bad), shpSubmit("4", outside), shpSubmit("5", bad), shpSubmit("6", shpTitled(long, "")), shpAck("ack"))
+	mixed := shpTitled(long, "- Non-integers raise TypeError.")
+	f := newShpFx(t, shpSubmit("1", bad), shpSubmit("2", outside), shpSubmit("3", bad), shpSubmit("4", outside), shpSubmit("5", bad), shpSubmit("6", mixed))
 	f.setReport("PASSED", 0)
-	exit, err := f.shape("Add calc.is_even(n).")
-	if err != nil || exit != 0 {
-		t.Fatalf("exit %d: %v", exit, err)
-	}
+	_, err := f.shape("Add calc.is_even(n).")
+	shpWantError(t, err, "shape", "invalid_output", "", 1)
 	shpEq(t, "title fallback", len(shpNamed(f.events(), "title_shortened")), 1)
-	shpEq(t, "refusals", len(shpNamed(f.events(), "submission_refused")), 5)
+	shpEq(t, "refusals", len(shpNamed(f.events(), "submission_refused")), 6)
+	retained := f.read(".kogen/local/shaping/is-even/proposed/.kogen/intents/is-even/intent.md")
+	shpEq(t, "title", strings.SplitN(retained, "\n", 2)[0], "# "+short)
+	shpEq(t, "progress", strings.Count(f.Stderr.String(), "kogen: shortened the title to 50 characters: "+short+"\n"), 1)
 }
