@@ -1,0 +1,1 @@
+{"deferred":"The correct implementation threads measured durations through the static gate runner, its retained run, the recorded result file and the event in shape/static.go; its acceptance runs a compiled Go test overlay on the shape package, and a bounded overlay of that file could not be written and validated inside the shaping budget, so the Build writes it."}

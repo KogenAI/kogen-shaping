@@ -2,6 +2,7 @@ package shape
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -320,5 +321,81 @@ func TestStaticBaseRunReused(t *testing.T) {
 	changed := &project.Config{Checks: []project.Check{{Name: "stale", Run: cfg.Checks[0].Run + " && true"}}}
 	if _, out := round(changed); strings.Contains(out, "reused") {
 		t.Errorf("a changed command reused the base result:\n%s", out)
+	}
+}
+
+// TestStaticChecksRecordTimes: each check records the wall time of its run on the candidate and of
+// the base run that executed in this gate run, the run records the time of the copy, a check that
+// was not run or whose base run did not happen records 0, a later round that reuses the base result
+// records 0 for it, and the recorded result file carries the same fields.
+func TestStaticChecksRecordTimes(t *testing.T) {
+	parallel(t)
+	f := staticFx(t, `    - name: slow
+      run: 'sleep 0.05'
+    - name: stale
+      run: 'sleep 0.05; echo "stale: app.txt"; exit 1'
+    - name: bad
+      run: 'sleep 0.05; echo "app.txt:1:1: bad"; exit 1'
+    - name: suite
+      run: 'go test ./...'
+`)
+	cfg, err := project.LoadConfig(f.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, _, _ := f.session()
+	head := f.Repo.Head()
+	tree, err := f.Repo.Tree(head, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	round := func() *staticRun {
+		g := newStaticGateRunner(s, f.Repo, &verify.Readiness{Root: f.Root, Repo: f.Repo, Config: cfg}, cfg, f.Root, approveSlug, func(string) {})
+		run, err := g.run(context.Background(), head, tree, "package")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return run
+	}
+	first := round()
+	if first.CopyMS <= 0 {
+		t.Errorf("copy_ms %d, want > 0", first.CopyMS)
+	}
+	for i, want := range []struct{ wall, base bool }{{true, false}, {true, true}, {true, true}, {false, false}} {
+		c := first.Checks[i]
+		if (c.WallMS > 0) != want.wall || (c.BaseWallMS > 0) != want.base {
+			t.Errorf("round 1 check %s: wall_ms %d, base_wall_ms %d; want wall>0 %v, base>0 %v", c.Name, c.WallMS, c.BaseWallMS, want.wall, want.base)
+		}
+	}
+	// The traced re-run of a failing check counts toward wall_ms: plain 50 ms plus traced 50 ms.
+	if w := first.Checks[1].WallMS; w < 100 {
+		t.Errorf("stale wall_ms %d, want at least the plain and the traced run (100)", w)
+	}
+	second := round()
+	for _, c := range second.Checks[1:3] {
+		if c.WallMS <= 0 || c.BaseWallMS != 0 {
+			t.Errorf("round 2 check %s: wall_ms %d, base_wall_ms %d; the reused base result has no base time", c.Name, c.WallMS, c.BaseWallMS)
+		}
+	}
+
+	if err := writeStaticRecord(f.Root, approveSlug, first); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(staticRecordPath(f.Root, approveSlug))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rec struct {
+		CopyMS int64 `json:"copy_ms"`
+		Checks []struct {
+			WallMS     int64 `json:"wall_ms"`
+			BaseWallMS int64 `json:"base_wall_ms"`
+		} `json:"checks"`
+	}
+	if err := json.Unmarshal(b, &rec); err != nil {
+		t.Fatal(err)
+	}
+	if rec.CopyMS != first.CopyMS || len(rec.Checks) != 4 || rec.Checks[1].WallMS != first.Checks[1].WallMS || rec.Checks[1].BaseWallMS != first.Checks[1].BaseWallMS {
+		t.Errorf("the recorded result %s does not carry the timings of the run", b)
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/KogenAI/kogen-coordinator/git"
 	"github.com/KogenAI/kogen-coordinator/project"
@@ -57,6 +58,11 @@ type staticCheck struct {
 	Reason string   `json:"reason,omitempty"`
 	Output string   `json:"output"`
 	Trace  string   `json:"trace"`
+	// WallMS is the wall time of the run of the check on the candidate in the copy (the plain run and
+	// the traced re-run of a failing one); BaseWallMS is that of the base run when it executed in
+	// this gate run. Both are 0 when there was no such run.
+	WallMS     int64 `json:"wall_ms"`
+	BaseWallMS int64 `json:"base_wall_ms"`
 }
 
 type staticFile struct {
@@ -73,6 +79,8 @@ type staticRun struct {
 	SHA256  string        `json:"sha256"`
 	Files   []staticFile  `json:"files"`
 	Checks  []staticCheck `json:"checks"`
+	// CopyMS is the wall time to build the fresh copy and its seeded dependencies; 0 when no copy was made.
+	CopyMS int64 `json:"copy_ms"`
 
 	attempt int // the submission that ran it (Shape)
 }
@@ -450,6 +458,7 @@ func (g *staticGateRunner) run(ctx context.Context, head, tree, sha string) (*st
 	}
 	g.progress("kogen: running static checks on the shaped files in a fresh copy: " + strings.Join(selected, ", "))
 
+	copyStart := time.Now()
 	dir := sys.TmpPath("kogen-static")
 	run.Dir = dir
 	defer os.RemoveAll(dir)
@@ -465,6 +474,7 @@ func (g *staticGateRunner) run(ctx context.Context, head, tree, sha string) (*st
 	if err := g.rd.Setup(ctx, g.s, dir, false); err != nil {
 		return nil, err
 	}
+	run.CopyMS = time.Since(copyStart).Milliseconds()
 	shaped, err := readShaped(dir, paths)
 	if err != nil {
 		return nil, err
@@ -489,10 +499,12 @@ func (g *staticGateRunner) run(ctx context.Context, head, tree, sha string) (*st
 			g.progress(fmt.Sprintf("kogen: static check %s not run: it runs the test suite", c.Name))
 			continue
 		}
+		checkStart := time.Now()
 		res, err := g.s.Run(c.Run, dir, opts)
 		if err != nil {
 			return nil, err
 		}
+		c.WallMS = time.Since(checkStart).Milliseconds()
 		exit := res.Status
 		c.Exit = &exit
 		c.Output = g.bounded(res.Output)
@@ -506,10 +518,12 @@ func (g *staticGateRunner) run(ctx context.Context, head, tree, sha string) (*st
 			g.progress(fmt.Sprintf("kogen: static check %s passed", c.Name))
 			continue
 		}
+		tracedStart := time.Now()
 		traced, err := g.s.Run("set -x\n"+c.Run, dir, opts)
 		if err != nil {
 			return nil, err
 		}
+		c.WallMS += time.Since(tracedStart).Milliseconds()
 		c.Trace = g.bounded(traced.Output)
 		if baseTree == "" {
 			if baseTree, err = g.baseTreeID(tree, shapedPaths); err != nil {
@@ -518,12 +532,14 @@ func (g *staticGateRunner) run(ctx context.Context, head, tree, sha string) (*st
 		}
 		baseline, baseReused := g.base.lookup(c.Name, c.Run, baseTree)
 		if !baseReused {
+			baseStart := time.Now()
 			if err := without(dir, shaped, func() (err error) {
 				baseline, err = g.s.Run(c.Run, dir, opts)
 				return err
 			}); err != nil {
 				return nil, err
 			}
+			c.BaseWallMS = time.Since(baseStart).Milliseconds()
 			g.base.store(c.Name, c.Run, baseTree, baseline, g.redact)
 		}
 		reusedMark := ""
@@ -622,7 +638,7 @@ func (sh *shaping) staticChecks(ctx context.Context, hash string) (string, outco
 		}
 	}
 	sh.ev.Record(map[string]any{"event": "static_checks", "attempt": sh.submissions, "outcome": run.Outcome, "reused": reused, "dir": run.Dir,
-		"head": run.Head, "tree": run.Tree, "sha256": run.SHA256, "files": run.Files, "checks": run.Checks})
+		"head": run.Head, "tree": run.Tree, "sha256": run.SHA256, "files": run.Files, "checks": run.Checks, "copy_ms": run.CopyMS})
 	if run.Outcome != staticRefused {
 		return "", outcome{}, nil
 	}
