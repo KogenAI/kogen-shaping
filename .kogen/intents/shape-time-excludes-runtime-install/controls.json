@@ -1,0 +1,73 @@
+{
+  "correct": {
+    "files": {
+      "shape/external.go": {
+        "patch": "--- a/shape/external.go\n+++ b/shape/external.go\n@@ -17,6 +17,7 @@\n \t\"github.com/KogenAI/kogen-coordinator/git\"\n \t\"github.com/KogenAI/kogen-coordinator/project\"\n \t\"github.com/KogenAI/kogen-executor/executor\"\n+\t\"github.com/KogenAI/kogen-executor/executor/claudecode\"\n \t\"github.com/KogenAI/kogen-loop/sys\"\n )\n \n@@ -110,7 +111,16 @@\n \t\t\tobserve(e)\n \t\t}\n \t}\n+\t// Only a cold-to-installed runtime transition is runtime preparation.\n+\t_, beforeErr := os.Lstat(claudecode.RuntimePath(home))\n+\tcold := os.IsNotExist(beforeErr)\n+\tinstallStart := ev.Millis()\n \tsess, err := ex.Start(ctx, task, rec)\n+\tif cold {\n+\t\tif info, statErr := os.Stat(claudecode.RuntimePath(home)); statErr == nil && info.Mode().IsRegular() {\n+\t\t\tev.Interval(\"runtime_install\", installStart, ev.Millis())\n+\t\t}\n+\t}\n \tx := &extSession{repo: repo, pin: pin, root: root, home: home, model: role, max: max, sess: sess, record: rec, ev: ev, dir: dir}\n \t// Startup runs the executor too: its changes are refused before any trusted Git command, and\n \t// before a startup failure is reported.\n"
+      },
+      "shape/evidence.go": {
+        "patch": "--- a/shape/evidence.go\n+++ b/shape/evidence.go\n@@ -227,6 +227,14 @@\n \tChecks          int64\n \tReadiness       int64\n \tGap             int64\n+\tInstall         int64\n+}\n+\n+// RuntimeInstallMillis is the cold runtime preparation excluded from the budget.\n+func (e *Evidence) RuntimeInstallMillis() int64 {\n+\te.mu.Lock()\n+\tdefer e.mu.Unlock()\n+\treturn Union(e.intervals[\"runtime_install\"])\n }\n \n // Spent is the account Finish recorded; nil when it recorded none.\n@@ -526,7 +534,7 @@\n \taccount := e.account\n \tchecks := append(slices.Clone(e.checkSpans), intervals[\"setup\"]...)\n \tchecks = append(checks, intervals[\"preparation\"]...)\n-\tacct := &TimeAccount{Elapsed: elapsed, Shaper: e.shaperTotal, Readiness: Union(intervals[\"readiness\"])}\n+\tacct := &TimeAccount{Elapsed: elapsed, Shaper: e.shaperTotal, Readiness: Union(intervals[\"readiness\"]), Install: Union(intervals[\"runtime_install\"])}\n \tif e.modelKnown {\n \t\tmodel, tools := e.shaperModel, e.shaperTotal-e.shaperModel\n \t\tacct.Model, acct.Tools = &model, &tools\n@@ -534,11 +542,11 @@\n \te.mu.Unlock()\n \tif account {\n \t\tacct.Checks = Union(checks)\n-\t\tacct.Gap = max(0, elapsed-acct.Shaper-acct.Checks)\n+\t\tacct.Gap = max(0, elapsed-acct.Shaper-acct.Checks-acct.Install)\n \t\te.Record(map[string]any{\n \t\t\t\"event\": \"shape_time\", \"elapsed_ms\": acct.Elapsed, \"shaper_ms\": acct.Shaper,\n \t\t\t\"shaper_model_ms\": nullable(acct.Model), \"shaper_tools_ms\": nullable(acct.Tools),\n-\t\t\t\"checks_ms\": acct.Checks, \"readiness_ms\": acct.Readiness, \"gap_ms\": acct.Gap,\n+\t\t\t\"checks_ms\": acct.Checks, \"readiness_ms\": acct.Readiness, \"gap_ms\": acct.Gap, \"install_ms\": acct.Install,\n \t\t})\n \t\te.mu.Lock()\n \t\te.spent = acct\n@@ -571,9 +579,13 @@\n // Line is the progress line that states the account.\n func (a TimeAccount) Line() string {\n \tknown := func(v int64) *int64 { return &v }\n-\treturn fmt.Sprintf(\"kogen: shape time %s: shaper %s (model %s, tools %s), Kogen checks %s (readiness %s), gaps %s\",\n+\tline := fmt.Sprintf(\"kogen: shape time %s: shaper %s (model %s, tools %s), Kogen checks %s (readiness %s), gaps %s\",\n \t\tseconds(known(a.Elapsed)), seconds(known(a.Shaper)), seconds(a.Model), seconds(a.Tools),\n \t\tseconds(known(a.Checks)), seconds(known(a.Readiness)), seconds(known(a.Gap)))\n+\tif a.Install > 0 {\n+\t\tline += \", runtime install \" + seconds(known(a.Install))\n+\t}\n+\treturn line\n }\n \n // events reads the events this run appended.\n"
+      },
+      "shape/shape.go": {
+        "patch": "--- a/shape/shape.go\n+++ b/shape/shape.go\n@@ -668,7 +668,9 @@\n \treturn fn()\n }\n \n-func (sh *shaping) sinceStart() time.Duration { return sh.ev.clock().Sub(sh.started) }\n+func (sh *shaping) sinceStart() time.Duration {\n+\treturn max(0, sh.ev.clock().Sub(sh.started)-time.Duration(sh.ev.RuntimeInstallMillis())*time.Millisecond)\n+}\n \n func (sh *shaping) elapsed() int64 { return sh.sinceStart().Milliseconds() / 1000 }\n \n@@ -933,7 +935,7 @@\n \tvar lastAnswer string\n \tfor {\n \t\tif budgetSpent(sh.sinceStart()) {\n-\t\t\treturn budgetStop(last, lastAnswer, turns.noTool, sh.sinceStart(), sh.requests, sh.timedAttempts), usage, nil\n+\t\t\treturn budgetStop(last, lastAnswer, turns.noTool, sh.sinceStart(), sh.requests, sh.timedAttempts, sh.ev.RuntimeInstallMillis()), usage, nil\n \t\t}\n \t\tsh.s.Progress(fmt.Sprintf(\"kogen: shaping (request %d, %d s)\", sh.requests+1, sh.elapsed()))\n \t\tt0 := time.Now()\n@@ -1146,7 +1148,7 @@\n \trepeats := readinessRepeats{}\n \tfor {\n \t\tif feedback != \"\" && budgetSpent(sh.sinceStart()) {\n-\t\t\treturn budgetStop(last, \"\", 0, sh.sinceStart(), x.rounds, sh.timedAttempts), x, nil\n+\t\t\treturn budgetStop(last, \"\", 0, sh.sinceStart(), x.rounds, sh.timedAttempts, sh.ev.RuntimeInstallMillis()), x, nil\n \t\t}\n \t\tsh.s.Progress(fmt.Sprintf(\"kogen: shaping (external round %d, %d s)\", x.rounds+1, sh.elapsed()))\n \t\tclear(sh.externalReads)\n"
+      },
+      "shape/budget.go": {
+        "patch": "--- a/shape/budget.go\n+++ b/shape/budget.go\n@@ -34,7 +34,7 @@\n \n // budgetStop is the outcome of a shaping whose budget ran out before its next provider request:\n // it names the budget, the time spent, the requests made, and the last refusal if there was one.\n-func budgetStop(last lastSubmission, answer string, answers int, elapsed time.Duration, requests int, attempts []timedAttempt) outcome {\n+func budgetStop(last lastSubmission, answer string, answers int, elapsed time.Duration, requests int, attempts []timedAttempt, installMS ...int64) outcome {\n \tresult := noToolStop(last, answer)\n \tresult.detail = fmt.Sprintf(\"the shaper used its %d-minute shaping budget (%s elapsed, %d requests) without a submission that passed; shaping stopped\",\n \t\tint(shapingBudget/time.Minute), budgetText(elapsed), requests)\n@@ -44,7 +44,13 @@\n \t} else {\n \t\tresult.problems = result.problems[:len(result.problems)-1]\n \t}\n-\tresult.problems = append(result.problems, attemptLines(attempts)...)\n+\tlines := attemptLines(attempts)\n+\tif len(installMS) > 0 && installMS[0] > 0 {\n+\t\tfor i := range lines {\n+\t\t\tlines[i] += fmt.Sprintf(\"; install_ms=%d\", installMS[0])\n+\t\t}\n+\t}\n+\tresult.problems = append(result.problems, lines...)\n \treturn result\n }\n \n"
+      },
+      "shape/evidence_test.go": {
+        "patch": "--- a/shape/evidence_test.go\n+++ b/shape/evidence_test.go\n@@ -295,7 +295,7 @@\n \t\tev, events := run(t, true)\n \t\tn := len(events)\n \t\twant := map[string]any{\"event\": \"shape_time\", \"elapsed_ms\": 720.0, \"shaper_ms\": 300.0, \"shaper_model_ms\": 250.0,\n-\t\t\t\"shaper_tools_ms\": 50.0, \"checks_ms\": 350.0, \"readiness_ms\": 200.0, \"gap_ms\": 70.0}\n+\t\t\t\"shaper_tools_ms\": 50.0, \"checks_ms\": 350.0, \"readiness_ms\": 200.0, \"gap_ms\": 70.0, \"install_ms\": 0.0}\n \t\tif !reflect.DeepEqual(events[n-2], want) || events[n-1][\"event\"] != \"session_end\" {\n \t\t\tt.Fatalf(\"events %v, want %v before session_end\", events[n-2:], want)\n \t\t}\n"
+      }
+    }
+  },
+  "wrong": [
+    {
+      "name": "install remains charged to budget",
+      "scenario": "Replay the reported cold-host refusal without charging installation",
+      "step": "Then shape-time-excludes-runtime-install: Shape exits 0 after 2 main rounds",
+      "files": {
+        "shape/shape.go": {
+          "patch": "--- a/shape/shape.go\n+++ b/shape/shape.go\n@@ -669,7 +669,7 @@\n }\n \n func (sh *shaping) sinceStart() time.Duration {\n-\treturn max(0, sh.ev.clock().Sub(sh.started)-time.Duration(sh.ev.RuntimeInstallMillis())*time.Millisecond)\n+\treturn max(0, sh.ev.clock().Sub(sh.started))\n }\n \n func (sh *shaping) elapsed() int64 { return sh.sinceStart().Milliseconds() / 1000 }\n"
+        }
+      }
+    },
+    {
+      "name": "install also remains in gap",
+      "scenario": "Replay the reported cold-host refusal without charging installation",
+      "step": "And shape-time-excludes-runtime-install: the account is:",
+      "files": {
+        "shape/evidence.go": {
+          "patch": "--- a/shape/evidence.go\n+++ b/shape/evidence.go\n@@ -542,7 +542,7 @@\n \te.mu.Unlock()\n \tif account {\n \t\tacct.Checks = Union(checks)\n-\t\tacct.Gap = max(0, elapsed-acct.Shaper-acct.Checks-acct.Install)\n+\t\tacct.Gap = max(0, elapsed-acct.Shaper-acct.Checks)\n \t\te.Record(map[string]any{\n \t\t\t\"event\": \"shape_time\", \"elapsed_ms\": acct.Elapsed, \"shaper_ms\": acct.Shaper,\n \t\t\t\"shaper_model_ms\": nullable(acct.Model), \"shaper_tools_ms\": nullable(acct.Tools),\n"
+        }
+      }
+    },
+    {
+      "name": "positive install omitted from progress",
+      "scenario": "Replay the reported cold-host refusal without charging installation",
+      "step": "And shape-time-excludes-runtime-install: the progress line is:",
+      "files": {
+        "shape/evidence.go": {
+          "patch": "--- a/shape/evidence.go\n+++ b/shape/evidence.go\n@@ -582,7 +582,7 @@\n \tline := fmt.Sprintf(\"kogen: shape time %s: shaper %s (model %s, tools %s), Kogen checks %s (readiness %s), gaps %s\",\n \t\tseconds(known(a.Elapsed)), seconds(known(a.Shaper)), seconds(a.Model), seconds(a.Tools),\n \t\tseconds(known(a.Checks)), seconds(known(a.Readiness)), seconds(known(a.Gap)))\n-\tif a.Install > 0 {\n+\tif a.Install < 0 {\n \t\tline += \", runtime install \" + seconds(known(a.Install))\n \t}\n \treturn line\n"
+        }
+      }
+    },
+    {
+      "name": "all startup incorrectly excluded",
+      "scenario": "A warm runtime retains the old progress line and counts ordinary startup",
+      "step": "And shape-time-excludes-runtime-install: the progress line is:",
+      "files": {
+        "shape/external.go": {
+          "patch": "--- a/shape/external.go\n+++ b/shape/external.go\n@@ -113,7 +113,7 @@\n \t}\n \t// Only a cold-to-installed runtime transition is runtime preparation.\n \t_, beforeErr := os.Lstat(claudecode.RuntimePath(home))\n-\tcold := os.IsNotExist(beforeErr)\n+\tcold := beforeErr == nil || os.IsNotExist(beforeErr)\n \tinstallStart := ev.Millis()\n \tsess, err := ex.Start(ctx, task, rec)\n \tif cold {\n"
+        }
+      }
+    },
+    {
+      "name": "zero install printed on warm host",
+      "scenario": "A warm runtime retains the old progress line and counts ordinary startup",
+      "step": "And shape-time-excludes-runtime-install: the progress line is:",
+      "files": {
+        "shape/evidence.go": {
+          "patch": "--- a/shape/evidence.go\n+++ b/shape/evidence.go\n@@ -582,7 +582,7 @@\n \tline := fmt.Sprintf(\"kogen: shape time %s: shaper %s (model %s, tools %s), Kogen checks %s (readiness %s), gaps %s\",\n \t\tseconds(known(a.Elapsed)), seconds(known(a.Shaper)), seconds(a.Model), seconds(a.Tools),\n \t\tseconds(known(a.Checks)), seconds(known(a.Readiness)), seconds(known(a.Gap)))\n-\tif a.Install > 0 {\n+\tif a.Install >= 0 {\n \t\tline += \", runtime install \" + seconds(known(a.Install))\n \t}\n \treturn line\n"
+        }
+      }
+    }
+  ]
+}

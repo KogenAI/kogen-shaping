@@ -670,6 +670,8 @@ func (sh *shaping) toolSpan(fn func() error) error {
 
 func (sh *shaping) sinceStart() time.Duration { return sh.ev.clock().Sub(sh.started) }
 
+func (sh *shaping) chargedTime() time.Duration { return max(0, sh.sinceStart()-sh.ev.InstallTime()) }
+
 func (sh *shaping) elapsed() int64 { return sh.sinceStart().Milliseconds() / 1000 }
 
 func (sh *shaping) progress(line string) {
@@ -932,8 +934,8 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 	var last lastSubmission
 	var lastAnswer string
 	for {
-		if budgetSpent(sh.sinceStart()) {
-			return budgetStop(last, lastAnswer, turns.noTool, sh.sinceStart(), sh.requests, sh.timedAttempts), usage, nil
+		if budgetSpent(sh.chargedTime()) {
+			return budgetStop(last, lastAnswer, turns.noTool, sh.chargedTime(), sh.requests, sh.timedAttempts, sh.ev.InstallTime()), usage, nil
 		}
 		sh.s.Progress(fmt.Sprintf("kogen: shaping (request %d, %d s)", sh.requests+1, sh.elapsed()))
 		t0 := time.Now()
@@ -951,7 +953,7 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 			return outcome{}, usage, err
 		}
 		input = append(input, map[string]any{"role": "user", "content": "Cumulative proposal manifest: " + string(enc)},
-			map[string]any{"role": "user", "content": budgetLine(sh.sinceStart())})
+			map[string]any{"role": "user", "content": budgetLine(sh.chargedTime())})
 		event, err := selectionEvent(input, manifest, sh.measure)
 		if err != nil {
 			return outcome{}, usage, err
@@ -1124,7 +1126,7 @@ func (sh *shaping) converseExternal(ctx context.Context, blocks []any) (outcome,
 	sh.externalReads = make(map[string]bool)
 	stable := ShaperInstructions() + "\n\n" + externalBrief() + "\n\n" + blocksText(blocks)
 	x, err := startExternal(ctx, sh.ext, sh.extMax, sh.repo, sh.root, sh.s.Getenv("HOME"),
-		filepath.Join(sh.ev.Dir, "executor-shape"), sh.slug, sh.role, stable, budgetLine(sh.sinceStart()), shaperSubmitSchema(), sh.ev,
+		filepath.Join(sh.ev.Dir, "executor-shape"), sh.slug, sh.role, stable, budgetLine(sh.chargedTime()), shaperSubmitSchema(), sh.ev,
 		func(e map[string]any) {
 			if p := externalReadPath(sh.root, e); p != "" {
 				sh.externalReads[p] = true
@@ -1145,13 +1147,13 @@ func (sh *shaping) converseExternal(ctx context.Context, blocks []any) (outcome,
 	var last lastSubmission
 	repeats := readinessRepeats{}
 	for {
-		if feedback != "" && budgetSpent(sh.sinceStart()) {
-			return budgetStop(last, "", 0, sh.sinceStart(), x.rounds, sh.timedAttempts), x, nil
+		if feedback != "" && budgetSpent(sh.chargedTime()) {
+			return budgetStop(last, "", 0, sh.chargedTime(), x.rounds, sh.timedAttempts, sh.ev.InstallTime()), x, nil
 		}
 		sh.s.Progress(fmt.Sprintf("kogen: shaping (external round %d, %d s)", x.rounds+1, sh.elapsed()))
 		clear(sh.externalReads)
 		if feedback != "" {
-			feedback = budgetLine(sh.sinceStart()) + "\n\n" + feedback
+			feedback = budgetLine(sh.chargedTime()) + "\n\n" + feedback
 		}
 		roundStart := sh.ev.clock()
 		res, err := x.round(ctx, feedback)
@@ -1507,7 +1509,7 @@ func (sh *shaping) submit(ctx context.Context, args map[string]any) (string, out
 	if sh.lastCounted != nil {
 		sh.timedAttempts = append(sh.timedAttempts, timedAttempt{
 			attempt: sh.submissions, gate: sh.lastCounted.gate, model: sh.modelTime,
-			check: sh.ev.clock().Sub(checkStart), remaining: shapingBudget - sh.sinceStart(),
+			check: sh.ev.clock().Sub(checkStart), remaining: shapingBudget - sh.chargedTime(),
 		})
 	}
 	return text, out, err

@@ -295,7 +295,7 @@ func TestShapeTimeAccount(t *testing.T) {
 		ev, events := run(t, true)
 		n := len(events)
 		want := map[string]any{"event": "shape_time", "elapsed_ms": 720.0, "shaper_ms": 300.0, "shaper_model_ms": 250.0,
-			"shaper_tools_ms": 50.0, "checks_ms": 350.0, "readiness_ms": 200.0, "gap_ms": 70.0}
+			"shaper_tools_ms": 50.0, "checks_ms": 350.0, "readiness_ms": 200.0, "install_ms": 0.0, "gap_ms": 70.0}
 		if !reflect.DeepEqual(events[n-2], want) || events[n-1]["event"] != "session_end" {
 			t.Fatalf("events %v, want %v before session_end", events[n-2:], want)
 		}

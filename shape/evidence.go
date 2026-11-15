@@ -41,6 +41,7 @@ type Evidence struct {
 	attempt     int
 
 	account     bool       // Shape's run: Finish ends the record with a shape_time event
+	installMS   int64      // cold managed runtime preparation, excluded from the shaping budget
 	shaperTotal int64      // the shaper's spans: external rounds, or native model and tool spans
 	shaperModel int64      // the part of them with a reported model time
 	modelKnown  bool       // false once a shaper span has no model time
@@ -176,6 +177,20 @@ func (e *Evidence) AccountTime() {
 	e.mu.Unlock()
 }
 
+// RuntimeInstall adds the cold managed runtime preparation interval.
+func (e *Evidence) RuntimeInstall(a, b int64) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.installMS += max(0, b-a)
+}
+
+// InstallTime is the runtime preparation excluded from charged shaping time.
+func (e *Evidence) InstallTime() time.Duration {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return time.Duration(e.installMS) * time.Millisecond
+}
+
 // ShaperRound adds one external main round's span a to b (Millis values). model is the
 // round's model time, nil when unknown.
 func (e *Evidence) ShaperRound(a, b int64, model *int64) {
@@ -224,6 +239,7 @@ func (e *Evidence) Checking(fn func() error) error {
 type TimeAccount struct {
 	Elapsed, Shaper int64
 	Model, Tools    *int64
+	Install         int64
 	Checks          int64
 	Readiness       int64
 	Gap             int64
@@ -526,7 +542,7 @@ func (e *Evidence) Finish() error {
 	account := e.account
 	checks := append(slices.Clone(e.checkSpans), intervals["setup"]...)
 	checks = append(checks, intervals["preparation"]...)
-	acct := &TimeAccount{Elapsed: elapsed, Shaper: e.shaperTotal, Readiness: Union(intervals["readiness"])}
+	acct := &TimeAccount{Elapsed: elapsed, Install: e.installMS, Shaper: e.shaperTotal, Readiness: Union(intervals["readiness"])}
 	if e.modelKnown {
 		model, tools := e.shaperModel, e.shaperTotal-e.shaperModel
 		acct.Model, acct.Tools = &model, &tools
@@ -534,11 +550,11 @@ func (e *Evidence) Finish() error {
 	e.mu.Unlock()
 	if account {
 		acct.Checks = Union(checks)
-		acct.Gap = max(0, elapsed-acct.Shaper-acct.Checks)
+		acct.Gap = max(0, elapsed-acct.Shaper-acct.Checks-acct.Install)
 		e.Record(map[string]any{
 			"event": "shape_time", "elapsed_ms": acct.Elapsed, "shaper_ms": acct.Shaper,
 			"shaper_model_ms": nullable(acct.Model), "shaper_tools_ms": nullable(acct.Tools),
-			"checks_ms": acct.Checks, "readiness_ms": acct.Readiness, "gap_ms": acct.Gap,
+			"install_ms": acct.Install, "checks_ms": acct.Checks, "readiness_ms": acct.Readiness, "gap_ms": acct.Gap,
 		})
 		e.mu.Lock()
 		e.spent = acct
@@ -571,9 +587,13 @@ func seconds(ms *int64) string {
 // Line is the progress line that states the account.
 func (a TimeAccount) Line() string {
 	known := func(v int64) *int64 { return &v }
-	return fmt.Sprintf("kogen: shape time %s: shaper %s (model %s, tools %s), Kogen checks %s (readiness %s), gaps %s",
+	line := fmt.Sprintf("kogen: shape time %s: shaper %s (model %s, tools %s), Kogen checks %s (readiness %s), gaps %s",
 		seconds(known(a.Elapsed)), seconds(known(a.Shaper)), seconds(a.Model), seconds(a.Tools),
 		seconds(known(a.Checks)), seconds(known(a.Readiness)), seconds(known(a.Gap)))
+	if a.Install > 0 {
+		line += ", runtime install " + seconds(known(a.Install))
+	}
+	return line
 }
 
 // events reads the events this run appended.

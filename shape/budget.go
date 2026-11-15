@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// shapingBudget is the wall-clock time one shaping has, for every project.
+// shapingBudget is the charged time one shaping has, excluding cold runtime installation.
 const shapingBudget = 15 * time.Minute
 
 // budgetText is a duration in whole minutes, with seconds when it has any.
@@ -34,7 +34,7 @@ func externalBrief() string {
 
 // budgetStop is the outcome of a shaping whose budget ran out before its next provider request:
 // it names the budget, the time spent, the requests made, and the last refusal if there was one.
-func budgetStop(last lastSubmission, answer string, answers int, elapsed time.Duration, requests int, attempts []timedAttempt) outcome {
+func budgetStop(last lastSubmission, answer string, answers int, elapsed time.Duration, requests int, attempts []timedAttempt, install time.Duration) outcome {
 	result := noToolStop(last, answer)
 	result.detail = fmt.Sprintf("the shaper used its %d-minute shaping budget (%s elapsed, %d requests) without a submission that passed; shaping stopped",
 		int(shapingBudget/time.Minute), budgetText(elapsed), requests)
@@ -44,7 +44,7 @@ func budgetStop(last lastSubmission, answer string, answers int, elapsed time.Du
 	} else {
 		result.problems = result.problems[:len(result.problems)-1]
 	}
-	result.problems = append(result.problems, attemptLines(attempts)...)
+	result.problems = append(result.problems, attemptLines(attempts, install)...)
 	return result
 }
 
@@ -63,12 +63,17 @@ func wholeSeconds(d time.Duration) int { return int(max(d, 0) / time.Second) }
 
 // attemptLines state the shaping budget, as the shaping_turn_counts event records it, and
 // one line per refused submission, oldest first.
-func attemptLines(attempts []timedAttempt) []string {
+func attemptLines(attempts []timedAttempt, install time.Duration) []string {
 	lines := []string{fmt.Sprintf("shaping budget: %d s (%d min, wall-clock for the whole shaping, all rounds; the response_budget event is the separate limit on one provider response wait)",
 		shapingBudgetSeconds(), int(shapingBudget/time.Minute))}
+	suffix := ""
+	if install > 0 {
+		suffix = fmt.Sprintf(", install_ms=%d", install.Milliseconds())
+	}
+	lines[0] += suffix
 	for _, a := range attempts {
 		lines = append(lines, fmt.Sprintf("attempt %d: gate %s, model request %d s, Kogen checks %d s, %d s remaining",
-			a.attempt, a.gate, wholeSeconds(a.model), wholeSeconds(a.check), wholeSeconds(a.remaining)))
+			a.attempt, a.gate, wholeSeconds(a.model), wholeSeconds(a.check), wholeSeconds(a.remaining))+suffix)
 	}
 	return lines
 }

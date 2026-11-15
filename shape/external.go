@@ -17,6 +17,7 @@ import (
 	"github.com/KogenAI/kogen-coordinator/git"
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/executor"
+	"github.com/KogenAI/kogen-executor/executor/claudecode"
 	"github.com/KogenAI/kogen-loop/sys"
 )
 
@@ -110,7 +111,18 @@ func startExternal(ctx context.Context, ex executor.Executor, max int, repo *git
 			observe(e)
 		}
 	}
+	// Only an absent-to-installed managed runtime makes startup exempt.
+	// A warm executor startup remains ordinary shaping overhead.
+	runtime := claudecode.RuntimePath(home)
+	_, before := os.Stat(runtime)
+	started := ev.Millis()
 	sess, err := ex.Start(ctx, task, rec)
+	ended := ev.Millis()
+	if role.Executor == "claude-code" && os.IsNotExist(before) {
+		if _, after := os.Stat(runtime); after == nil {
+			ev.RuntimeInstall(started, ended)
+		}
+	}
 	x := &extSession{repo: repo, pin: pin, root: root, home: home, model: role, max: max, sess: sess, record: rec, ev: ev, dir: dir}
 	// Startup runs the executor too: its changes are refused before any trusted Git command, and
 	// before a startup failure is reported.
