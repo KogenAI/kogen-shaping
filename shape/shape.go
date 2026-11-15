@@ -620,6 +620,8 @@ type shaping struct {
 	contractLines    []string                     // the item lines of the last contract refusal
 	reviewProps      []propertyReport             // the properties of the last contract review that was complete; nil otherwise
 	lastGate         string                       // the gate of the last refused submission
+	modelTime        time.Duration                // the time of the model request that produced the current submissions
+	timedAttempts    []timedAttempt               // every refused submission with its timings, oldest first
 	lastRefusal      []string                     // its problem lines as recorded in submission_refused
 	// unresolved are the refusals since the last submission answered with readiness failures.
 	unresolved []shapeRefusal
@@ -924,7 +926,7 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 	var lastAnswer string
 	for {
 		if budgetSpent(sh.sinceStart()) {
-			return budgetStop(last, lastAnswer, turns.noTool, sh.sinceStart(), sh.requests), usage, nil
+			return budgetStop(last, lastAnswer, turns.noTool, sh.sinceStart(), sh.requests, sh.timedAttempts), usage, nil
 		}
 		sh.s.Progress(fmt.Sprintf("kogen: shaping (request %d, %d s)", sh.requests+1, sh.elapsed()))
 		t0 := time.Now()
@@ -979,9 +981,11 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 		resp, err := tools.Deliver(input, "shape", sh.ev.Record, func() (*provider.Response, error) {
 			sh.requests++
 			sent := sh.ev.Millis()
+			sentAt := sh.ev.clock()
 			r, err := sh.client.Respond(ctx, sh.s, req, call)
 			call.End(r, err)
 			sh.ev.ShaperModel(sent, sh.ev.Millis())
+			sh.modelTime = sh.ev.clock().Sub(sentAt)
 			return r, err
 		})
 		if err != nil {
@@ -1135,17 +1139,19 @@ func (sh *shaping) converseExternal(ctx context.Context, blocks []any) (outcome,
 	repeats := readinessRepeats{}
 	for {
 		if feedback != "" && budgetSpent(sh.sinceStart()) {
-			return budgetStop(last, "", 0, sh.sinceStart(), x.rounds), x, nil
+			return budgetStop(last, "", 0, sh.sinceStart(), x.rounds, sh.timedAttempts), x, nil
 		}
 		sh.s.Progress(fmt.Sprintf("kogen: shaping (external round %d, %d s)", x.rounds+1, sh.elapsed()))
 		clear(sh.externalReads)
 		if feedback != "" {
 			feedback = budgetLine(sh.sinceStart()) + "\n\n" + feedback
 		}
+		roundStart := sh.ev.clock()
 		res, err := x.round(ctx, feedback)
 		if err != nil {
 			return outcome{}, x, err
 		}
+		sh.modelTime = sh.ev.clock().Sub(roundStart)
 		if res.Ending != executor.EndFinish {
 			return outcome{}, x, executor.Fail(executor.ReasonProtocol, "the shaper ended its round without a submission")
 		}
@@ -1473,6 +1479,7 @@ func (sh *shaping) submit(ctx context.Context, args map[string]any) (string, out
 	if text, checked, err := sh.precheck(args); err != nil || checked {
 		return text, outcome{kind: outPrecheck}, err
 	}
+	checkStart := sh.ev.clock()
 	sh.submissions++
 	sh.packageKey, sh.unchangedOf, sh.unchanged = "", 0, false
 	sh.priorRefusal, sh.lastCounted, sh.sameOf = sh.lastCounted, nil, 0
@@ -1489,6 +1496,12 @@ func (sh *shaping) submit(ctx context.Context, args map[string]any) (string, out
 	}
 	if err == nil && out.kind == outObservations {
 		sh.unresolved = nil
+	}
+	if sh.lastCounted != nil {
+		sh.timedAttempts = append(sh.timedAttempts, timedAttempt{
+			attempt: sh.submissions, gate: sh.lastCounted.gate, model: sh.modelTime,
+			check: sh.ev.clock().Sub(checkStart), remaining: shapingBudget - sh.sinceStart(),
+		})
 	}
 	return text, out, err
 }

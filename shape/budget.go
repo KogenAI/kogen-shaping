@@ -34,7 +34,7 @@ func externalBrief() string {
 
 // budgetStop is the outcome of a shaping whose budget ran out before its next provider request:
 // it names the budget, the time spent, the requests made, and the last refusal if there was one.
-func budgetStop(last lastSubmission, answer string, answers int, elapsed time.Duration, requests int) outcome {
+func budgetStop(last lastSubmission, answer string, answers int, elapsed time.Duration, requests int, attempts []timedAttempt) outcome {
 	result := noToolStop(last, answer)
 	result.detail = fmt.Sprintf("the shaper used its %d-minute shaping budget (%s elapsed, %d requests) without a submission that passed; shaping stopped",
 		int(shapingBudget/time.Minute), budgetText(elapsed), requests)
@@ -44,8 +44,37 @@ func budgetStop(last lastSubmission, answer string, answers int, elapsed time.Du
 	} else {
 		result.problems = result.problems[:len(result.problems)-1]
 	}
+	result.problems = append(result.problems, attemptLines(attempts)...)
 	return result
 }
+
+// timedAttempt is one refused submission: the first refusing gate, the time of the model request
+// that produced it, the time Kogen spent checking it and the shaping budget left when that check ended.
+type timedAttempt struct {
+	attempt   int
+	gate      string
+	model     time.Duration
+	check     time.Duration
+	remaining time.Duration
+}
+
+// wholeSeconds is a duration in whole seconds, truncated and never below 0.
+func wholeSeconds(d time.Duration) int { return int(max(d, 0) / time.Second) }
+
+// attemptLines state the shaping budget, as the shaping_turn_counts event records it, and
+// one line per refused submission, oldest first.
+func attemptLines(attempts []timedAttempt) []string {
+	lines := []string{fmt.Sprintf("shaping budget: %d s (%d min, wall-clock for the whole shaping, all rounds; the response_budget event is the separate limit on one provider response wait)",
+		shapingBudgetSeconds(), int(shapingBudget/time.Minute))}
+	for _, a := range attempts {
+		lines = append(lines, fmt.Sprintf("attempt %d: gate %s, model request %d s, Kogen checks %d s, %d s remaining",
+			a.attempt, a.gate, wholeSeconds(a.model), wholeSeconds(a.check), wholeSeconds(a.remaining)))
+	}
+	return lines
+}
+
+// shapingBudgetSeconds is the shaping budget in seconds, the figure of the shaping_turn_counts event.
+func shapingBudgetSeconds() int { return int(shapingBudget / time.Second) }
 
 // budgetSpent reports whether the budget leaves no time for another provider request.
 func budgetSpent(elapsed time.Duration) bool { return elapsed >= shapingBudget }

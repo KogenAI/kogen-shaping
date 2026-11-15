@@ -83,8 +83,11 @@ func TestBudgetEndsBeforeTheNextRequest(t *testing.T) {
 	shpEq(t, "exit", exit, 1)
 	shpEq(t, "requests", len(f.Prov.requests()), 3)
 	text := fmt.Sprint(e.Detail, "\n", strings.Join(e.Lines, "\n"))
-	for _, want := range []string{"15 min elapsed", "3 requests"} {
+	for _, want := range []string{"15 min elapsed", "3 requests", budgetFigureLine} {
 		shpContains(t, "message", text, want)
+	}
+	if strings.Contains(text, "attempt ") {
+		t.Fatalf("no submission was refused, so no attempt is listed:\n%s", text)
 	}
 	counts := shpNamed(f.events(), "shaping_turn_counts")
 	shpEq(t, "requests", counts[0]["requests"], any(float64(3)))
@@ -132,5 +135,13 @@ func TestBudgetEndsTheExternalShapingBeforeTheNextRound(t *testing.T) {
 	e := shpWantError(t, err, "shape", "invalid_output", "15-minute", 1)
 	shpEq(t, "exit", exit, 1)
 	shpEq(t, "rounds", len(x.inputs), 1)
-	shpContains(t, "message", strings.Join(e.Lines, "\n"), "last refusal")
+	lines := strings.Join(e.Lines, "\n")
+	shpContains(t, "message", lines, "last refusal")
+	shpContains(t, "message", lines, budgetFigureLine)
+	// The round took 960 s of the 900 s budget: the remaining budget is never below 0.
+	shpContains(t, "message", lines, "attempt 1: gate ")
+	shpContains(t, "message", lines, ", model request 960 s, Kogen checks 0 s, 0 s remaining")
 }
+
+// budgetFigureLine is the refusal line that states the shaping budget and names the other budget.
+const budgetFigureLine = "shaping budget: 900 s (15 min, wall-clock for the whole shaping, all rounds; the response_budget event is the separate limit on one provider response wait)"
