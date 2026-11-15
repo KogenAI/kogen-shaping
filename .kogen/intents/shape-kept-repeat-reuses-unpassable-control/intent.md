@@ -1,0 +1,40 @@
+# Reuse unpassable controls for kept repeats
+
+Slug: shape-kept-repeat-reuses-unpassable-control
+Model: .kogen/intents/shape-kept-repeat-reuses-unpassable-control/model.qnt invariants=ReuseWithoutDuplicate,FreshKeyOnly,ObservationStillRuns seed=7 samples=100 steps=20
+Acceptance:
+- .kogen/intents/shape-kept-repeat-reuses-unpassable-control/acceptance.feature
+- features/steps/shape-kept-repeat-reuses-unpassable-control__steps.js
+- features/steps/shape-kept-repeat-reuses-unpassable-control__driver/observe_test.go
+- features/steps/shape-kept-repeat-reuses-unpassable-control__driver/qualify.js
+
+Within one unchanged candidate package and candidate tree, compute the completed unpassable-step control observation and verdict once. A subsequent readiness Check, including the kept-assertion repeat, reuses that completed result without launching another control subprocess or recording another unpassable_check event. Replace only this redundant work: the repeat must still execute the readiness scenarios again, retain its progress lines and kept_assertion_repeat event, and preserve which drafts pass or are refused and all refusal text.
+
+Any change to package bytes or the candidate tree requires a fresh control. Never reuse a skipped control, a control execution error, or a control report/judgment that could not be completed: retain today's retry and error behavior. A completed refusal is a verdict, not an execution failure, and reuse must return the same refusal rather than turn it into permission. Do not introduce configuration, persistent caches, provider calls, or changes to readiness's observation-repeat policy.
+
+Add a focused model-free regression test in the shape package next to unpassable_test.go, reusing its existing unpassableFixture/controlProbe helper. Count actual control launches with a marker or counter and inspect recorded events, not private helper call order. Cover a failed scenario and counted kept property that triggers the repeat; changed package bytes between Check calls; a first skipped control followed by a successful retry. Also preserve execution-error propagation/retry and exact completed-refusal text. Acceptance supplies its own pre-existing overlay test input and never requires Build to invent a named test before it can run.
+
+## Decisions
+- Reuse only a completed unpassable result for the same package hash and candidate tree, within the current shaping invocation; changed inputs require a fresh run and skipped or errored attempts remain retryable. (evidence: shape/unpassable.go; shape/shape.go; shape/contract.go) (source: request)
+- Keep the readiness scenario repeat, its existing progress lines and kept_assertion_repeat event unchanged; suppress only the duplicate control execution and duplicate unpassable_check event. (evidence: shape/contract.go; shape/shape.go) (source: request)
+- Preserve completed accepting and refusing verdicts and exact refusal texts, including the distinction between a completed refusal and an execution failure; add no configuration. (evidence: shape/unpassable.go; shape/unpassable_test.go) (source: request)
+- Exercise the real readiness Check gate and contractCheck kept-repeat route with local Cucumber and the existing scripted provider fixture, without live model calls; add ordinary focused regression coverage alongside the existing unpassable tests. (evidence: shape/unpassable_test.go; shape/helper_test.go; shape/kept_repeat_test.go; shape/shaping_fixture_test.go) (source: request)
+
+## Source comparison
+- Addressed: Request Expected and Constraints map to the unchanged-key reuse, fresh-key invalidation, retry and unchanged verdict/text rules above and all six acceptance scenarios. The readiness observation itself remains fresh, not cached. The only removed behavior is the extra unpassable control subprocess and its duplicate event for a completed unchanged candidate.
+- Addressed: Request Source names shape/contract.go, shape/shape.go and shape/unpassable.go; repository inspection confirms contractCheck repeats rd.Check and the gate chain reaches unpassableGate. The implementation is bounded to this reuse, not a redesign of the contract check, preparation gate, or acceptance runner.
+- Addressed: Request Focused model-free regression maps to the required shape-package regression above and the independently supplied overlay driver using unpassableFixture/controlProbe. The new production test is not an acceptance dependency. Events, actual subprocess counts, two readiness runs, retry outcomes and exact refusal text are executable observations.
+- Addressed: the supplied AoR climb release 30cf6619, cell path, repeated-round event counts, stand_in_used definition path/line, acceptance_executions, refusal time and progress timings are retained in acceptance.feature's reproducer description; its local analogue executes the same repeat mechanism. Historical elapsed times are diagnostic evidence, not a new performance threshold or a requirement to read unavailable AoR artifacts.
+- Omitted: no requested behavior or non-secret reproducing literal is intentionally omitted. No request requirement is conflicting or superseded. Existing tests establish unchanged behavior, not authority to retain the duplicate execution.
+
+## Tests
+- A kept-assertion repeat reuses the completed control once without a second event: add a focused shape-package regression using a launch marker and events, exercised independently through the protected Check/contractCheck overlay driver (regression)
+- Changed package bytes or candidate tree force another control: exercise consecutive real Check calls with a feature-byte edit and a non-package production-file edit (integration)
+- Skipped or failed control attempts are retried rather than cached: exercise a first no-report control failure on the kept repeat and a canceled execution followed by a valid gate call (regression)
+- Completed verdicts and refusal text stay unchanged: compare both refusals byte for byte against the feature's expected refusal and retain stand_in_used verdicts and kept-property refusal evidence (regression)
+- The readiness repeat progress and event are preserved while its scenarios still run twice: assert launch markers, scenario statuses, the event outcome/cap, and both existing progress strings (regression)
+- Existing unpassable judgments and refusal wording remain covered: retain TestJudgeUnpassable, TestUnpassableGate, TestUnpassableControlSkipped and TestUnpassableRefusalText unchanged (existing)
+
+## Feasibility
+- The local tool probe observed Go 1.27.2 and Node v24.21.0 with the configured Cucumber and Quint paths available; no external protocol or provider capability change is required. The first repeat-driver probe exposed an unset synthetic provider role, repaired in the submitted fixture; the package-change probe reached two real failed readiness scenarios and two stand_in_used controls. Observer controls below qualify the final fixture independently of missing-feature red.
+- evidence: {"id":"repeat-observer","kind":"observer","inputs":[".kogen/intents/shape-kept-repeat-reuses-unpassable-control/acceptance.feature",".kogen/intents/shape-kept-repeat-reuses-unpassable-control/controls.json","features/steps/shape-kept-repeat-reuses-unpassable-control__driver/observe_test.go","features/steps/shape-kept-repeat-reuses-unpassable-control__driver/qualify.js","features/steps/shape-kept-repeat-reuses-unpassable-control__steps.js"],"observers":["features/steps/shape-kept-repeat-reuses-unpassable-control__driver/observe_test.go","features/steps/shape-kept-repeat-reuses-unpassable-control__driver/qualify.js","features/steps/shape-kept-repeat-reuses-unpassable-control__steps.js"],"checks":[{"name":"good","command":"node features/steps/shape-kept-repeat-reuses-unpassable-control__driver/qualify.js good","exit":0,"output":"observer accepted real controls\n"},{"name":"bad","command":"node features/steps/shape-kept-repeat-reuses-unpassable-control__driver/qualify.js bad","exit":1,"output":"observer rejected corruptions\n"}]}

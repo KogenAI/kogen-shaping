@@ -1,0 +1,64 @@
+{
+  "correct": {
+    "files": {
+      "shape/unpassable.go": {
+        "patch": "--- a/shape/unpassable.go\n+++ b/shape/unpassable.go\n@@ -580,6 +580,12 @@\n \treturn run, reason, nil\n }\n \n+type unpassableResult struct {\n+\tpackageHash string\n+\ttree        string\n+\trefusal     error\n+}\n+\n // unpassableGate refuses a ready result in which a step definition can not pass whatever the\n // repository contains. It runs only for a result with a failed scenario, records one event and\n // refuses only on positive evidence.\n@@ -587,6 +593,10 @@\n \tif !ready.Failures() {\n \t\treturn nil\n \t}\n+\tif last := sh.unpassableLast; last != nil && ready.SHA256 != \"\" && ready.CandidateTree != \"\" && last.packageHash == ready.SHA256 && last.tree == ready.CandidateTree {\n+\t\treturn last.refusal\n+\t}\n+\tsh.unpassableLast = nil\n \trun, reason, err := sh.unpassableControl(ctx, ready)\n \tif err != nil {\n \t\treturn err\n@@ -608,8 +618,12 @@\n \t\t}\n \t}\n \tsh.ev.Record(map[string]any{\"event\": \"unpassable_check\", \"ok\": len(e.items) == 0, \"steps\": list})\n+\tvar refusal error\n \tif len(e.items) > 0 {\n-\t\treturn e\n-\t}\n-\treturn nil\n-}\n+\t\trefusal = e\n+\t}\n+\tif ready.SHA256 != \"\" && ready.CandidateTree != \"\" {\n+\t\tsh.unpassableLast = &unpassableResult{packageHash: ready.SHA256, tree: ready.CandidateTree, refusal: refusal}\n+\t}\n+\treturn refusal\n+}\n"
+      },
+      "shape/shape.go": {
+        "patch": "--- a/shape/shape.go\n+++ b/shape/shape.go\n@@ -535,8 +535,9 @@\n \n // shaping is one run of the shaper conversation.\n type shaping struct {\n-\tretry        retryBudget\n-\tretryStopped bool\n+\tunpassableLast *unpassableResult\n+\tretry          retryBudget\n+\tretryStopped   bool\n \t// batch collects the refusals of one submission's independent gates while they all run;\n \t// batching is false outside that.\n \tbatch    []heldRefusal\n"
+      }
+    }
+  },
+  "wrong": [
+    {
+      "name": "repeat reruns control",
+      "scenario": "Reuse the control during a kept assertion repeat",
+      "step": "Then shape-kept-repeat-reuses-unpassable-control: the observation is",
+      "files": {
+        "shape/unpassable.go": {
+          "patch": "--- a/shape/unpassable.go\n+++ b/shape/unpassable.go\n@@ -593,7 +593,7 @@\n \tif !ready.Failures() {\n \t\treturn nil\n \t}\n-\tif last := sh.unpassableLast; last != nil && ready.SHA256 != \"\" && ready.CandidateTree != \"\" && last.packageHash == ready.SHA256 && last.tree == ready.CandidateTree {\n+\tif last := sh.unpassableLast; false && last != nil && ready.SHA256 != \"\" && ready.CandidateTree != \"\" && last.packageHash == ready.SHA256 && last.tree == ready.CandidateTree {\n \t\treturn last.refusal\n \t}\n \tsh.unpassableLast = nil\n"
+        }
+      }
+    },
+    {
+      "name": "ignore changed package",
+      "scenario": "Invalidate reuse after changing package bytes",
+      "step": "Then shape-kept-repeat-reuses-unpassable-control: the observation is",
+      "files": {
+        "shape/unpassable.go": {
+          "patch": "--- a/shape/unpassable.go\n+++ b/shape/unpassable.go\n@@ -593,7 +593,7 @@\n \tif !ready.Failures() {\n \t\treturn nil\n \t}\n-\tif last := sh.unpassableLast; last != nil && ready.SHA256 != \"\" && ready.CandidateTree != \"\" && last.packageHash == ready.SHA256 && last.tree == ready.CandidateTree {\n+\tif last := sh.unpassableLast; last != nil && ready.SHA256 != \"\" && ready.CandidateTree != \"\" && true {\n \t\treturn last.refusal\n \t}\n \tsh.unpassableLast = nil\n"
+        }
+      }
+    },
+    {
+      "name": "ignore changed tree",
+      "scenario": "Invalidate reuse after changing the candidate tree",
+      "step": "Then shape-kept-repeat-reuses-unpassable-control: the observation is",
+      "files": {
+        "shape/unpassable.go": {
+          "patch": "--- a/shape/unpassable.go\n+++ b/shape/unpassable.go\n@@ -593,7 +593,7 @@\n \tif !ready.Failures() {\n \t\treturn nil\n \t}\n-\tif last := sh.unpassableLast; last != nil && ready.SHA256 != \"\" && ready.CandidateTree != \"\" && last.packageHash == ready.SHA256 && last.tree == ready.CandidateTree {\n+\tif last := sh.unpassableLast; last != nil && ready.SHA256 != \"\" && ready.CandidateTree != \"\" && last.packageHash == ready.SHA256 && true {\n \t\treturn last.refusal\n \t}\n \tsh.unpassableLast = nil\n"
+        }
+      }
+    },
+    {
+      "name": "cache skipped control",
+      "scenario": "Retry a skipped control on the repeat",
+      "step": "Then shape-kept-repeat-reuses-unpassable-control: the observation is",
+      "files": {
+        "shape/unpassable.go": {
+          "patch": "--- a/shape/unpassable.go\n+++ b/shape/unpassable.go\n@@ -606,6 +606,7 @@\n \t\tsteps, reason = judgeUnpassable(ready, run)\n \t}\n \tif reason != \"\" {\n+\t\tsh.unpassableLast = &unpassableResult{packageHash:ready.SHA256, tree:ready.CandidateTree}\n \t\tsh.ev.Record(map[string]any{\"event\": \"unpassable_check\", \"ok\": true, \"skipped\": reason, \"steps\": []any{}})\n \t\treturn nil\n \t}\n"
+        }
+      }
+    },
+    {
+      "name": "lose cached refusal",
+      "scenario": "Preserve a completed refusal exactly",
+      "step": "Then shape-kept-repeat-reuses-unpassable-control: the observation is",
+      "files": {
+        "shape/unpassable.go": {
+          "patch": "--- a/shape/unpassable.go\n+++ b/shape/unpassable.go\n@@ -594,7 +594,7 @@\n \t\treturn nil\n \t}\n \tif last := sh.unpassableLast; last != nil && ready.SHA256 != \"\" && ready.CandidateTree != \"\" && last.packageHash == ready.SHA256 && last.tree == ready.CandidateTree {\n-\t\treturn last.refusal\n+\t\treturn nil\n \t}\n \tsh.unpassableLast = nil\n \trun, reason, err := sh.unpassableControl(ctx, ready)\n"
+        }
+      }
+    }
+  ]
+}

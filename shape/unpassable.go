@@ -580,6 +580,13 @@ func (sh *shaping) unpassableControl(ctx context.Context, ready *verify.Ready) (
 	return run, reason, nil
 }
 
+// completedUnpassable retains only a finished judgment for this invocation's last candidate.
+type completedUnpassable struct {
+	packageHash string
+	tree        string
+	refusal     *unpassableError
+}
+
 // unpassableGate refuses a ready result in which a step definition can not pass whatever the
 // repository contains. It runs only for a result with a failed scenario, records one event and
 // refuses only on positive evidence.
@@ -587,6 +594,13 @@ func (sh *shaping) unpassableGate(ctx context.Context, ready *verify.Ready) erro
 	if !ready.Failures() {
 		return nil
 	}
+	if cached := sh.unpassableResult; cached != nil && cached.packageHash == ready.SHA256 && cached.tree == ready.CandidateTree {
+		if cached.refusal != nil {
+			return cached.refusal
+		}
+		return nil
+	}
+	sh.unpassableResult = nil
 	run, reason, err := sh.unpassableControl(ctx, ready)
 	if err != nil {
 		return err
@@ -608,7 +622,9 @@ func (sh *shaping) unpassableGate(ctx context.Context, ready *verify.Ready) erro
 		}
 	}
 	sh.ev.Record(map[string]any{"event": "unpassable_check", "ok": len(e.items) == 0, "steps": list})
+	sh.unpassableResult = &completedUnpassable{packageHash: ready.SHA256, tree: ready.CandidateTree}
 	if len(e.items) > 0 {
+		sh.unpassableResult.refusal = e
 		return e
 	}
 	return nil

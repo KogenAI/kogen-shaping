@@ -535,6 +535,8 @@ type original struct {
 
 // shaping is one run of the shaper conversation.
 type shaping struct {
+	unpassableResult *completedUnpassable
+
 	retry        retryBudget
 	retryStopped bool
 	// batch collects the refusals of one submission's independent gates while they all run;
