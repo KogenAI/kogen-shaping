@@ -1,0 +1,79 @@
+package shape
+
+import (
+	"strings"
+	"testing"
+)
+
+// Acceptance driver of shape-contract-review-driver-contradictions. It uses only code and helpers
+// that exist before the change.
+func TestDriverContradictionsAcceptance(t *testing.T) {
+	low := strings.ToLower(contractReviewInstructions)
+	for _, c := range []struct{ name, phrase string }{
+		{"instructions name the removed or replaced record", "removed or replaced earlier in the same test"},
+		{"instructions name the uniqueness collision", "uniqueness rule"},
+		{"instructions name the request or tenant context", "different request or tenant context"},
+		{"instructions keep the missing-feature exclusion", "a scenario that fails only because the requested feature is missing is not a finding"},
+		{"instructions keep the unsure rule", "when unsure, report nothing"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if !strings.Contains(low, c.phrase) {
+				t.Fatalf("review instructions lack %q", c.phrase)
+			}
+		})
+	}
+
+	const steps = "const card = cards(:unfinished_thoughts);\ncard.destroy;\nassert.equal(cards(:unfinished_thoughts).title, 'x');\n"
+	const feature = "Feature: Cards\n  Scenario: Out of cards\n    Then is-even: the drafted card is shown\n"
+	e := contractEvidence{
+		scenarios:    []string{"Out of cards"},
+		expectations: map[string]string{"acceptance.feature": feature, "steps.js": steps},
+		intentPath:   "intent.md", intent: "Show cards.", request: "Show cards.",
+		tracked: func(string) (string, bool) { return "", false },
+	}
+	finding := func(quote string) contractFinding {
+		return contractFinding{scenario: "Out of cards", expectation: contractQuote{"steps.js", "assert.equal(cards(:unfinished_thoughts).title, 'x');"}, contract: contractQuote{"steps.js", quote}, why: "the card was destroyed earlier in the same test"}
+	}
+	t.Run("earlier statement quote is evidenced", func(t *testing.T) {
+		if !e.evidenced(finding("card.destroy;")) {
+			t.Fatal("an exact quote of an earlier statement of the same step file is not evidenced")
+		}
+	})
+	t.Run("invented earlier statement quote is not evidenced", func(t *testing.T) {
+		if e.evidenced(finding("card.destroy_all;")) {
+			t.Fatal("an invented quote is evidenced")
+		}
+	})
+
+	t.Run("scripted review refuses the draft", func(t *testing.T) {
+		const feat = "Feature: Update docs\n  Scenario: Drafted card\n    Then is-even: the drafted card is shown\n"
+		const stp = `const {Then} = require('@cucumber/cucumber');
+Then('is-even: the drafted card is shown', function () {
+  card.destroy();
+  assert.equal(cards('unfinished_thoughts').title, 'x');
+});
+`
+		files := shpFiles()
+		for _, raw := range files["files"].([]any) {
+			m := raw.(map[string]any)
+			switch m["path"] {
+			case ccFeaturePath:
+				m["content"] = feat
+			case ccStepsPath:
+				m["content"] = stp
+			}
+		}
+		f := newShpFx(t, shpSubmit("c1", files), shpSubmit("c2", files), shpSubmit("c3", files))
+		f.setFeatureReport("report", feat, "FAILED", 1)
+		fa := ccFindingArgs("Drafted card", "Then is-even: the drafted card is shown", "")
+		fa["expectation"] = map[string]any{"path": ccStepsPath, "quote": "assert.equal(cards('unfinished_thoughts').title, 'x');"}
+		fa["contract"] = map[string]any{"path": ccStepsPath, "quote": "card.destroy();"}
+		fa["why"] = "the card was destroyed earlier in the same test"
+		f.Prov.contract = []shpStep{ccReview("r1", fa), ccConfirm("v1", ccVerdict(1, "confirmed", "destroyed then read"))}
+		exit, err := f.shape("Show the drafted card.")
+		reviews := ccReviews(f)
+		if len(reviews) != 1 || reviews[0]["evidenced"] != float64(1) || err == nil || exit == 0 || reviews[0]["result"] != "refused" {
+			t.Fatalf("exit %d: %v; reviews %v", exit, err, reviews)
+		}
+	})
+}
