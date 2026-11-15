@@ -1960,14 +1960,17 @@ func (sh *shaping) checkSubmission(ctx context.Context, files []string) (string,
 	}
 	if sh.lastFresh && !sh.contractChecked[hash] {
 		beforeContract := sh.ready
-		confirmed, err := sh.contractCheck(ctx, hash, sh.lastObservations)
-		if err != nil {
-			return "", outcome{}, err
-		}
-		if confirmed.empty() {
-			if confirmed, err = sh.wrongImplementationCheck(ctx, hash); err != nil {
-				return "", outcome{}, err
+		var confirmed contractConfirmed
+		if err := sh.ev.Timed("contract", func() (err error) {
+			if confirmed, err = sh.contractCheck(ctx, hash, sh.lastObservations); err != nil {
+				return err
 			}
+			if confirmed.empty() {
+				confirmed, err = sh.wrongImplementationCheck(ctx, hash)
+			}
+			return err
+		}); err != nil {
+			return "", outcome{}, err
 		}
 		if !confirmed.empty() {
 			lines := confirmed.all()

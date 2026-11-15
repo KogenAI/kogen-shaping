@@ -46,15 +46,15 @@ func TestShapeRuntimeInstallAccounting(t *testing.T) {
 		progress                    string
 	}{
 		{name: "historical cold replay", preparation: 115939, shaper: 280916, checks: 511168,
-			progress: "kogen: shape time 908.0 s: shaper 280.9 s (model unknown, tools unknown), Kogen checks 511.2 s (readiness 0.0 s), gaps 0.0 s, runtime install 115.9 s"},
+			progress: "kogen: shape time 908.0 s: shaper 280.9 s (model unknown, tools unknown), Kogen checks 511.2 s (static 0.0 s, model checks 0.0 s, contract review 511.2 s, readiness 0.0 s), gaps 0.0 s, runtime install 115.9 s"},
 		{name: "warm startup", warm: true, preparation: 2000, shaper: 280916, checks: 511168,
-			progress: "kogen: shape time 794.1 s: shaper 280.9 s (model unknown, tools unknown), Kogen checks 511.2 s (readiness 0.0 s), gaps 2.0 s"},
+			progress: "kogen: shape time 794.1 s: shaper 280.9 s (model unknown, tools unknown), Kogen checks 511.2 s (static 0.0 s, model checks 0.0 s, contract review 511.2 s, readiness 0.0 s), gaps 2.0 s"},
 		{name: "cold inside boundary", preparation: 115939, shaper: 899999,
-			progress: "kogen: shape time 1015.9 s: shaper 900.0 s (model unknown, tools unknown), Kogen checks 0.0 s (readiness 0.0 s), gaps 0.0 s, runtime install 115.9 s"},
+			progress: "kogen: shape time 1015.9 s: shaper 900.0 s (model unknown, tools unknown), Kogen checks 0.0 s (static 0.0 s, model checks 0.0 s, contract review 0.0 s, readiness 0.0 s), gaps 0.0 s, runtime install 115.9 s"},
 		{name: "cold boundary", preparation: 115939, shaper: 900000, refuse: true,
-			progress: "kogen: shape time 1015.9 s: shaper 900.0 s (model unknown, tools unknown), Kogen checks 0.0 s (readiness 0.0 s), gaps 0.0 s, runtime install 115.9 s"},
+			progress: "kogen: shape time 1015.9 s: shaper 900.0 s (model unknown, tools unknown), Kogen checks 0.0 s (static 0.0 s, model checks 0.0 s, contract review 0.0 s, readiness 0.0 s), gaps 0.0 s, runtime install 115.9 s"},
 		{name: "warm boundary", warm: true, shaper: 900000, refuse: true,
-			progress: "kogen: shape time 900.0 s: shaper 900.0 s (model unknown, tools unknown), Kogen checks 0.0 s (readiness 0.0 s), gaps 0.0 s"},
+			progress: "kogen: shape time 900.0 s: shaper 900.0 s (model unknown, tools unknown), Kogen checks 0.0 s (static 0.0 s, model checks 0.0 s, contract review 0.0 s, readiness 0.0 s), gaps 0.0 s"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newShpFx(t)

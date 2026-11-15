@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-executor/executor"
 	"github.com/KogenAI/kogen-loop/provider"
 	"github.com/KogenAI/kogen-loop/sys"
 	"github.com/KogenAI/kogen-verification/verify"
@@ -295,13 +296,13 @@ func TestShapeTimeAccount(t *testing.T) {
 		ev, events := run(t, true)
 		n := len(events)
 		want := map[string]any{"event": "shape_time", "elapsed_ms": 720.0, "shaper_ms": 300.0, "shaper_model_ms": 250.0,
-			"shaper_tools_ms": 50.0, "checks_ms": 350.0, "readiness_ms": 200.0, "install_ms": 0.0, "gap_ms": 70.0}
+			"shaper_tools_ms": 50.0, "checks_ms": 350.0, "static_ms": 0.0, "model_checks_ms": 0.0, "contract_ms": 0.0, "readiness_ms": 200.0, "install_ms": 0.0, "gap_ms": 70.0}
 		if !reflect.DeepEqual(events[n-2], want) || events[n-1]["event"] != "session_end" {
 			t.Fatalf("events %v, want %v before session_end", events[n-2:], want)
 		}
 		shpEq(t, "session_end elapsed", events[n-1]["elapsed_ms"], want["elapsed_ms"])
 		shpEq(t, "readiness phase", phaseWall(events, "readiness")[0], want["readiness_ms"].(float64))
-		shpEq(t, "line", ev.Spent().Line(), "kogen: shape time 0.7 s: shaper 0.3 s (model 0.3 s, tools 0.1 s), Kogen checks 0.4 s (readiness 0.2 s), gaps 0.1 s")
+		shpEq(t, "line", ev.Spent().Line(), "kogen: shape time 0.7 s: shaper 0.3 s (model 0.3 s, tools 0.1 s), Kogen checks 0.4 s (static 0.0 s, model checks 0.0 s, contract review 0.0 s, readiness 0.2 s), gaps 0.1 s")
 	})
 	t.Run("a round without model time leaves model and tools null", func(t *testing.T) {
 		parallel(t)
@@ -337,8 +338,64 @@ func TestShapeTimeLine(t *testing.T) {
 	for in, want := range map[*int64]string{ms(1250): "1.3 s", ms(1249): "1.2 s", ms(0): "0.0 s", ms(49): "0.0 s", ms(50): "0.1 s", ms(61_000): "61.0 s", nil: "unknown"} {
 		shpEq(t, "seconds", seconds(in), want)
 	}
-	a := TimeAccount{Elapsed: 6100, Shaper: 1900, Model: ms(500), Tools: ms(1400), Checks: 3000, Readiness: 2100, Gap: 1200}
-	shpEq(t, "line", a.Line(), "kogen: shape time 6.1 s: shaper 1.9 s (model 0.5 s, tools 1.4 s), Kogen checks 3.0 s (readiness 2.1 s), gaps 1.2 s")
+	a := TimeAccount{Elapsed: 6100, Shaper: 1900, Model: ms(500), Tools: ms(1400), Checks: 3000, Static: 400, ModelChecks: 700, Contract: 1100, Readiness: 2100, Gap: 1200}
+	shpEq(t, "line", a.Line(), "kogen: shape time 6.1 s: shaper 1.9 s (model 0.5 s, tools 1.4 s), Kogen checks 3.0 s (static 0.4 s, model checks 0.7 s, contract review 1.1 s, readiness 2.1 s), gaps 1.2 s")
 	a.Model, a.Tools = nil, nil
-	shpEq(t, "unknown", a.Line(), "kogen: shape time 6.1 s: shaper 1.9 s (model unknown, tools unknown), Kogen checks 3.0 s (readiness 2.1 s), gaps 1.2 s")
+	shpEq(t, "unknown", a.Line(), "kogen: shape time 6.1 s: shaper 1.9 s (model unknown, tools unknown), Kogen checks 3.0 s (static 0.4 s, model checks 0.7 s, contract review 1.1 s, readiness 2.1 s), gaps 1.2 s")
+}
+
+func sleepingRound(d time.Duration, v any) func(int, string) (executor.RoundResult, error) {
+	return func(n int, root string) (executor.RoundResult, error) {
+		time.Sleep(d)
+		return result(v)(n, root)
+	}
+}
+
+// TestShapeTimeSplitsChecksByGate runs a scripted Shape whose static check, decision and literal
+// checks and contract review each take time, and reads the split back from shape_time and the
+// progress line.
+func TestShapeTimeSplitsChecksByGate(t *testing.T) {
+	f := newShpFx(t)
+	f.writeLineup("version: 1\ncommands:\n  checks: [{name: slow, run: 'sleep 0.3'}]\n  acceptance: {run: sh accept.sh, steps_dir: features/steps}\n", "shape: {executor: claude-code, model: claude-opus-5-5, effort: xhigh}\n")
+	f.git("commit", "-qm", "claude-code shaper")
+	x := &shapeExec{t: t,
+		rounds: []func(int, string) (executor.RoundResult, error){
+			result(shpFiles()),
+			result(map[string]any{"files": []any{map[string]any{"path": ".kogen/intents/is-even/acceptance.feature", "content": shpFeature}}}),
+		},
+		decision: []func(int, string) (executor.RoundResult, error){sleepingRound(300*time.Millisecond, map[string]any{"items": []any{}})},
+		literal:  []func(int, string) (executor.RoundResult, error){sleepingRound(300*time.Millisecond, map[string]any{"items": []any{}})},
+		contract: []func(int, string) (executor.RoundResult, error){sleepingRound(150*time.Millisecond, map[string]any{"findings": []any{}, "environment": []any{}})},
+	}
+	if exit, err := f.shapeWith(x, "Add calc.is_even(n). Non-integers raise TypeError."); err != nil || exit != 0 {
+		t.Fatalf("exit %d: %v", exit, err)
+	}
+	accounts := shpNamed(f.events(), "shape_time")
+	shpEq(t, "accounts", len(accounts), 1)
+	a := accounts[0]
+	num := func(k string) int64 {
+		v, ok := a[k].(float64)
+		if !ok {
+			t.Fatalf("shape_time has no number %s: %v", k, a)
+		}
+		return int64(v)
+	}
+	checks := num("checks_ms")
+	for _, k := range []string{"static_ms", "model_checks_ms", "contract_ms"} {
+		if num(k) > checks {
+			t.Fatalf("%s %d exceeds checks_ms %d", k, num(k), checks)
+		}
+	}
+	if num("static_ms") < 250 || num("contract_ms") < 120 {
+		t.Fatalf("static_ms %d, contract_ms %d", num("static_ms"), num("contract_ms"))
+	}
+	if m := num("model_checks_ms"); m < 300 || m >= 600 {
+		t.Fatalf("model_checks_ms %d, want [300,600): the overlapping decision and literal checks count once", m)
+	}
+	ms := func(k string) *int64 { v := num(k); return &v }
+	want := "Kogen checks " + seconds(ms("checks_ms")) + " (static " + seconds(ms("static_ms")) + ", model checks " + seconds(ms("model_checks_ms")) +
+		", contract review " + seconds(ms("contract_ms")) + ", readiness " + seconds(ms("readiness_ms")) + ")"
+	if !strings.Contains(f.Stderr.String(), want) {
+		t.Fatalf("progress lacks %q:\n%s", want, f.Stderr.String())
+	}
 }

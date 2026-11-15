@@ -57,7 +57,7 @@ function observe(vars) {
 
 const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 const isMs = (v) => Number.isInteger(v) && v >= 0;
-const ACCOUNT_FIELDS = ['checks_ms', 'elapsed_ms', 'event', 'gap_ms', 'readiness_ms', 'shaper_model_ms', 'shaper_ms', 'shaper_tools_ms'];
+const ACCOUNT_FIELDS = ['checks_ms', 'contract_ms', 'elapsed_ms', 'event', 'gap_ms', 'model_checks_ms', 'readiness_ms', 'shaper_model_ms', 'shaper_ms', 'shaper_tools_ms', 'static_ms'];
 
 // secs is a millisecond value as the time line prints it: seconds with one decimal, rounded
 // half up, or unknown.
@@ -69,7 +69,7 @@ function secs(ms) {
 
 function timeLine(a) {
   return `kogen: shape time ${secs(a.elapsed_ms)}: shaper ${secs(a.shaper_ms)} (model ${secs(a.shaper_model_ms)}, tools ${secs(a.shaper_tools_ms)}), ` +
-    `Kogen checks ${secs(a.checks_ms)} (readiness ${secs(a.readiness_ms)}), gaps ${secs(a.gap_ms)}`;
+    `Kogen checks ${secs(a.checks_ms)} (static ${secs(a.static_ms)}, model checks ${secs(a.model_checks_ms)}, contract review ${secs(a.contract_ms)}, readiness ${secs(a.readiness_ms)}), gaps ${secs(a.gap_ms)}`;
 }
 
 function account(o) {
@@ -95,7 +95,7 @@ const check = {
     assert.equal(o.after_account, 'session_end', `${o.detail}: the event right after shape_time`);
     assert.equal(o.session_end.length, 1, `${o.detail}: session_end events`);
     assert.equal(a.elapsed_ms, o.session_end[0].elapsed_ms, `${o.detail}: shape_time elapsed_ms against session_end elapsed_ms`);
-    for (const k of ['elapsed_ms', 'shaper_ms', 'checks_ms', 'readiness_ms', 'gap_ms']) {
+    for (const k of ['elapsed_ms', 'shaper_ms', 'checks_ms', 'static_ms', 'model_checks_ms', 'contract_ms', 'readiness_ms', 'gap_ms']) {
       assert.ok(isMs(a[k]), `${o.detail}: shape_time ${k} = ${JSON.stringify(a[k])} is not a whole number of milliseconds`);
     }
   },
@@ -181,7 +181,7 @@ function goodExternal() {
     {event: 'executor_round', session: 'executor-contract-review-1', round: 1, started_ms: 3500, wall_ms: 520, model_ms: null},
     {event: 'executor_round', session: MAIN, round: 2, started_ms: 4100, wall_ms: 650, model_ms: 200},
   ];
-  const a = {event: 'shape_time', elapsed_ms: 6000, shaper_ms: 1900, shaper_model_ms: 500, shaper_tools_ms: 1400, checks_ms: 3000, readiness_ms: 2100, gap_ms: 1100};
+  const a = {event: 'shape_time', elapsed_ms: 6000, shaper_ms: 1900, shaper_model_ms: 500, shaper_tools_ms: 1400, checks_ms: 3000, static_ms: 0, model_checks_ms: 0, contract_ms: 520, readiness_ms: 2100, gap_ms: 1100};
   return {detail: 'good', mode: 'external', exit: 0, stop: '', stdout: ['Intent: x', 'Acceptance test: x', 'Step files: x', 'Model: x', 'Scenarios: 2 (2 fail now, 0 pass now)',
     'shape claude-opus-5-5/xhigh claude-code 3 round(s) wall_ms=5900', 'Next: kogen intent approve is-even'],
   accounts: [a], after_account: 'session_end', session_end: [{event: 'session_end', elapsed_ms: 6000}], readiness_phase: [2100], rounds: main,
@@ -241,7 +241,7 @@ function controls(mode) {
   const unknownBad = goodExternal();
   unknownBad.rounds[2].model_ms = null;
   bad.push(unknownBad);
-  const halfUp = {elapsed_ms: 1250, shaper_ms: 0, shaper_model_ms: 0, shaper_tools_ms: 0, checks_ms: 0, readiness_ms: 0, gap_ms: 1250};
+  const halfUp = {elapsed_ms: 1250, shaper_ms: 0, shaper_model_ms: 0, shaper_tools_ms: 0, checks_ms: 0, static_ms: 0, model_checks_ms: 0, contract_ms: 0, readiness_ms: 0, gap_ms: 1250};
   if (!timeLine(halfUp).startsWith('kogen: shape time 1.3 s: ')) return true;
   return bad.some((o) => accepts(() => judgeExternal(o))) || accepts(() => check.unknown(unknownBad));
 }

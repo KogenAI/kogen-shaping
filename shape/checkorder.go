@@ -170,10 +170,15 @@ func (sh *shaping) postSubmitChecks(ctx context.Context, intent, evidence, hash 
 		sh.refused("step_selfcheck", strings.Split(feedback, "\n")[1:])
 		sh.holdText(feedback)
 	}
-	if text, out, err := sh.staticChecks(ctx, hash); err != nil {
+	var staticText string
+	var staticOut outcome
+	if err := sh.ev.Timed("static", func() (err error) {
+		staticText, staticOut, err = sh.staticChecks(ctx, hash)
 		return err
-	} else if out.kind == outInvalid {
-		sh.holdText(text)
+	}); err != nil {
+		return err
+	} else if staticOut.kind == outInvalid {
+		sh.holdText(staticText)
 	}
 	// A package the review scope, the step self-check or the static checks refuse has to change
 	// before a model can judge it, so those refusals still skip the model checks.
@@ -182,11 +187,15 @@ func (sh *shaping) postSubmitChecks(ctx context.Context, intent, evidence, hash 
 	}) {
 		return nil
 	}
-	refusals, err := runModelChecks(ctx,
-		func(ctx context.Context) ([]string, error) {
-			return sh.decisionCheckWithEvidence(ctx, intent, evidence)
-		},
-		sh.literalCheck, sh.exampleCheck)
+	var refusals []modelRefusal
+	err = sh.ev.Timed("model_checks", func() (err error) {
+		refusals, err = runModelChecks(ctx,
+			func(ctx context.Context) ([]string, error) {
+				return sh.decisionCheckWithEvidence(ctx, intent, evidence)
+			},
+			sh.literalCheck, sh.exampleCheck)
+		return err
+	})
 	if err != nil {
 		return err
 	}

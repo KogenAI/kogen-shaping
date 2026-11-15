@@ -30,7 +30,7 @@ Feature: Exclude managed runtime installation from Shape time charged to the bud
       | gap_ms | 0 |
     And shape-time-excludes-runtime-install: the progress line is:
       """
-      kogen: shape time 908.0 s: shaper 280.9 s (model unknown, tools unknown), Kogen checks 511.2 s (readiness 0.0 s), gaps 0.0 s, runtime install 115.9 s
+      kogen: shape time 908.0 s: shaper 280.9 s (model unknown, tools unknown), Kogen checks 511.2 s (static 0.0 s, model checks 0.0 s, contract review 511.2 s, readiness 0.0 s), gaps 0.0 s, runtime install 115.9 s
       """
 
   Scenario: A warm runtime retains the old progress line and counts ordinary startup
@@ -44,7 +44,7 @@ Feature: Exclude managed runtime installation from Shape time charged to the bud
     Then shape-time-excludes-runtime-install: Shape exits 0 after 2 main rounds
     And shape-time-excludes-runtime-install: the progress line is:
       """
-      kogen: shape time 794.1 s: shaper 280.9 s (model unknown, tools unknown), Kogen checks 511.2 s (readiness 0.0 s), gaps 2.0 s
+      kogen: shape time 794.1 s: shaper 280.9 s (model unknown, tools unknown), Kogen checks 511.2 s (static 0.0 s, model checks 0.0 s, contract review 511.2 s, readiness 0.0 s), gaps 2.0 s
       """
     And shape-time-excludes-runtime-install: the account is:
       | elapsed_ms | 794084 |

@@ -1,0 +1,125 @@
+package shape
+
+import (
+	"context"
+	"fmt"
+	"regexp"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-executor/executor"
+)
+
+func gateSleeping(d time.Duration, v any) func(int, string) (executor.RoundResult, error) {
+	return func(n int, root string) (executor.RoundResult, error) {
+		time.Sleep(d)
+		return result(v)(n, root)
+	}
+}
+
+func TestShapeTimeGateSplitAcceptance(t *testing.T) {
+	check := func(t *testing.T, f *shpFx, wantContract bool) {
+		accounts := shpNamed(f.events(), "shape_time")
+		shpEq(t, "accounts", len(accounts), 1)
+		a := accounts[0]
+		num := func(k string) int64 {
+			v, ok := a[k].(float64)
+			if !ok {
+				t.Fatalf("shape_time has no number %s: %v", k, a)
+			}
+			return int64(v)
+		}
+		checks := num("checks_ms")
+		for _, k := range []string{"static_ms", "model_checks_ms", "contract_ms"} {
+			if num(k) > checks {
+				t.Fatalf("%s %d exceeds checks_ms %d", k, num(k), checks)
+			}
+		}
+		if wantContract {
+			if num("static_ms") < 250 {
+				t.Fatalf("static_ms %d, want at least 250 (the check sleeps 300 ms)", num("static_ms"))
+			}
+			if m := num("model_checks_ms"); m < 300 || m >= 600 {
+				t.Fatalf("model_checks_ms %d, want [300,600): the decision and literal checks overlap and count once", m)
+			}
+			if num("contract_ms") < 120 {
+				t.Fatalf("contract_ms %d, want at least 120", num("contract_ms"))
+			}
+		} else {
+			if num("static_ms") < 250 {
+				t.Fatalf("static_ms %d, want at least 250 (the refused static check sleeps 300 ms)", num("static_ms"))
+			}
+			shpEq(t, "contract_ms", num("contract_ms"), int64(0))
+		}
+		ms := func(k string) *int64 { v := num(k); return &v }
+		want := fmt.Sprintf("Kogen checks %s (static %s, model checks %s, contract review %s, readiness %s)",
+			seconds(ms("checks_ms")), seconds(ms("static_ms")), seconds(ms("model_checks_ms")), seconds(ms("contract_ms")), seconds(ms("readiness_ms")))
+		var lines []string
+		for _, line := range strings.Split(f.Stderr.String(), "\n") {
+			if strings.HasPrefix(line, "kogen: shape time ") {
+				lines = append(lines, line)
+			}
+		}
+		shpEq(t, "progress count", len(lines), 1)
+		if !strings.Contains(lines[0], want) {
+			t.Fatalf("progress line %q does not contain %q", lines[0], want)
+		}
+		if !regexp.MustCompile(`Kogen checks \d+\.\d s \(static \d+\.\d s, model checks \d+\.\d s, contract review \d+\.\d s, readiness \d+\.\d s\), gaps `).MatchString(lines[0]) {
+			t.Fatalf("progress line %q", lines[0])
+		}
+	}
+	t.Run("with a contract review", func(t *testing.T) {
+		f := newShpFx(t)
+		f.writeLineup("version: 1\ncommands:\n  checks: [{name: slow, run: 'sleep 0.3'}]\n  acceptance: {run: sh accept.sh, steps_dir: features/steps}\n", "shape: {executor: claude-code, model: claude-opus-5-5, effort: xhigh}\n")
+		f.git("commit", "-qm", "claude-code shaper")
+		x := &shapeExec{t: t,
+			rounds: []func(int, string) (executor.RoundResult, error){
+				result(shpFiles()),
+				result(map[string]any{"files": []any{map[string]any{"path": ".kogen/intents/is-even/acceptance.feature", "content": shpFeature}}}),
+			},
+			decision: []func(int, string) (executor.RoundResult, error){gateSleeping(300*time.Millisecond, map[string]any{"items": []any{}})},
+			literal:  []func(int, string) (executor.RoundResult, error){gateSleeping(300*time.Millisecond, map[string]any{"items": []any{}})},
+			contract: []func(int, string) (executor.RoundResult, error){gateSleeping(150*time.Millisecond, map[string]any{"findings": []any{}, "environment": []any{}})},
+		}
+		exit, err := f.shapeWith(x, "Add calc.is_even(n). Non-integers raise TypeError.")
+		if err != nil || exit != 0 {
+			t.Fatalf("exit %d: %v", exit, err)
+		}
+		if x.contractCalls < 1 || x.decisionCalls < 1 {
+			t.Fatalf("contract rounds %d, decision rounds %d", x.contractCalls, x.decisionCalls)
+		}
+		check(t, f, true)
+	})
+	t.Run("without a contract review", func(t *testing.T) {
+		f := newShpFx(t)
+		f.writeLineup("version: 1\ncommands:\n  checks: [{name: slow, run: 'sleep 0.3; test ! -e .kogen/intents/is-even/intent.md'}]\n  acceptance: {run: sh accept.sh, steps_dir: features/steps}\n", "shape: {executor: claude-code, model: claude-opus-5-5, effort: xhigh}\n")
+		f.git("commit", "-qm", "claude-code shaper")
+		var mu sync.Mutex
+		var offset time.Duration
+		now := func() time.Time {
+			mu.Lock()
+			defer mu.Unlock()
+			return time.Now().Add(offset)
+		}
+		base := &shapeExec{t: t}
+		base.rounds = []func(int, string) (executor.RoundResult, error){
+			result(shpFiles()),
+			func(n int, root string) (executor.RoundResult, error) {
+				mu.Lock()
+				offset += 900 * time.Second
+				mu.Unlock()
+				return result(shpFiles())(n, root)
+			},
+		}
+		f.newSession()
+		exit, _ := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug,
+			Request: "Add calc.is_even(n).", Client: f.Client, Now: now,
+			External: func(project.Role) (executor.Executor, error) { return base, nil }})
+		shpEq(t, "exit", exit, 1)
+		shpEq(t, "contract rounds", base.contractCalls, 0)
+		check(t, f, false)
+	})
+}

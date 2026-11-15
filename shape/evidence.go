@@ -241,6 +241,9 @@ type TimeAccount struct {
 	Model, Tools    *int64
 	Install         int64
 	Checks          int64
+	Static          int64
+	ModelChecks     int64
+	Contract        int64
 	Readiness       int64
 	Gap             int64
 }
@@ -542,7 +545,8 @@ func (e *Evidence) Finish() error {
 	account := e.account
 	checks := append(slices.Clone(e.checkSpans), intervals["setup"]...)
 	checks = append(checks, intervals["preparation"]...)
-	acct := &TimeAccount{Elapsed: elapsed, Install: e.installMS, Shaper: e.shaperTotal, Readiness: Union(intervals["readiness"])}
+	acct := &TimeAccount{Elapsed: elapsed, Install: e.installMS, Shaper: e.shaperTotal, Readiness: Union(intervals["readiness"]),
+		Static: Union(intervals["static"]), ModelChecks: Union(intervals["model_checks"]), Contract: Union(intervals["contract"])}
 	if e.modelKnown {
 		model, tools := e.shaperModel, e.shaperTotal-e.shaperModel
 		acct.Model, acct.Tools = &model, &tools
@@ -554,7 +558,8 @@ func (e *Evidence) Finish() error {
 		e.Record(map[string]any{
 			"event": "shape_time", "elapsed_ms": acct.Elapsed, "shaper_ms": acct.Shaper,
 			"shaper_model_ms": nullable(acct.Model), "shaper_tools_ms": nullable(acct.Tools),
-			"install_ms": acct.Install, "checks_ms": acct.Checks, "readiness_ms": acct.Readiness, "gap_ms": acct.Gap,
+			"install_ms": acct.Install, "checks_ms": acct.Checks,
+			"static_ms": acct.Static, "model_checks_ms": acct.ModelChecks, "contract_ms": acct.Contract, "readiness_ms": acct.Readiness, "gap_ms": acct.Gap,
 		})
 		e.mu.Lock()
 		e.spent = acct
@@ -587,9 +592,9 @@ func seconds(ms *int64) string {
 // Line is the progress line that states the account.
 func (a TimeAccount) Line() string {
 	known := func(v int64) *int64 { return &v }
-	line := fmt.Sprintf("kogen: shape time %s: shaper %s (model %s, tools %s), Kogen checks %s (readiness %s), gaps %s",
+	line := fmt.Sprintf("kogen: shape time %s: shaper %s (model %s, tools %s), Kogen checks %s (static %s, model checks %s, contract review %s, readiness %s), gaps %s",
 		seconds(known(a.Elapsed)), seconds(known(a.Shaper)), seconds(a.Model), seconds(a.Tools),
-		seconds(known(a.Checks)), seconds(known(a.Readiness)), seconds(known(a.Gap)))
+		seconds(known(a.Checks)), seconds(known(a.Static)), seconds(known(a.ModelChecks)), seconds(known(a.Contract)), seconds(known(a.Readiness)), seconds(known(a.Gap)))
 	if a.Install > 0 {
 		line += ", runtime install " + seconds(known(a.Install))
 	}
