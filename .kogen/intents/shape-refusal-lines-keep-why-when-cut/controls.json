@@ -1,0 +1,21 @@
+{
+  "correct": {
+    "files": {
+      "shape/checkorder.go": {
+        "patch": "--- a/shape/checkorder.go\n+++ b/shape/checkorder.go\n@@ -32,7 +32,8 @@\n \treturn strings.Join(r.lines, \"\\n\")\n }\n \n-// cutProblems are the problem lines a refusal records: at most 20, each at most 300 characters.\n+// cutProblems are the problem lines a refusal records: at most 20, each at most 300 runes.\n+// Long lines keep a bounded why segment, when present, after an abbreviated head.\n func cutProblems(problems []string) []string {\n \tif len(problems) > 20 {\n \t\tproblems = problems[:20]\n@@ -40,7 +41,16 @@\n \tcut := make([]string, len(problems))\n \tfor i, p := range problems {\n \t\tif r := []rune(p); len(r) > 300 {\n-\t\t\tp = string(r[:300])\n+\t\t\tif at := strings.LastIndex(p, \" | why: \"); at >= 0 {\n+\t\t\t\twhy := []rune(p[at:])\n+\t\t\t\tif len(why) > 150 {\n+\t\t\t\t\twhy = why[:150]\n+\t\t\t\t}\n+\t\t\t\thead := 300 - len([]rune(\" ... \")) - len(why)\n+\t\t\t\tp = string(r[:head]) + \" ... \" + string(why)\n+\t\t\t} else {\n+\t\t\t\tp = string(r[:300])\n+\t\t\t}\n \t\t}\n \t\tcut[i] = p\n \t}\n"
+      }
+    }
+  },
+  "wrong": [
+    {
+      "name": "Current tail cut loses the reason",
+      "scenario": "Preserve why while retaining all existing bounds",
+      "step": "Then shape-refusal-lines-keep-why-when-cut: every bounded line matches its expected runes",
+      "files": {
+        "shape/checkorder.go": {
+          "patch": "--- a/shape/checkorder.go\n+++ b/shape/checkorder.go\n@@ -32,8 +32,7 @@\n \treturn strings.Join(r.lines, \"\\n\")\n }\n \n-// cutProblems are the problem lines a refusal records: at most 20, each at most 300 runes.\n-// Long lines keep a bounded why segment, when present, after an abbreviated head.\n+// cutProblems are the problem lines a refusal records: at most 20, each at most 300 characters.\n func cutProblems(problems []string) []string {\n \tif len(problems) > 20 {\n \t\tproblems = problems[:20]\n@@ -41,16 +40,7 @@\n \tcut := make([]string, len(problems))\n \tfor i, p := range problems {\n \t\tif r := []rune(p); len(r) > 300 {\n-\t\t\tif at := strings.LastIndex(p, \" | why: \"); at >= 0 {\n-\t\t\t\twhy := []rune(p[at:])\n-\t\t\t\tif len(why) > 150 {\n-\t\t\t\t\twhy = why[:150]\n-\t\t\t\t}\n-\t\t\t\thead := 300 - len([]rune(\" ... \")) - len(why)\n-\t\t\t\tp = string(r[:head]) + \" ... \" + string(why)\n-\t\t\t} else {\n-\t\t\t\tp = string(r[:300])\n-\t\t\t}\n+\t\t\tp = string(r[:300])\n \t\t}\n \t\tcut[i] = p\n \t}\n"
+        }
+      }
+    }
+  ]
+}

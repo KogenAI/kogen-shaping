@@ -40,7 +40,13 @@ func cutProblems(problems []string) []string {
 	cut := make([]string, len(problems))
 	for i, p := range problems {
 		if r := []rune(p); len(r) > 300 {
-			p = string(r[:300])
+			if at := strings.Index(p, " | why: "); at >= 0 {
+				why := []rune(p[at:])
+				why = why[:min(len(why), 150)]
+				p = string(r[:300-5-len(why)]) + " ... " + string(why)
+			} else {
+				p = string(r[:300])
+			}
 		}
 		cut[i] = p
 	}
