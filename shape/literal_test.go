@@ -93,6 +93,23 @@ func TestLiteralOutcomeRules(t *testing.T) {
 		}
 		shpEq(t, "present", event["present"], 1)
 	})
+
+	t.Run("missing line shows the near package value", func(t *testing.T) {
+		parallel(t)
+		const prefix = `literal: /demo-two | source: request | source_quote: "Register /demo_one and /demo-two." | status: missing`
+		cases := []struct{ name, value, want string }{
+			{"near value", "/demo_two", prefix + " | package_value: /demo_two | why: w"},
+			{"blank value", "  ", prefix + " | why: w"},
+			{"empty value", "", prefix + " | why: w"},
+			{"secret near value", "near tok-9f8e7d", prefix + " | package_value: near [REDACTED] | why: w"},
+		}
+		for _, tc := range cases {
+			item := litItem("/demo-two", "request", litQuote, "required", tc.value)
+			event, lines := literalOutcome([]literalItem{item}, sources, files, red)
+			shpEq(t, tc.name+" status", event["missing"], 1)
+			shpEq(t, tc.name+" line", lines[1], tc.want)
+		}
+	})
 }
 
 func litAny(v any) string {

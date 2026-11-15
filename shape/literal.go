@@ -250,6 +250,10 @@ func literalProblemLine(it literalItem, red *verify.Redactor) string {
 		return fmt.Sprintf("literal: %s | source: %s | source_quote: \"%s\" | status: changed | package_value: %s | why: %s",
 			r(it.literal), r(it.source), r(it.quote), r(it.packageValue), r(it.why))
 	}
+	if strings.TrimSpace(it.packageValue) != "" {
+		return fmt.Sprintf("literal: %s | source: %s | source_quote: \"%s\" | status: missing | package_value: %s | why: %s",
+			r(it.literal), r(it.source), r(it.quote), r(it.packageValue), r(it.why))
+	}
 	return fmt.Sprintf("literal: %s | source: %s | source_quote: \"%s\" | status: missing | why: %s",
 		r(it.literal), r(it.source), r(it.quote), r(it.why))
 }
