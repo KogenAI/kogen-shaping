@@ -1,0 +1,1 @@
+{"deferred":"The correct implementation edits shape/decision.go, a 678-line file with interacting verdict routes, and would need the shape package's test helpers to prove; the Build writes it and the acceptance driver exercises it through decisionCheck."}

@@ -180,6 +180,14 @@ func decisionResolve(items []decisionItem, request, intent string, locked map[st
 // Only a contradiction, or an unsupported statement with neither evidence nor an assumption,
 // refuses.
 func decisionResolveNotes(items []decisionItem, request, intent string, locked map[string]bool) (map[string]any, []string, []assumptionMark, []string) {
+	return decisionResolveKeep(items, request, intent, locked, nil)
+}
+
+// decisionResolveKeep is decisionResolveNotes with the keep-existing rule: for an item the model
+// judged unsupported, keep says whether the statement is a keep-existing Decision and whether the
+// cited HEAD bytes show its values. A shown one follows; one that is not shown is refused as
+// unsupported, never marked as an assumption nor passed on as advisory. A nil keep applies no rule.
+func decisionResolveKeep(items []decisionItem, request, intent string, locked map[string]bool, keep func(statement string) (bool, bool)) (map[string]any, []string, []assumptionMark, []string) {
 	var marks []assumptionMark
 	var notes []string
 	counts := map[string]int{}
@@ -188,6 +196,7 @@ func decisionResolveNotes(items []decisionItem, request, intent string, locked m
 	refused, conflicts, unsupported, malformed := 0, 0, false, false
 	for i := range items {
 		it := &items[i]
+		rawVerdict := it.verdict
 		reported := it.statement
 		if !containsNormalized(intent, it.statement) {
 			if line := referencedDecision(intent, it.statement); line != "" {
@@ -211,6 +220,14 @@ func decisionResolveNotes(items []decisionItem, request, intent string, locked m
 		if it.verdict == "unsupported" && requestStates(request, it.statement, it.quotes) && containsNormalized(intent, it.statement) {
 			// The request says the statement literally: it is supported whatever the model judged.
 			it.verdict = "follows"
+		}
+		keepRefused := false
+		if keep != nil && rawVerdict == "unsupported" && it.verdict == "unsupported" && containsNormalized(intent, it.statement) {
+			if isKeep, shown := keep(it.statement); shown {
+				it.verdict = "follows"
+			} else {
+				keepRefused = isKeep
+			}
 		}
 		paraphrasedConflict := false
 		if it.verdict == "contradicts" {
@@ -251,14 +268,14 @@ func decisionResolveNotes(items []decisionItem, request, intent string, locked m
 			notes = append(notes, "Decision check (advisory, not refused): "+strings.TrimSpace(it.statement)+" | "+it.why)
 			continue
 		}
-		if it.verdict == "unsupported" && !paraphrasedConflict && !marked && (!requestSpeaks(request, it.quotes) || silentOnDetail(it.statement, it.why)) {
+		if it.verdict == "unsupported" && !paraphrasedConflict && !marked && !keepRefused && (!requestSpeaks(request, it.quotes) || silentOnDetail(it.statement, it.why)) {
 			if mark, ok := decisionMark(intent, it, locked); ok {
 				marks = append(marks, mark)
 				events[i].(map[string]any)["marked_assumption"] = mark.assumption
 				continue
 			}
 		}
-		if it.verdict == "unsupported" && supported && !paraphrasedConflict && evidenceRe.MatchString(it.statement) {
+		if it.verdict == "unsupported" && supported && !keepRefused && !paraphrasedConflict && evidenceRe.MatchString(it.statement) {
 			events[i].(map[string]any)["advisory"] = true
 			notes = append(notes, "Decision check (advisory, not refused): "+strings.TrimSpace(it.statement)+" | "+it.why)
 			continue
@@ -486,7 +503,7 @@ func (sh *shaping) decisionCheckWithEvidence(ctx context.Context, intent, eviden
 			locked[decisionLineKey(d.intentLine())] = true
 		}
 	}
-	event, lines, marks, notes := decisionResolveNotes(items, sh.request, intent, locked)
+	event, lines, marks, notes := decisionResolveKeep(items, sh.request, intent, locked, sh.keepExisting)
 	sh.ev.Record(event)
 	sh.pendingMarks = append(sh.pendingMarks, marks...)
 	sh.notes = append(sh.notes, notes...)

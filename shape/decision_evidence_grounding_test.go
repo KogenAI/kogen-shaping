@@ -246,10 +246,13 @@ func TestDecisionCheckEvidencedAndUnsupported(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(feedback) != 0 {
+			// A keep-existing Decision whose cited bytes do not show its value is refused, not
+			// rewritten into an assumption; a new choice is rewritten.
+			refused := tc.name == "wrong value"
+			if (len(feedback) != 0) != refused {
 				t.Fatalf("feedback: %v", feedback)
 			}
-			if (len(sh.pendingMarks) == 1) != (tc.verdict == "unsupported") {
+			if (len(sh.pendingMarks) == 1) != (tc.verdict == "unsupported" && !refused) {
 				t.Fatalf("marks: %v", sh.pendingMarks)
 			}
 			requests := f.Prov.decisionRequests()
