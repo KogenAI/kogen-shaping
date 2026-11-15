@@ -500,7 +500,7 @@ func (g *staticGateRunner) run(ctx context.Context, head, tree, sha string) (*st
 			continue
 		}
 		checkStart := time.Now()
-		res, err := g.s.Run(c.Run, dir, opts)
+		res, err := g.s.RunContext(ctx, c.Run, dir, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -519,7 +519,7 @@ func (g *staticGateRunner) run(ctx context.Context, head, tree, sha string) (*st
 			continue
 		}
 		tracedStart := time.Now()
-		traced, err := g.s.Run("set -x\n"+c.Run, dir, opts)
+		traced, err := g.s.RunContext(ctx, "set -x\n"+c.Run, dir, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -534,7 +534,7 @@ func (g *staticGateRunner) run(ctx context.Context, head, tree, sha string) (*st
 		if !baseReused {
 			baseStart := time.Now()
 			if err := without(dir, shaped, func() (err error) {
-				baseline, err = g.s.Run(c.Run, dir, opts)
+				baseline, err = g.s.RunContext(ctx, c.Run, dir, opts)
 				return err
 			}); err != nil {
 				return nil, err

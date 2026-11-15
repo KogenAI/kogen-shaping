@@ -57,6 +57,10 @@ func cutProblems(problems []string) []string {
 // them. It returns the refusals of the checks that refused, in that fixed order. When a check
 // fails, the others are cancelled and the first failure is returned.
 func runModelChecks(ctx context.Context, decision, literal, example func(context.Context) ([]string, error)) ([]modelRefusal, error) {
+	return runModelChecksCancel(ctx, decision, literal, example, func() {})
+}
+
+func runModelChecksCancel(ctx context.Context, decision, literal, example func(context.Context) ([]string, error), cancelStatic func()) ([]modelRefusal, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	checks := []struct {
@@ -76,7 +80,7 @@ func runModelChecks(ctx context.Context, decision, literal, example func(context
 			defer wg.Done()
 			var err error
 			if lines[i], err = c.run(ctx); err != nil {
-				once.Do(func() { first = err; cancel() })
+				once.Do(func() { first = err; cancel(); cancelStatic() })
 			}
 		}()
 	}
@@ -91,6 +95,18 @@ func runModelChecks(ctx context.Context, decision, literal, example func(context
 		}
 	}
 	return refusals, nil
+}
+
+// modelPublication holds semantic effects until static checks accept the candidate.
+// Each model check owns its slot; the caller publishes them only after joining all work.
+type modelPublicationKey struct{}
+
+func publishModelCheck(ctx context.Context, publish func()) {
+	if slot, ok := ctx.Value(modelPublicationKey{}).(*func()); ok {
+		*slot = publish
+	} else {
+		publish()
+	}
 }
 
 // heldRefusal is one gate's refusal of a submission whose other independent gates still run: the
@@ -170,34 +186,59 @@ func (sh *shaping) postSubmitChecks(ctx context.Context, intent, evidence, hash 
 		sh.refused("step_selfcheck", strings.Split(feedback, "\n")[1:])
 		sh.holdText(feedback)
 	}
+	// Scope and self-check refusals still run static checks, but never call a model.
+	eligible := !slices.ContainsFunc(sh.batch, func(h heldRefusal) bool {
+		return h.gate == scopeGate || h.gate == "step_selfcheck"
+	})
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var refusals []modelRefusal
+	var modelErr error
+	var publications [3]func()
+	var wg sync.WaitGroup
+	if eligible {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			modelErr = sh.ev.Timed("model_checks", func() (err error) {
+				refusals, err = runModelChecksCancel(ctx,
+					func(ctx context.Context) ([]string, error) {
+						return sh.decisionCheckWithEvidence(context.WithValue(ctx, modelPublicationKey{}, &publications[0]), intent, evidence)
+					},
+					func(ctx context.Context) ([]string, error) {
+						return sh.literalCheck(context.WithValue(ctx, modelPublicationKey{}, &publications[1]))
+					},
+					func(ctx context.Context) ([]string, error) {
+						return sh.exampleCheck(context.WithValue(ctx, modelPublicationKey{}, &publications[2]))
+					}, cancel)
+				return err
+			})
+			if modelErr != nil {
+				cancel()
+			}
+		}()
+	}
 	var staticText string
 	var staticOut outcome
-	if err := sh.ev.Timed("static", func() (err error) {
+	staticErr := sh.ev.Timed("static", func() (err error) {
 		staticText, staticOut, err = sh.staticChecks(ctx, hash)
 		return err
-	}); err != nil {
-		return err
-	} else if staticOut.kind == outInvalid {
-		sh.holdText(staticText)
+	})
+	wg.Wait()
+	if modelErr != nil {
+		return modelErr
 	}
-	// A package the review scope, the step self-check or the static checks refuse has to change
-	// before a model can judge it, so those refusals still skip the model checks.
-	if slices.ContainsFunc(sh.batch, func(h heldRefusal) bool {
-		return h.gate == scopeGate || h.gate == "step_selfcheck" || h.gate == staticGate
-	}) {
+	if staticErr != nil {
+		return staticErr
+	}
+	if staticOut.kind == outInvalid {
+		sh.holdText(staticText)
 		return nil
 	}
-	var refusals []modelRefusal
-	err = sh.ev.Timed("model_checks", func() (err error) {
-		refusals, err = runModelChecks(ctx,
-			func(ctx context.Context) ([]string, error) {
-				return sh.decisionCheckWithEvidence(ctx, intent, evidence)
-			},
-			sh.literalCheck, sh.exampleCheck)
-		return err
-	})
-	if err != nil {
-		return err
+	for _, publish := range publications {
+		if publish != nil {
+			publish()
+		}
 	}
 	for _, r := range refusals {
 		sh.refused(r.gate, r.problems())

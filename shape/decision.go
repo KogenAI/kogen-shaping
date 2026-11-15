@@ -3,6 +3,7 @@ package shape
 import (
 	"context"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -451,7 +452,7 @@ func (sh *shaping) decisionCheck(ctx context.Context, intent string) ([]string, 
 }
 
 func (sh *shaping) decisionCheckWithEvidence(ctx context.Context, intent, evidence string) ([]string, error) {
-	intent, sh.pendingMarks = sh.normalizedAssumptions(intent)
+	intent, normalizedMarks := sh.normalizedAssumptions(intent)
 	earlier := sh.earlier
 	if earlier == "" {
 		earlier = "none"
@@ -517,23 +518,28 @@ func (sh *shaping) decisionCheckWithEvidence(ctx context.Context, intent, eviden
 			locked[decisionLineKey(d.intentLine())] = true
 		}
 	}
+	refusedStatements := maps.Clone(sh.refusedStatements)
 	event, lines, marks, notes := decisionResolveRepeated(items, sh.request, intent, locked, sh.keepExisting, func(statement string) string {
 		key := normalizeWhitespace(statement)
-		if first, ok := sh.refusedStatements[key]; ok {
+		if first, ok := refusedStatements[key]; ok {
 			if first < sh.submissions {
 				return fmt.Sprintf("note: this statement is unchanged since submission %d and was refused for the same reason; change the statement itself, not the text around it", first)
 			}
 			return ""
 		}
-		if sh.refusedStatements == nil {
-			sh.refusedStatements = map[string]int{}
+		if refusedStatements == nil {
+			refusedStatements = map[string]int{}
 		}
-		sh.refusedStatements[key] = sh.submissions
+		refusedStatements[key] = sh.submissions
 		return ""
 	})
-	sh.ev.Record(event)
-	sh.pendingMarks = append(sh.pendingMarks, marks...)
-	sh.notes = append(sh.notes, notes...)
+	publishModelCheck(ctx, func() {
+		sh.refusedStatements = refusedStatements
+		sh.pendingMarks = normalizedMarks
+		sh.ev.Record(event)
+		sh.pendingMarks = append(sh.pendingMarks, marks...)
+		sh.notes = append(sh.notes, notes...)
+	})
 	return lines, nil
 }
 

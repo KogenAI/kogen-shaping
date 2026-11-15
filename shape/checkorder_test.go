@@ -2,6 +2,7 @@ package shape
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -34,13 +35,23 @@ func eventNames(events []map[string]any) []string {
 	return names
 }
 
-// A submission the static checks refuse makes no decision, literal or example model call.
-func TestStaticRefusalSkipsTheModelChecks(t *testing.T) {
+// A static refusal discards even refusing model answers.
+func TestStaticRefusalDiscardsTheModelChecks(t *testing.T) {
 	parallel(t)
 	bad := shpFiles()
 	bad["files"].([]any)[2].(map[string]any)["content"] = shpSteps + "\n// BAD\n"
 	f := newShpFx(t, shpSubmit("c1", bad), shpSubmit("c2", bad), shpSubmit("c3", bad))
 	f.write(".kogen/project.yaml", "version: 1\ncommands:\n  checks:\n    - name: unit\n      run: 'true'\n    - name: steps\n      run: '! grep -q BAD features/steps/is-even__steps.js'\n  acceptance: {run: sh accept.sh, steps_dir: features/steps}\n")
+	decision, literal := orderDecisionRefusal(), orderLiteralRefusal()
+	f.Prov.route = func(req map[string]any) *shpStep {
+		if decisionRequest(req) {
+			return &decision
+		}
+		if literalRequest(req) {
+			return &literal
+		}
+		return nil
+	}
 	f.git("add", "-A")
 	f.git("commit", "-qm", "static check")
 	_, err := f.shape(orderRequest)
@@ -54,8 +65,8 @@ func TestStaticRefusalSkipsTheModelChecks(t *testing.T) {
 	for _, e := range shpNamed(events, "submission_refused") {
 		shpEq(t, "gate", e["gate"], staticGate)
 	}
-	if n := len(f.Prov.decisionRequests()) + len(f.Prov.literalRequests()); n != 0 {
-		t.Fatalf("%d decision or literal model calls after a static refusal", n)
+	if n := len(f.Prov.decisionRequests()) + len(f.Prov.literalRequests()); n != 6 {
+		t.Fatalf("%d decision or literal model calls, want 6", n)
 	}
 	for _, name := range []string{"decision_check", "literal_check"} {
 		if n := len(shpNamed(events, name)); n != 0 {
@@ -162,5 +173,48 @@ func TestPassingSubmissionReachesCertifyAsBefore(t *testing.T) {
 	unpassable, review := orderIndex(names, "unpassable_check"), orderIndex(names, "contract_review")
 	if !(self < static && static < min(decision, literal) && max(decision, literal) < unpassable && unpassable < review) {
 		t.Fatalf("events out of order: %v", names)
+	}
+}
+
+func TestModelErrorCancelsStaticBeforeOtherModelsFinish(t *testing.T) {
+	staticCancelled := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan error, 1)
+	want := errors.New("decision failed")
+	go func() {
+		_, err := runModelChecksCancel(context.Background(),
+			func(context.Context) ([]string, error) { return nil, want },
+			func(context.Context) ([]string, error) { <-release; return nil, nil },
+			func(context.Context) ([]string, error) { return nil, nil },
+			func() { close(staticCancelled) })
+		done <- err
+	}()
+	select {
+	case <-staticCancelled:
+	case <-time.After(time.Second):
+		close(release)
+		<-done
+		t.Fatal("static cancellation waited for another model")
+	}
+	close(release)
+	if err := <-done; err != want {
+		t.Fatalf("error = %v, want %v", err, want)
+	}
+}
+
+func TestEmptyLiteralResultIsHeldUntilPublication(t *testing.T) {
+	f := newShpFx(t)
+	sh := f.shaping()
+	sh.request = ""
+	var publish func()
+	if _, err := sh.literalCheck(context.WithValue(context.Background(), modelPublicationKey{}, &publish)); err != nil {
+		t.Fatal(err)
+	}
+	if len(shpNamed(f.events(), "literal_check")) != 0 || publish == nil {
+		t.Fatal("empty request result was not held")
+	}
+	publish()
+	if len(shpNamed(f.events(), "literal_check")) != 1 {
+		t.Fatal("empty request result was not published")
 	}
 }

@@ -253,6 +253,6 @@ func (sh *shaping) exampleCheck(ctx context.Context) ([]string, error) {
 	for i := range problems {
 		problems[i] = red.Redact(problems[i])
 	}
-	sh.ev.Record(map[string]any{"event": "example_check", "items": events})
+	publishModelCheck(ctx, func() { sh.ev.Record(map[string]any{"event": "example_check", "items": events}) })
 	return problems, nil
 }

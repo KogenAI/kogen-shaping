@@ -318,8 +318,10 @@ func literalOutcome(items []literalItem, sources map[string]string, files []pack
 // With no original request it compares nothing and records unknown.
 func (sh *shaping) literalCheck(ctx context.Context) ([]string, error) {
 	if strings.TrimSpace(sh.request) == "" {
-		sh.ev.Record(map[string]any{"event": "literal_check", "status": "unknown", "reason": literalUnknownReason})
-		sh.progress("kogen: request literal check unknown: " + literalUnknownReason + "; required literals were not compared")
+		publishModelCheck(ctx, func() {
+			sh.ev.Record(map[string]any{"event": "literal_check", "status": "unknown", "reason": literalUnknownReason})
+			sh.progress("kogen: request literal check unknown: " + literalUnknownReason + "; required literals were not compared")
+		})
 		return nil, nil
 	}
 	files, err := sh.candidatePackage()
@@ -387,6 +389,6 @@ func (sh *shaping) literalCheck(ctx context.Context) ([]string, error) {
 		home, _ = os.UserHomeDir()
 	}
 	event, lines := literalOutcome(items, literalSources(sh.request, sh.rounds), files, verify.NewRedactor(sh.s.Env, home))
-	sh.ev.Record(event)
+	publishModelCheck(ctx, func() { sh.ev.Record(event) })
 	return lines, nil
 }
