@@ -647,6 +647,17 @@ func (sh *shaping) staticChecks(ctx context.Context, hash string) (string, outco
 	return headline + "\n" + strings.Join(problems, "\n"), outcome{kind: outInvalid, problems: problems}, nil
 }
 
+// reuseMeaning says in words what a reused recorded outcome means; checked keeps its bare word.
+func reuseMeaning(outcome, record string) string {
+	switch outcome {
+	case staticUnknown:
+		return "unknown: a check fails without the shaped files too or could not run, so the shaped files are not established by it; see static-checks.json in the Shape record at " + record
+	case staticNone:
+		return "none: no static check is configured"
+	}
+	return outcome
+}
+
 // approveStaticChecks is the gate in `kogen intent approve`: it reuses the result Shape recorded
 // for the identical package and otherwise runs the checks on the candidate tree of ready.
 func approveStaticChecks(ctx context.Context, s *sys.Session, in ApproveInput, repo *git.Repo, cfg *project.Config, ready *verify.Ready, sha string, cache *verify.BuildCache) error {
@@ -655,7 +666,7 @@ func approveStaticChecks(ctx context.Context, s *sys.Session, in ApproveInput, r
 		var rec staticRecord
 		if json.Unmarshal(b, &rec) == nil && rec.Version == 1 && rec.Head == ready.Head && rec.Tree == ready.CandidateTree && rec.SHA256 == sha &&
 			slices.Contains([]string{staticChecked, staticUnknown, staticNone}, rec.Outcome) {
-			s.Progress("kogen: static checks: reusing the result recorded for this package (" + rec.Outcome + ")")
+			s.Progress("kogen: static checks: reusing the result recorded for this package (" + reuseMeaning(rec.Outcome, staticRecordPath(root, slug)) + ")")
 			return nil
 		}
 	}

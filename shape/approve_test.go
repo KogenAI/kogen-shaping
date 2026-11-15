@@ -1067,3 +1067,60 @@ func TestApproveStaticChecks(t *testing.T) {
 		t.Fatalf("the card of the refused package: exit %d, output %q, err %v", exit, out, err)
 	}
 }
+
+// TestApproveStaticReuseLineExplainsOutcome: the reuse line of a recorded unknown or none outcome
+// says what it means, and reusing it does not run the check again.
+func TestApproveStaticReuseLineExplainsOutcome(t *testing.T) {
+	parallel(t)
+	f := newApproveFx(t)
+	count := filepath.Join(f.Aux, "checks")
+	f.write(".kogen/project.yaml", "version: 1\ncommands:\n  checks:\n    - name: steps\n      run: 'echo x >> \""+count+"\"'\n  acceptance:\n    run: sh accept.sh\n")
+	f.git("add", "-A")
+	f.git("commit", "-qm", "checks")
+	if exit, _, err := f.approve(ApproveInput{}); err != nil || exit != 5 {
+		t.Fatalf("card: exit %d, err %v", exit, err)
+	}
+	sha := f.sha()
+	record := staticRecordPath(f.Root, approveSlug)
+	reuse := func(outcome string) string {
+		b, err := os.ReadFile(record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(b, &m); err != nil {
+			t.Fatal(err)
+		}
+		m["outcome"] = outcome
+		if b, err = json.Marshal(m); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(record, append(b, '\n'), 0o666); err != nil {
+			t.Fatal(err)
+		}
+		os.Remove(filepath.Join(f.Root, ".kogen/local/approvals/fixture.json"))
+		s, _, errOut := f.session()
+		if exit, err := Approve(context.Background(), s, ApproveInput{Project: f.Root, Tools: fixtureTools(s), Slug: approveSlug, Hash: sha}); err != nil || exit != 0 {
+			t.Fatalf("approve with %q: exit %d, err %v\n%s", outcome, exit, err, errOut)
+		}
+		for _, l := range strings.Split(errOut.String(), "\n") {
+			if strings.Contains(l, "static checks: reusing") {
+				return l
+			}
+		}
+		t.Fatalf("no reuse line for %q:\n%s", outcome, errOut)
+		return ""
+	}
+	const prefix = "kogen: static checks: reusing the result recorded for this package ("
+	wantUnknown := prefix + "unknown: a check fails without the shaped files too or could not run, so the shaped files are not established by it; see static-checks.json in the Shape record at " + record + ")"
+	if got := reuse("unknown"); got != wantUnknown {
+		t.Fatalf("unknown line %q, want %q", got, wantUnknown)
+	}
+	if got, want := reuse("none"), prefix+"none: no static check is configured)"; got != want {
+		t.Fatalf("none line %q, want %q", got, want)
+	}
+	b, _ := os.ReadFile(count)
+	if n := strings.Count(string(b), "x\n"); n != 1 {
+		t.Fatalf("the check ran %d times, want 1", n)
+	}
+}

@@ -1,0 +1,75 @@
+package shape
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// TestApproveStaticReuseLineHarness approves the fixture package three times, each time reusing a
+// recorded static-check result (checked as written by the card, then the same record rewritten with
+// outcome unknown and none), and writes what a user sees to the file named by ASRLEU_OUT.
+func TestApproveStaticReuseLineHarness(t *testing.T) {
+	parallel(t)
+	const step = "features/steps/fixture_steps.js"
+	f := newApproveFx(t)
+	count := filepath.Join(f.Aux, "checks")
+	f.write(".kogen/project.yaml", "version: 1\ncommands:\n  checks:\n    - name: steps\n      run: 'echo x >> \""+count+"\"; ! grep -q BAD "+step+"'\n  acceptance:\n    run: sh accept.sh\n")
+	f.git("add", "-A")
+	f.git("commit", "-qm", "checks")
+	ran := func() int {
+		b, _ := os.ReadFile(count)
+		return strings.Count(string(b), "x\n")
+	}
+	if exit, _, err := f.approve(ApproveInput{}); err != nil || exit != 5 {
+		t.Fatalf("card: exit %d, err %v", exit, err)
+	}
+	sha := f.sha()
+	record := staticRecordPath(f.Root, approveSlug)
+	reuse := func(outcome string) string {
+		if outcome != "" {
+			b, err := os.ReadFile(record)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var m map[string]any
+			if err := json.Unmarshal(b, &m); err != nil {
+				t.Fatal(err)
+			}
+			m["outcome"] = outcome
+			b, err = json.Marshal(m)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(record, append(b, '\n'), 0o666); err != nil {
+				t.Fatal(err)
+			}
+		}
+		os.Remove(filepath.Join(f.Root, ".kogen/local/approvals/fixture.json"))
+		s, _, errOut := f.session()
+		if exit, err := Approve(context.Background(), s, ApproveInput{Project: f.Root, Tools: fixtureTools(s), Slug: approveSlug, Hash: sha}); err != nil || exit != 0 {
+			t.Fatalf("approve with %q: exit %d, err %v\n%s", outcome, exit, err, errOut)
+		}
+		for _, l := range strings.Split(errOut.String(), "\n") {
+			if strings.Contains(l, "static checks: reusing") {
+				return l
+			}
+		}
+		return "(no reuse line)\n" + errOut.String()
+	}
+	obs := map[string]any{"record_path": record}
+	obs["checked_line"] = reuse("")
+	obs["unknown_line"] = reuse("unknown")
+	obs["none_line"] = reuse("none")
+	obs["runs"] = ran()
+	b, err := json.Marshal(obs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(os.Getenv("ASRLEU_OUT"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
