@@ -46,7 +46,7 @@ func TestDecisionRecordRefusalIsReportedWithTheLaterGates(t *testing.T) {
 		t.Fatalf("first round refused by %v", rounds)
 	}
 	fed := shpOutputs(f.Prov.requests()[1])["c1"]
-	for _, want := range []string{"sourced decision 1: no evidence and no uncertainty", "Decision check: ", "Literal check: "} {
+	for _, want := range []string{"sourced decision 1 (\"A\"): no evidence and no uncertainty", "Decision check: ", "Literal check: "} {
 		if !strings.Contains(fed, want) {
 			t.Fatalf("feedback lacks %q:\n%s", want, fed)
 		}
@@ -99,7 +99,7 @@ func TestCheapGateAndReadinessRefusalsAreReportedTogether(t *testing.T) {
 	if len(lines) == 0 || !strings.HasSuffix(fed, "not ready:\n"+strings.Join(lines, "\n")) {
 		t.Fatalf("feedback does not end with the readiness refusal %q:\n%s", lines, fed)
 	}
-	for _, want := range []string{"sourced decision 1: no evidence and no uncertainty", "Decision check: ", "Literal check: "} {
+	for _, want := range []string{"sourced decision 1 (\"A\"): no evidence and no uncertainty", "Decision check: ", "Literal check: "} {
 		if !strings.Contains(fed, want) {
 			t.Fatalf("feedback lacks %q:\n%s", want, fed)
 		}

@@ -555,6 +555,22 @@ func (sh *shaping) decisionReceipt(n int, raw string) (r receipt, fresh bool, pr
 	return r, false, at + "this shaping did not read " + it.path, nil
 }
 
+// quoteSourcedDecision names the decision a problem line is about: it turns the lead
+// "- sourced decision <n>: " into "- sourced decision <n> (\"<decision>\"): ". The decision is its
+// whitespace runs as single spaces, cut to 120 characters and then to what leaves the whole line
+// within the 300 characters a refusal records, so the reason after the colon stays whole.
+func quoteSourcedDecision(problem string, n int, decision string) string {
+	reason, ok := strings.CutPrefix(problem, fmt.Sprintf("- sourced decision %d: ", n))
+	if !ok {
+		return problem
+	}
+	head, tail := fmt.Sprintf("- sourced decision %d (\"", n), "\"): "
+	quoted := []rune(strings.Join(strings.Fields(decision), " "))
+	room := max(0, 300-len([]rune(head+tail+reason)))
+	quoted = quoted[:min(len(quoted), 120, room)]
+	return head + string(quoted) + tail + reason
+}
+
 // decisionRecordGate checks and records the decisions of a counted questions or files
 // submission. ok is true for a refusal.
 func (sh *shaping) decisionRecordGate(submitted []sourcedDecision) (string, outcome, bool, error) {
@@ -585,6 +601,12 @@ func (sh *shaping) decisionRecordGate(submitted []sourcedDecision) (string, outc
 			continue
 		}
 		at := fmt.Sprintf("- sourced decision %d: ", n)
+		first := len(problems)
+		quote := func() {
+			for k := first; k < len(problems); k++ {
+				problems[k] = quoteSourcedDecision(problems[k], n, d.decision)
+			}
+		}
 		if len(d.evidence) == 0 && strings.TrimSpace(d.uncertainty) == "" {
 			problems = append(problems, at+"no evidence and no uncertainty; cite what this shaping read or ran, or state the uncertainty you decided under")
 		}
@@ -625,10 +647,12 @@ func (sh *shaping) decisionRecordGate(submitted []sourcedDecision) (string, outc
 					}
 				}
 				notes = append(notes, at+fmt.Sprintf("revises %s %s, so %s stands and this decision is not recorded", d.revises, reason, d.revises))
+				quote()
 				continue
 			}
 			revised[d.revises] = true
 		}
+		quote()
 		added = append(added, c)
 	}
 	if len(problems) > 0 {

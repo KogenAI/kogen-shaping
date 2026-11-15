@@ -144,16 +144,16 @@ func TestShapeDecisionRecordGate(t *testing.T) {
 	reqs := shpShaperRequests(f.Prov.requests())
 	shpEq(t, "feedback", shpOutputs(reqs[len(reqs)-1])["s1"], strings.Join([]string{
 		strings.Replace(decisionRecordHeadline, "%d", "10", 1),
-		"- sourced decision 1: this shaping did not read README.md",
-		"- sourced decision 1: features/steps/ is a directory; cite the files this shaping read",
-		"- sourced decision 1: nothing.rb is not a file tracked at HEAD",
-		"- sourced decision 1: an empty evidence item",
-		"- sourced decision 1: the probe of `false` failed (exit status: 1), so it is no evidence",
-		"- sourced decision 1: no probe of this shaping ran `never`",
-		"- sourced decision 2: no evidence and no uncertainty; cite what this shaping read or ran, or state the uncertainty you decided under",
-		"- sourced decision 3: revises D9 without why",
-		"- sourced decision 3: D9 is not a recorded decision that stands",
-		"- sourced decision 4: D1 is not a recorded decision that stands",
+		"- sourced decision 1 (\"A\"): this shaping did not read README.md",
+		"- sourced decision 1 (\"A\"): features/steps/ is a directory; cite the files this shaping read",
+		"- sourced decision 1 (\"A\"): nothing.rb is not a file tracked at HEAD",
+		"- sourced decision 1 (\"A\"): an empty evidence item",
+		"- sourced decision 1 (\"A\"): the probe of `false` failed (exit status: 1), so it is no evidence",
+		"- sourced decision 1 (\"A\"): no probe of this shaping ran `never`",
+		"- sourced decision 2 (\"B\"): no evidence and no uncertainty; cite what this shaping read or ran, or state the uncertainty you decided under",
+		"- sourced decision 3 (\"C\"): revises D9 without why",
+		"- sourced decision 3 (\"C\"): D9 is not a recorded decision that stands",
+		"- sourced decision 4 (\"D\"): D1 is not a recorded decision that stands",
 	}, "\n"))
 	refused := shpNamed(f.events(), "submission_refused")
 	shpEq(t, "refusals", len(refused), 1)
@@ -226,7 +226,7 @@ func TestShapeDecisionLedger(t *testing.T) {
 			feedback = out
 		}
 	}
-	shpContains(t, "refused revision", feedback, "- sourced decision 1: this shaping did not read README.md")
+	shpContains(t, "refused revision", feedback, "- sourced decision 1 (\"Safe diagnostics and size\"): this shaping did not read README.md")
 	ledger := dlLedger(t, f)
 	shpEq(t, "decisions", len(ledger.Decisions), 3)
 	shpEq(t, "D1 superseded", ledger.Decisions[0].SupersededBy, "D3")
@@ -315,7 +315,7 @@ func TestShapeDecisionRecordExternal(t *testing.T) {
 	if err != nil || exit != 5 {
 		t.Fatalf("exit %d, err %v\n%s", exit, err, f.Stderr)
 	}
-	shpEq(t, "feedback", strings.Contains(x.inputs[1].Feedback, "- sourced decision 1: Kogen keeps no output of the external session's commands, so `ls` is no evidence; cite a file this session read"), true)
+	shpEq(t, "feedback", strings.Contains(x.inputs[1].Feedback, "- sourced decision 1 (\"Safe\"): Kogen keeps no output of the external session's commands, so `ls` is no evidence; cite a file this session read"), true)
 	ledger := dlLedger(t, f)
 	shpEq(t, "decisions", len(ledger.Decisions), 1)
 	shpEq(t, "receipt", ledger.Decisions[0].Evidence[0], receipt{Item: "calc.js", Kind: receiptCheckout, Round: 1, SHA256: dlSha(t, f, "calc.js"), Text: "1\tfunction add(a, b) { return a + b }"})
