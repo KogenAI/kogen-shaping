@@ -706,7 +706,8 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 	}
 	sh.reviewProps = props
 	// Kept assertions must agree with the unchanged tree. Repeat the entire existing
-	// readiness observation once, only when a counted kept scenario is assertion-red.
+	// readiness observation once when a counted kept scenario is assertion-red or
+	// an explicitly named kept step is assertion-red or blocked by an earlier failure.
 	kept := map[string]bool{}
 	keptOwners := map[string][]int{}
 	keptLines := map[string][]int{}
@@ -734,7 +735,7 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 	var baselineRefusals []string
 	first := keptAssertionFailures(sh.ready, kept)
 	firstSteps := keptStepStates(sh.ready, keptLines)
-	if len(first) > 0 && sh.lastObservationsPath != "" {
+	if (len(first) > 0 || len(firstSteps) > 0) && sh.lastObservationsPath != "" {
 		sh.progress("kogen: repeating kept assertion observation (execution 2 of 2 maximum)")
 		repeat, err := sh.rd.Check(ctx, sh.s, sh.slug)
 		if err != nil {

@@ -1,0 +1,51 @@
+{
+  "correct": {
+    "files": {
+      "shape/contract.go": {
+        "patch": "--- a/shape/contract.go\n+++ b/shape/contract.go\n@@ -734,7 +734,7 @@\n \tvar baselineRefusals []string\n \tfirst := keptAssertionFailures(sh.ready, kept)\n \tfirstSteps := keptStepStates(sh.ready, keptLines)\n-\tif len(first) > 0 && sh.lastObservationsPath != \"\" {\n+\tif (len(first) > 0 || len(firstSteps) > 0) && sh.lastObservationsPath != \"\" {\n \t\tsh.progress(\"kogen: repeating kept assertion observation (execution 2 of 2 maximum)\")\n \t\trepeat, err := sh.rd.Check(ctx, sh.s, sh.slug)\n \t\tif err != nil {\n"
+      }
+    }
+  },
+  "wrong": [
+    {
+      "name": "retain first assertion only gate",
+      "scenario": "Reject a wrong document envelope after a new tool error",
+      "step": "Then shape-kept-assertion-after-earlier-failure: the unchanged-tree outcome is",
+      "files": {
+        "shape/contract.go": {
+          "patch": "--- a/shape/contract.go\n+++ b/shape/contract.go\n@@ -734,7 +734,7 @@\n \tvar baselineRefusals []string\n \tfirst := keptAssertionFailures(sh.ready, kept)\n \tfirstSteps := keptStepStates(sh.ready, keptLines)\n-\tif (len(first) > 0 || len(firstSteps) > 0) && sh.lastObservationsPath != \"\" {\n+\tif len(first) > 0 && sh.lastObservationsPath != \"\" {\n \t\tsh.progress(\"kogen: repeating kept assertion observation (execution 2 of 2 maximum)\")\n \t\trepeat, err := sh.rd.Check(ctx, sh.s, sh.slug)\n \t\tif err != nil {\n"
+        }
+      }
+    },
+    {
+      "name": "repeat even passing kept step on new error",
+      "scenario": "Allow a passing kept step before missing new behaviour",
+      "step": "Then shape-kept-assertion-after-earlier-failure: the unchanged-tree outcome is",
+      "files": {
+        "shape/contract.go": {
+          "patch": "--- a/shape/contract.go\n+++ b/shape/contract.go\n@@ -734,7 +734,7 @@\n \tvar baselineRefusals []string\n \tfirst := keptAssertionFailures(sh.ready, kept)\n \tfirstSteps := keptStepStates(sh.ready, keptLines)\n-\tif (len(first) > 0 || len(firstSteps) > 0) && sh.lastObservationsPath != \"\" {\n+\tif (len(first) > 0 || len(kept) > 0) && sh.lastObservationsPath != \"\" {\n \t\tsh.progress(\"kogen: repeating kept assertion observation (execution 2 of 2 maximum)\")\n \t\trepeat, err := sh.rd.Check(ctx, sh.s, sh.slug)\n \t\tif err != nil {\n"
+        }
+      }
+    },
+    {
+      "name": "allow confirmation to clear blocked kept refusal",
+      "scenario": "Reject a wrong document envelope after a new tool error",
+      "step": "Then shape-kept-assertion-after-earlier-failure: the unchanged-tree outcome is",
+      "files": {
+        "shape/contract.go": {
+          "patch": "--- a/shape/contract.go\n+++ b/shape/contract.go\n@@ -742,7 +742,7 @@\n \t\t}\n \t\tsh.ready = repeat\n \t\tsecond := keptAssertionFailures(repeat, kept)\n-\t\tbaselineRefusals = keptBaselineRefusals(firstSteps, keptStepStates(repeat, keptLines), props)\n+\t\tbaselineRefusals = nil\n \t\tvar lines []string\n \t\tfor scenario := range first {\n \t\t\tif detail, ok := second[scenario]; ok {\n"
+        }
+      }
+    },
+    {
+      "name": "clear existing named kept refusal after refutation",
+      "scenario": "Preserve refusal after an earlier new assertion is refuted",
+      "step": "Then shape-kept-assertion-after-earlier-failure: the unchanged-tree outcome is",
+      "files": {
+        "shape/contract.go": {
+          "patch": "--- a/shape/contract.go\n+++ b/shape/contract.go\n@@ -742,7 +742,7 @@\n \t\t}\n \t\tsh.ready = repeat\n \t\tsecond := keptAssertionFailures(repeat, kept)\n-\t\tbaselineRefusals = keptBaselineRefusals(firstSteps, keptStepStates(repeat, keptLines), props)\n+\t\tbaselineRefusals = nil\n \t\tvar lines []string\n \t\tfor scenario := range first {\n \t\t\tif detail, ok := second[scenario]; ok {\n"
+        }
+      }
+    }
+  ]
+}
