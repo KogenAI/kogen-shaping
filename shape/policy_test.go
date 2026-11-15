@@ -147,3 +147,18 @@ func TestShaperPolicyConstantsForFixedValues(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderedAcceptanceStepBudgetGuidance(t *testing.T) {
+	text := ShaperInstructions()
+	for _, want := range []string{
+		"120 s per-step approval limit",
+		"Refuse acceptance steps that cannot finish within that limit",
+		"readiness on the unchanged tree can fail fast",
+		"whole test suite",
+		"single test file, package or named test",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("acceptance step guidance missing %q", want)
+		}
+	}
+}

@@ -43,6 +43,7 @@ Before the first submission, write the forms Kogen's checks require:
 - Exit-code steps. A step that checks an exit code runs a built program (compile it first, then run the binary), not go run, npm run or npx, whose exit codes are those of the tool.
 - Gherkin descriptions. Start a free-form description with plain text such as `This feature`. Reserve step keywords such as Given, When and Then for steps inside a Scenario or Background.
 - Given and Then. Given steps pass on the unchanged tree; each scenario's failure today comes from a Then step.
+- Acceptance runtime. Acceptance has a 120 s per-step approval limit. Refuse acceptance steps that cannot finish within that limit, even when readiness on the unchanged tree can fail fast and hide their runtime after implementation. Narrow commands that run a whole test suite to a single test file, package or named test.
 
 The Intent's files:
 1. `intent.md`, exactly in this shape:
