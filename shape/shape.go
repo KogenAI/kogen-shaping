@@ -2195,12 +2195,44 @@ func runnerObserverGate(ready *verify.Ready) error {
 			continue
 		}
 		e.scenarios++
-		e.items = append(e.items, fmt.Sprintf("- %s (line %d): %s", sc.Name, sc.Line, sc.RunnerObserver))
+		item := fmt.Sprintf("- %s (line %d): %s", sc.Name, sc.Line, sc.RunnerObserver)
+		if strings.HasPrefix(sc.RunnerObserver, runnerObserverPassingRun) {
+			if line := stepMessageLine(sc.Detail); line != "" {
+				item += "; step message: " + line
+			}
+		}
+		e.items = append(e.items, item)
 	}
 	if e.scenarios == 0 {
 		return nil
 	}
 	return e
+}
+
+// runnerObserverPassingRun starts the runner-observer text of a step that failed although the
+// test runner reported a passing run.
+const runnerObserverPassingRun = "the step failed although the test runner reported a passing run"
+
+// stepMessageLimit is the most runes of a step message line a runner-observer item shows.
+const stepMessageLimit = 200
+
+// stepMessageLine is the first non-blank line of the detail, trimmed and cut at
+// stepMessageLimit runes; it is empty when the detail is nil or has no non-blank line.
+func stepMessageLine(detail *string) string {
+	if detail == nil {
+		return ""
+	}
+	for _, line := range strings.Split(*detail, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if r := []rune(line); len(r) > stepMessageLimit {
+			line = string(r[:stepMessageLimit])
+		}
+		return line
+	}
+	return ""
 }
 
 // writeAttempt remembers what the files held and writes the accumulated proposals.

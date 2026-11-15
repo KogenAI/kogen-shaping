@@ -14,7 +14,7 @@ const runnerObserverHeadline = "Acceptance rejects the test runner's real output
 	"and give a literal name filter only the plain test name. Rewrite these steps; resubmitting them unchanged is refused again."
 
 const (
-	runnerObserverItem1 = "- Even numbers (line 2): the step failed although the test runner reported a passing run: 1 runs, 7 assertions, 0 failures, 0 errors, 0 skips"
+	runnerObserverItem1 = "- Even numbers (line 2): the step failed although the test runner reported a passing run: 1 runs, 7 assertions, 0 failures, 0 errors, 0 skips; step message: acceptance.feature line 4: Then is-even: it is even"
 	runnerObserverItem2 = "- Odd numbers (line 5): the name filter -n ^test_widget_passes$ is a regular expression that the runner matched as a literal test name, so nothing ran: 0 runs, 0 assertions, 0 failures, 0 errors, 0 skips"
 	runnerObserverFeed  = runnerObserverHeadline + "\n" + runnerObserverItem1 + "\n" + runnerObserverItem2
 )
