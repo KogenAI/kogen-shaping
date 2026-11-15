@@ -1,0 +1,89 @@
+package shape
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-verification/verify"
+)
+
+// TestStaticFlakyHarness runs the static gate on the approve fixture twice and writes what a user
+// sees to the file named by SSCFNA_OUT: first with one check whose plain run and traced re-run fail
+// with different messages that name no shaped file (a counter file makes each execution differ), then
+// with three checks that must still be refused (the same failure twice without a path, a failure that
+// names a shaped file, and a different failure whose traced re-run names a shaped file).
+func TestStaticFlakyHarness(t *testing.T) {
+	parallel(t)
+	const step = "features/steps/fixture_steps.js"
+	gate := func(checks func(count string) string) (*staticRun, []string) {
+		f := staticFx(t, checks(filepath.Join(t.TempDir(), "count")))
+		cfg, err := project.LoadConfig(f.Root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s, _, _ := f.session()
+		var progress []string
+		head := f.Repo.Head()
+		tree, err := f.Repo.Tree(head, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		g := newStaticGateRunner(s, f.Repo, &verify.Readiness{Root: f.Root, Repo: f.Repo, Config: cfg}, cfg, f.Root, approveSlug, func(l string) { progress = append(progress, l) })
+		run, err := g.run(context.Background(), head, tree, "package")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return run, progress
+	}
+	view := func(run *staticRun, progress []string) map[string]any {
+		checks := map[string]any{}
+		for _, c := range run.Checks {
+			b, err := json.Marshal(c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var m map[string]any
+			if err := json.Unmarshal(b, &m); err != nil {
+				t.Fatal(err)
+			}
+			var lines []string
+			for _, l := range progress {
+				if strings.HasPrefix(l, "kogen: static check "+c.Name+" ") {
+					lines = append(lines, l)
+				}
+			}
+			m["progress"] = lines
+			checks[c.Name] = m
+		}
+		return map[string]any{"outcome": run.Outcome, "checks": checks}
+	}
+
+	// Each execution of the check in the shaped copy fails with another message; the run on the base
+	// tree (third execution) passes. The script never spells a shaped path, so neither output names one.
+	unsteady, p1 := gate(func(count string) string {
+		return `    - name: unsteady
+      run: 'n=$(cat ` + count + ` 2>/dev/null || echo 0); n=$((n+1)); echo $n > ` + count + `; case $n in 1) echo "Failure: alpha_test"; exit 1;; 2) echo "Error: beta_test"; exit 1;; esac; exit 0'
+`
+	})
+	refused, p2 := gate(func(count string) string {
+		return `    - name: identical
+      run: 'if test -n "$(ls features/steps)"; then echo "Failure: same_test"; exit 1; fi'
+    - name: located
+      run: 'if [ -f ` + step + ` ]; then echo "` + step + `:3:5: bad"; fi; exit 1'
+    - name: tracedpath
+      run: 'n=$(cat ` + count + ` 2>/dev/null || echo 0); n=$((n+1)); echo $n > ` + count + `; case $n in 1) echo "Failure: alpha_test"; exit 1;; 2) echo "` + step + `:3:5: bad"; exit 1;; esac; exit 0'
+`
+	})
+	b, err := json.Marshal(map[string]any{"unsteady": view(unsteady, p1), "refused": view(refused, p2)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(os.Getenv("SSCFNA_OUT"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}

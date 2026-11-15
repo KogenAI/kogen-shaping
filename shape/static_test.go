@@ -399,3 +399,76 @@ func TestStaticChecksRecordTimes(t *testing.T) {
 		t.Errorf("the recorded result %s does not carry the timings of the run", b)
 	}
 }
+
+// A check whose plain run and traced re-run fail differently without naming a shaped file is flaky and
+// leaves the outcome unknown; a failure that repeats, or names a shaped file, is still refused.
+func TestStaticChecksFlakyNotAttributable(t *testing.T) {
+	parallel(t)
+	const step = "features/steps/fixture_steps.js"
+	gate := func(checks func(count string) string) (*staticRun, []string) {
+		f := staticFx(t, checks(filepath.Join(t.TempDir(), "count")))
+		cfg, err := project.LoadConfig(f.Root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s, _, _ := f.session()
+		var progress []string
+		head := f.Repo.Head()
+		tree, err := f.Repo.Tree(head, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		g := newStaticGateRunner(s, f.Repo, &verify.Readiness{Root: f.Root, Repo: f.Repo, Config: cfg}, cfg, f.Root, approveSlug, func(l string) { progress = append(progress, l) })
+		run, err := g.run(context.Background(), head, tree, "package")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return run, progress
+	}
+	// Each execution in the shaped copy fails with another message (digits differ too); the base run passes.
+	run, progress := gate(func(count string) string {
+		return `    - name: unsteady
+      run: 'n=$(cat ` + count + ` 2>/dev/null || echo 0); n=$((n+1)); echo $n > ` + count + `; case $n in 1) echo "  Failure: alpha_test"; echo "3 errors"; exit 1;; 2) echo "Error: beta_test"; echo "7 errors"; exit 1;; esac; exit 0'
+`
+	})
+	c := run.Checks[0]
+	if c.Status != staticFlaky || run.Outcome != staticUnknown || c.Exit == nil || *c.Exit != 1 || len(c.Paths) != 0 {
+		t.Fatalf("unsteady: %+v outcome %s", c, run.Outcome)
+	}
+	if want := []string{"# errors", "Failure: alpha_test"}; !slices.Equal(c.Failing, want) {
+		t.Errorf("failing %q, want %q", c.Failing, want)
+	}
+	if want := []string{"# errors", "Error: beta_test"}; !slices.Equal(c.TracedFailing, want) {
+		t.Errorf("traced failing %q, want %q", c.TracedFailing, want)
+	}
+	if want := "kogen: static check unsteady failed (exit 1) with different failures on two runs of the same shaped files: not attributable; the shaped files are not established by this check"; !slices.Contains(progress, want) {
+		t.Errorf("no progress line %q in %q", want, progress)
+	}
+	if b, _ := json.Marshal(run.Checks[0]); !strings.Contains(string(b), `"failing":["# errors","Failure: alpha_test"]`) || !strings.Contains(string(b), `"traced_failing"`) {
+		t.Errorf("check json %s", b)
+	}
+
+	run, _ = gate(func(count string) string {
+		return `    - name: identical
+      run: 'if test -n "$(ls features/steps)"; then echo "Failure: same_test"; exit 1; fi'
+    - name: located
+      run: 'if [ -f ` + step + ` ]; then echo "` + step + `:3:5: bad"; fi; exit 1'
+    - name: tracedpath
+      run: 'n=$(cat ` + count + ` 2>/dev/null || echo 0); n=$((n+1)); echo $n > ` + count + `; case $n in 1) echo "Failure: alpha_test"; exit 1;; 2) echo "` + step + `:3:5: bad"; exit 1;; esac; exit 0'
+    - name: unsteady
+      run: 'n=$(cat ` + count + `2 2>/dev/null || echo 0); n=$((n+1)); echo $n > ` + count + `2; case $n in 1) echo "Failure: alpha_test"; exit 1;; 2) echo "Error: beta_test"; exit 1;; esac; exit 0'
+`
+	})
+	for i, w := range []string{staticAttributable, staticAttributable, staticAttributable, staticFlaky} {
+		c := run.Checks[i]
+		if c.Status != w {
+			t.Errorf("check %s: %s, want %s", c.Name, c.Status, w)
+		}
+		if w != staticFlaky && (c.Failing != nil || c.TracedFailing != nil) {
+			t.Errorf("check %s records failing sets %q %q", c.Name, c.Failing, c.TracedFailing)
+		}
+	}
+	if run.Outcome != staticRefused {
+		t.Errorf("outcome %s, want refused", run.Outcome)
+	}
+}

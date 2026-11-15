@@ -31,6 +31,7 @@ const (
 	staticPassed       = "passed"
 	staticAttributable = "attributable"
 	staticPreexisting  = "preexisting"
+	staticFlaky        = "flaky"
 	staticUnavailable  = "unavailable"
 	staticNotRun       = "not_run"
 
@@ -58,6 +59,10 @@ type staticCheck struct {
 	Reason string   `json:"reason,omitempty"`
 	Output string   `json:"output"`
 	Trace  string   `json:"trace"`
+	// Failing and TracedFailing are the failing lines of the plain run and of the traced re-run of a
+	// flaky check; every other status omits them.
+	Failing       []string `json:"failing,omitempty"`
+	TracedFailing []string `json:"traced_failing,omitempty"`
 	// WallMS is the wall time of the run of the check on the candidate in the copy (the plain run and
 	// the traced re-run of a failing one); BaseWallMS is that of the base run when it executed in
 	// this gate run. Both are 0 when there was no such run.
@@ -199,6 +204,42 @@ func namedPaths(candidates []string, texts ...string) []string {
 		}
 	}
 	sort.Strings(out)
+	return out
+}
+
+var digitRun = regexp.MustCompile(`[0-9]+`)
+
+// failingLines are the failing lines of an output: its trimmed lines that mention fail, error, panic
+// or exception (any case) and are not shell trace lines (starting with "+"), every run of decimal
+// digits replaced by "#", de-duplicated and sorted.
+func failingLines(output string) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "+") {
+			continue
+		}
+		low := strings.ToLower(line)
+		if !strings.Contains(low, "fail") && !strings.Contains(low, "error") && !strings.Contains(low, "panic") && !strings.Contains(low, "exception") {
+			continue
+		}
+		line = digitRun.ReplaceAllString(line, "#")
+		if !seen[line] {
+			seen[line] = true
+			out = append(out, line)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// boundedLines is each line as feedback and evidence carry it: redacted, then cut.
+func (g *staticGateRunner) boundedLines(lines []string) []string {
+	out := make([]string, len(lines))
+	for i, l := range lines {
+		out[i] = g.bounded(l)
+	}
 	return out
 }
 
@@ -555,6 +596,14 @@ func (g *staticGateRunner) run(ctx context.Context, head, tree, sha string) (*st
 				attributable = true
 			}
 		}
+		if attributable && len(named) == 0 && len(namedPaths(shapedPaths, traced.Output)) == 0 {
+			if failing, tracedFailing := failingLines(res.Output), failingLines(traced.Output); !slices.Equal(failing, tracedFailing) {
+				c.Status = staticFlaky
+				c.Failing, c.TracedFailing = g.boundedLines(failing), g.boundedLines(tracedFailing)
+				g.judged(fmt.Sprintf("kogen: static check %s failed (exit %d) with different failures on two runs of the same shaped files: not attributable; the shaped files are not established by this check", c.Name, res.Status))
+				continue
+			}
+		}
 		if attributable {
 			if len(named) == 0 {
 				named = namedPaths(shapedPaths, traced.Output)
@@ -574,7 +623,7 @@ func (g *staticGateRunner) run(ctx context.Context, head, tree, sha string) (*st
 		switch c.Status {
 		case staticAttributable:
 			run.Outcome = staticRefused
-		case staticPreexisting, staticUnavailable:
+		case staticPreexisting, staticUnavailable, staticFlaky:
 			if run.Outcome != staticRefused {
 				run.Outcome = staticUnknown
 			}
