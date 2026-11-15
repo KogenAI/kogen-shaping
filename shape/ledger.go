@@ -722,15 +722,15 @@ func (sh *shaping) carriedDecisionsGate(intent string) (string, outcome, bool) {
 		switch len(refs) {
 		case 0:
 		case 1:
-			if _, ok := sh.ledger.standingByID(refs[0][1]); !ok {
+			if recorded, ok := sh.ledger.standingByID(refs[0][1]); !ok {
 				// An identity the ledger never recorded is a label the shaper gave its own new
 				// decision; its sourcing is judged like any other. Only a recorded decision that
 				// no longer stands is claimed wrongly.
 				if sh.ledger.recorded(refs[0][1]) {
-					problems = append(problems, "- "+refs[0][1]+" is not a recorded decision that stands; remove its identity or submit a sourced decision")
+					problems = append(problems, "- "+refs[0][1]+" is not a recorded decision that stands; remove its identity or submit a sourced decision: "+line)
 				}
 			} else {
-				problems = append(problems, "- "+refs[0][1]+" does not match its recorded line")
+				problems = append(problems, "- "+refs[0][1]+" does not match its recorded line; keep it as: "+recorded.intentLine()+" (Intent has: "+line+")")
 			}
 		default:
 			problems = append(problems, "- use one recorded decision per line: "+line)

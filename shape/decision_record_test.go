@@ -626,3 +626,26 @@ func TestExternalShapeCanReviseAfterRereadingCarriedEvidence(t *testing.T) {
 		})
 	}
 }
+
+// TestShapeCarriedDecisionsProblemsShowLines: the identity problems show the Intent line they are
+// about, and the does-not-match problem also the recorded ledger line.
+func TestShapeCarriedDecisionsProblemsShowLines(t *testing.T) {
+	parallel(t)
+	f := newShpFx(t)
+	sh := f.shaping()
+	old := recordedDecision{ID: "D1", Round: 1, Decision: "Keep the old message", SupersededBy: "D2"}
+	current := recordedDecision{ID: "D2", Round: 2, Decision: "Use the new message"}
+	sh.ledger = &decisionLedger{Decisions: []recordedDecision{old, current}}
+	changed := recordedDecision{ID: "D2", Round: 2, Decision: "Use the newer message"}
+	draft := "## Decisions\n" + old.intentLine() + "\n" + changed.intentLine() + "\n"
+	_, o, refused := sh.carriedDecisionsGate(draft)
+	if !refused {
+		t.Fatal("gate accepted the draft")
+	}
+	want := []string{
+		"- D1 is not a recorded decision that stands; remove its identity or submit a sourced decision: " + old.intentLine(),
+		"- D2 does not match its recorded line; keep it as: " + current.intentLine() + " (Intent has: " + changed.intentLine() + ")",
+		"- D2 (round 2) is not in Decisions; keep it as: " + current.intentLine(),
+	}
+	shpEq(t, "problems", strings.Join(o.problems, "\n"), strings.Join(want, "\n"))
+}
