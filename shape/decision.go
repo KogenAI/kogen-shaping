@@ -26,6 +26,7 @@ Give one item for every line of the candidate's "## Decisions" section and for e
 - verdict: follows (the request, a recorded answer, or an evidenced or assumed Decision supports the value), contradicts (the request states a different value), consequence (no quote states it, but it follows from quoted request text and contradicts nothing in the request) or unsupported (none supports it);
 - intent_value, request_value and difference: the two values and what makes them differ, for contradicts only;
 - why: one short reason.
+Every item carries every field, including why; a field with nothing to say is the empty string (an empty list for request_quotes), never omitted.
 Give consequence, with the request quote it follows from, for a statement that is a plausible consequence of request text (what the request implies, such as a refusal status or a label for something the request asks for), a testable restatement of a request instruction (a marker, example or measurement that checks what the request asks), or a detail the request leaves to the builder and does not decide otherwise. Never give consequence when the statement differs from any value the request gives, narrows, removes or adds scope the request does not ask for, or has no request passage to quote; give contradicts or unsupported then.
 Compare values, not notation: before comparing, normalise digit grouping (1,000 and 1000), percentages and fractions (50% and 0.5), units of the same quantity (2 minutes and 120 seconds), date layouts, the order of a list whose order does not matter, and letter case where case does not matter.
 A statement that restates the request's value in another notation follows the request.
@@ -51,7 +52,7 @@ func decisionSchema() map[string]any {
 			"intent_value":   s,
 			"request_value":  s,
 			"difference":     s,
-			"why":            s,
+			"why":            map[string]any{"type": "string", "description": "Present on every item, never omitted; the empty string when there is nothing to say."},
 		},
 		"required":             []any{"statement", "request_quotes", "verdict", "intent_value", "request_value", "difference", "why"},
 		"additionalProperties": false,

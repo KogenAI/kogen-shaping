@@ -1,0 +1,69 @@
+package shape
+
+import (
+	"encoding/json"
+	"os"
+	"testing"
+)
+
+// TestSciafrAcceptanceHarness writes the literal and decision check instruction texts and tool
+// schema facts to the file named by SCIAFR_OUT. It calls no model.
+func TestSciafrAcceptanceHarness(t *testing.T) {
+	parallel(t)
+	out := os.Getenv("SCIAFR_OUT")
+	if out == "" {
+		t.Skip("SCIAFR_OUT is not set")
+	}
+	itemOf := func(schema map[string]any) map[string]any {
+		props := schema["properties"].(map[string]any)
+		return props["items"].(map[string]any)["items"].(map[string]any)
+	}
+	describe := func(item map[string]any, name string) string {
+		p, _ := item["properties"].(map[string]any)[name].(map[string]any)
+		d, _ := p["description"].(string)
+		return d
+	}
+	required := func(v any) []string {
+		var r []string
+		switch l := v.(type) {
+		case []any:
+			for _, x := range l {
+				r = append(r, x.(string))
+			}
+		case []string:
+			r = l
+		}
+		return r
+	}
+	enumOf := func(item map[string]any, name string) []string {
+		p, _ := item["properties"].(map[string]any)[name].(map[string]any)
+		return required(p["enum"])
+	}
+	lit, dec := itemOf(literalSchema()), itemOf(decisionSchema())
+	obs := map[string]any{
+		"literal_instructions":    literalInstructions,
+		"decision_instructions":   decisionInstructions,
+		"literal_status_desc":     describe(lit, "status"),
+		"literal_why_desc":        describe(lit, "why"),
+		"decision_why_desc":       describe(dec, "why"),
+		"literal_required":        required(lit["required"]),
+		"decision_required":       required(dec["required"]),
+		"literal_top_required":    required(literalSchema()["required"]),
+		"decision_top_required":   required(decisionSchema()["required"]),
+		"literal_status_enum":     enumOf(lit, "status"),
+		"decision_verdict_enum":   enumOf(dec, "verdict"),
+		"literal_no_extra":        lit["additionalProperties"] == false,
+		"decision_no_extra":       dec["additionalProperties"] == false,
+		"literal_tool_strict":     literalToolDef()["strict"] == true,
+		"decision_tool_strict":    decisionToolDef()["strict"] == true,
+		"literal_property_count":  len(lit["properties"].(map[string]any)),
+		"decision_property_count": len(dec["properties"].(map[string]any)),
+	}
+	b, err := json.Marshal(obs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(out, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}

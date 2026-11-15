@@ -31,6 +31,7 @@ List every literal value that the request or a settled answer explicitly require
 - status: required, superseded, informal or secret;
 - package_value: the value that the package uses in its place, empty when there is none;
 - why: one short reason.
+Every item carries every field, including status; a field with nothing to say is the empty string, never omitted.
 A required literal is a value that the request or a settled answer explicitly requires the implementation or an example to use exactly, such as a path, command, name, identifier, number or example input; descriptive text that may be paraphrased is not a literal.
 Give status superseded for a value that the request or a later answer explicitly replaces, and status secret for secret material such as a password, token, key or credential; for secret material leave literal, source_quote, package_value and why empty.
 Copy each literal exactly as its source writes it, with source_quote copied exactly from that source and containing the literal; Kogen itself compares each literal with the package byte for byte.
@@ -52,8 +53,9 @@ func literalSchema() map[string]any {
 			"source":        s,
 			"source_quote":  s,
 			"package_value": s,
-			"why":           s,
-			"status":        map[string]any{"type": "string", "enum": []any{"required", "superseded", "informal", "secret"}},
+			"why":           map[string]any{"type": "string", "description": "Present on every item, never omitted; the empty string when there is nothing to say."},
+			"status": map[string]any{"type": "string", "enum": []any{"required", "superseded", "informal", "secret"},
+				"description": "Present on every item, never omitted."},
 		},
 		"required":             []any{"literal", "source", "source_quote", "package_value", "why", "status"},
 		"additionalProperties": false,
