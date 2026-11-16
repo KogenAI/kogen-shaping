@@ -48,7 +48,7 @@ func budgetStop(last lastSubmission, answer string, answers int, elapsed time.Du
 	return result
 }
 
-// timedAttempt is one refused submission: the first refusing gate, the time of the model request
+// timedAttempt is one refused submission, or the last submission when it was checked without a refusal: the first refusing gate, the time of the model request
 // that produced it, the time Kogen spent checking it and the shaping budget left when that check ended.
 type timedAttempt struct {
 	attempt   int
@@ -56,6 +56,7 @@ type timedAttempt struct {
 	model     time.Duration
 	check     time.Duration
 	remaining time.Duration
+	over      time.Duration // how far past the budget the check ended; set only on the last unrefused submission
 }
 
 // wholeSeconds is a duration in whole seconds, truncated and never below 0.
@@ -73,9 +74,17 @@ func attemptLines(attempts []timedAttempt, install time.Duration) []string {
 	lines[0] += suffix
 	for _, a := range attempts {
 		lines = append(lines, fmt.Sprintf("attempt %d: gate %s, model request %d s, Kogen checks %d s, %d s remaining",
-			a.attempt, a.gate, wholeSeconds(a.model), wholeSeconds(a.check), wholeSeconds(a.remaining))+suffix)
+			a.attempt, a.gate, wholeSeconds(a.model), wholeSeconds(a.check), wholeSeconds(a.remaining))+overText(a.over)+suffix)
 	}
 	return lines
+}
+
+// overText is the suffix of an attempt line whose checks ended past the budget.
+func overText(over time.Duration) string {
+	if over <= 0 {
+		return ""
+	}
+	return fmt.Sprintf(", %d s over", wholeSeconds(over))
 }
 
 // shapingBudgetSeconds is the shaping budget in seconds, the figure of the shaping_turn_counts event.

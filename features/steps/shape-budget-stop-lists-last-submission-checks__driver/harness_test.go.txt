@@ -1,0 +1,57 @@
+package shape
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/KogenAI/kogen-executor/executor"
+)
+
+// TestBudgetStopLastSubmissionHarness runs a scripted external shaping whose second
+// submission passes the cheap gates and whose checks end 60 s past the budget, and writes the
+// refusal detail and lines as JSON to BSLLSC_OUT for the acceptance steps to read.
+func TestBudgetStopLastSubmissionHarness(t *testing.T) {
+	f := newShpFx(t)
+	f.useExternalShape()
+	clock := &shpClock{t: time.Unix(1_800_000_000, 0)}
+	bad := map[string]any{"questions": []any{shpQuestion("Q?")}, "files": shpFiles()["files"]}
+	advance := func(d time.Duration, next func(int, string) (executor.RoundResult, error)) func(int, string) (executor.RoundResult, error) {
+		return func(n int, root string) (executor.RoundResult, error) {
+			clock.t = clock.t.Add(d)
+			return next(n, root)
+		}
+	}
+	contractCalls := 0
+	review := result(map[string]any{"findings": []any{}, "environment": []any{}})
+	x := &shapeExec{t: t,
+		rounds: []func(int, string) (executor.RoundResult, error){
+			advance(10*time.Minute, result(bad)),
+			advance(4*time.Minute, result(shpFiles())),
+		},
+		contract: []func(int, string) (executor.RoundResult, error){
+			func(n int, root string) (executor.RoundResult, error) {
+				contractCalls++
+				if contractCalls == 1 {
+					clock.t = clock.t.Add(2 * time.Minute)
+				}
+				return review(n, root)
+			},
+		},
+	}
+	f.newSession()
+	_, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug,
+		Request: "Add calc.is_even(n).", Client: f.Client, External: x.external(), Now: clock.now})
+	e := shpWantError(t, err, "shape", "invalid_output", "15-minute", 1)
+	lines := []string{}
+	for _, line := range e.Lines {
+		lines = append(lines, strings.ReplaceAll(line, "\n", " "))
+	}
+	b, _ := json.Marshal(map[string]any{"detail": e.Detail, "lines": lines})
+	if err := os.WriteFile(os.Getenv("BSLLSC_OUT"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}

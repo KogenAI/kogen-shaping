@@ -626,6 +626,8 @@ type shaping struct {
 	lastGate         string                       // the gate of the last refused submission
 	modelTime        time.Duration                // the time of the model request that produced the current submissions
 	timedAttempts    []timedAttempt               // every refused submission with its timings, oldest first
+	lastChecked      *timedAttempt                // the last submission when it was checked without a gate refusal, nil otherwise
+	contractRan      bool                         // the contract review or confirmation ran in the current submission
 	lastRefusal      []string                     // its problem lines as recorded in submission_refused
 	// unresolved are the refusals since the last submission answered with readiness failures.
 	unresolved []shapeRefusal
@@ -939,7 +941,7 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 	var lastAnswer string
 	for {
 		if budgetSpent(sh.chargedTime()) {
-			return budgetStop(last, lastAnswer, turns.noTool, sh.chargedTime(), sh.requests, sh.timedAttempts, sh.ev.InstallTime()), usage, nil
+			return budgetStop(last, lastAnswer, turns.noTool, sh.chargedTime(), sh.requests, sh.budgetAttempts(), sh.ev.InstallTime()), usage, nil
 		}
 		sh.s.Progress(fmt.Sprintf("kogen: shaping (request %d, %d s)", sh.requests+1, sh.elapsed()))
 		t0 := time.Now()
@@ -1152,7 +1154,7 @@ func (sh *shaping) converseExternal(ctx context.Context, blocks []any) (outcome,
 	repeats := readinessRepeats{}
 	for {
 		if feedback != "" && budgetSpent(sh.chargedTime()) {
-			return budgetStop(last, "", 0, sh.chargedTime(), x.rounds, sh.timedAttempts, sh.ev.InstallTime()), x, nil
+			return budgetStop(last, "", 0, sh.chargedTime(), x.rounds, sh.budgetAttempts(), sh.ev.InstallTime()), x, nil
 		}
 		sh.s.Progress(fmt.Sprintf("kogen: shaping (external round %d, %d s)", x.rounds+1, sh.elapsed()))
 		clear(sh.externalReads)
@@ -1496,6 +1498,7 @@ func (sh *shaping) submit(ctx context.Context, args map[string]any) (string, out
 	sh.submissions++
 	sh.packageKey, sh.unchangedOf, sh.unchanged = "", 0, false
 	sh.priorRefusal, sh.lastCounted, sh.sameOf = sh.lastCounted, nil, 0
+	sh.lastChecked, sh.contractRan = nil, false
 	text, out, err := sh.submitOne(ctx, args)
 	if err == nil && len(sh.notes) > 0 && out.kind != outQuestions {
 		text = "note:\n" + strings.Join(sh.notes, "\n") + "\n" + text
@@ -1515,8 +1518,28 @@ func (sh *shaping) submit(ctx context.Context, args map[string]any) (string, out
 			attempt: sh.submissions, gate: sh.lastCounted.gate, model: sh.modelTime,
 			check: sh.ev.clock().Sub(checkStart), remaining: shapingBudget - sh.chargedTime(),
 		})
+	} else if err == nil && out.kind == outObservations {
+		gate := "readiness"
+		if sh.contractRan {
+			gate = "contract"
+		}
+		charged := sh.chargedTime()
+		sh.lastChecked = &timedAttempt{
+			attempt: sh.submissions, gate: gate, model: sh.modelTime,
+			check: sh.ev.clock().Sub(checkStart), remaining: shapingBudget - charged, over: charged - shapingBudget,
+		}
 	}
 	return text, out, err
+}
+
+// budgetAttempts are the lines' attempts of the budget refusal: every refused submission, then the
+// last submission when it was checked without a gate refusal.
+func (sh *shaping) budgetAttempts() []timedAttempt {
+	attempts := slices.Clone(sh.timedAttempts)
+	if sh.lastChecked != nil {
+		attempts = append(attempts, *sh.lastChecked)
+	}
+	return attempts
 }
 
 // shapeRefusal is one refused submission as submission_refused recorded it.
@@ -1960,6 +1983,7 @@ func (sh *shaping) checkSubmission(ctx context.Context, files []string) (string,
 	}
 	if sh.lastFresh && !sh.contractChecked[hash] {
 		beforeContract := sh.ready
+		sh.contractRan = true
 		var confirmed contractConfirmed
 		if err := sh.ev.Timed("contract", func() (err error) {
 			if confirmed, err = sh.contractCheck(ctx, hash, sh.lastObservations); err != nil {
