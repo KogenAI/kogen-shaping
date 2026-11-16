@@ -1,0 +1,29 @@
+package shape
+
+import (
+	"encoding/json"
+	"os"
+	"testing"
+)
+
+// TestExampleContradictionLineHarness builds the contradiction line for the row in ECLNF_IN, passes it
+// through cutProblems and writes both to the file named by ECLNF_OUT.
+func TestExampleContradictionLineHarness(t *testing.T) {
+	var in struct {
+		Scenario string `json:"scenario"`
+		Expected string `json:"expected"`
+		Derived  string `json:"derived"`
+		Why      string `json:"why"`
+	}
+	if err := json.Unmarshal([]byte(os.Getenv("ECLNF_IN")), &in); err != nil {
+		t.Fatal(err)
+	}
+	line := exampleContradictionLine(in.Scenario, in.Expected, in.Derived, in.Why)
+	out, err := json.Marshal(map[string]string{"line": line, "cut": cutProblems([]string{line})[0]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(os.Getenv("ECLNF_OUT"), out, 0o666); err != nil {
+		t.Fatal(err)
+	}
+}

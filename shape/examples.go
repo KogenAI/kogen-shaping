@@ -155,6 +155,36 @@ func exampleVerdict(expected, derived, verdict string) string {
 	return verdict
 }
 
+func exampleContradictionLine(scenario, expected, derived, why string) string {
+	a, okA := exampleValue(expected)
+	b, okB := exampleValue(derived)
+	x, objectA := a.(map[string]any)
+	y, objectB := b.(map[string]any)
+	var line string
+	if okA && okB && objectA && objectB {
+		var fields []string
+		for k, v := range x {
+			w, exists := y[k]
+			if !exists || !exampleEqual(v, w) {
+				fields = append(fields, k)
+			}
+		}
+		for k := range y {
+			if _, exists := x[k]; !exists {
+				fields = append(fields, k)
+			}
+		}
+		slices.Sort(fields)
+		line = fmt.Sprintf("%s: differs in %s | expected %s | rules give %s", scenario, strings.Join(fields, ", "), expected, derived)
+	} else {
+		line = fmt.Sprintf("%s: expected %s, rules give %s", scenario, expected, derived)
+	}
+	if why = strings.Join(strings.Fields(why), " "); why != "" {
+		line += " | why: " + why
+	}
+	return line
+}
+
 func (sh *shaping) exampleCheck(ctx context.Context) ([]string, error) {
 	files, err := sh.candidatePackage()
 	if err != nil {
@@ -233,7 +263,7 @@ func (sh *shaping) exampleCheck(ctx context.Context) ([]string, error) {
 		}
 		m["verdict"] = exampleVerdict(m["expected"].(string), m["derived"].(string), m["verdict"].(string))
 		if m["verdict"] == "contradicts" {
-			problems = append(problems, fmt.Sprintf("%s: expected %s, rules give %s", m["scenario"], m["expected"], m["derived"]))
+			problems = append(problems, exampleContradictionLine(m["scenario"].(string), m["expected"].(string), m["derived"].(string), m["why"].(string)))
 		}
 	}
 	home := sh.s.Getenv("HOME")
