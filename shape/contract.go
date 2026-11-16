@@ -746,10 +746,12 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 		second := keptAssertionFailures(repeat, kept)
 		baselineRefusals = keptBaselineRefusals(firstSteps, keptStepStates(repeat, keptLines), props)
 		var lines []string
+		namedByLine := map[string]keptScenario{}
 		for scenario := range first {
 			if detail, ok := second[scenario]; ok {
 				line := fmt.Sprintf("scenario %q (line %d) has the same assertion red in both observations: %s. Derive kept expected values from unchanged code or the scenario's own fixture; distinguish assertions about new behaviour.", scenario.name, scenario.line, normalizeWhitespace(detail))
 				lines = append(lines, line)
+				namedByLine[line] = scenario
 				for _, owner := range keptOwners[scenario.name] {
 					keptProblems = append(keptProblems, propertyProblem{prop: owner, reason: "kept_assertion", scenario: scenario.name, text: line})
 				}
@@ -760,8 +762,22 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 		if len(lines) > 0 || len(baselineRefusals) > 0 {
 			outcome = "persistent kept assertion red"
 		}
-		sh.progress("kogen: kept assertion repeat outcome: " + outcome + " (cap 2 executions)")
-		sh.ev.Record(map[string]any{"event": "kept_assertion_repeat", "package": hash, "execution_cap": 2, "outcome": outcome})
+		// The red scenarios follow the order of the sorted lines.
+		var redNames []string
+		var redScenarios []map[string]any
+		for _, line := range lines {
+			sc := namedByLine[line]
+			redNames = append(redNames, fmt.Sprintf("%q (line %d)", sc.name, sc.line))
+			redScenarios = append(redScenarios, map[string]any{"name": sc.name, "line": sc.line})
+		}
+		progressOutcome := outcome
+		repeatEvent := map[string]any{"event": "kept_assertion_repeat", "package": hash, "execution_cap": 2, "outcome": outcome}
+		if len(redScenarios) > 0 {
+			progressOutcome += " in " + strings.Join(redNames, ", ")
+			repeatEvent["scenarios"] = redScenarios
+		}
+		sh.progress("kogen: kept assertion repeat outcome: " + progressOutcome + " (cap 2 executions)")
+		sh.ev.Record(repeatEvent)
 		reference := filepath.Join(sh.root, sh.lastObservationsPath)
 		sh.lastObservations = verify.Observations(sh.slug, repeat, reference)
 		if err := os.WriteFile(reference, []byte(sh.lastObservations+"\nKept assertion repeat: "+outcome+"; cap 2 executions.\n"), 0o666); err != nil {

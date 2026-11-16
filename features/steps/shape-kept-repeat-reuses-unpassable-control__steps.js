@@ -34,7 +34,7 @@ function observe(o,e) {
  if(e.repeats) {
   assert.equal(o.repeats[0].outcome,'persistent kept assertion red',why);
   assert.equal(o.repeats[0].execution_cap,2,why);
-  for(const text of ['repeating kept assertion observation (execution 2 of 2 maximum)','kept assertion repeat outcome: persistent kept assertion red (cap 2 executions)']) assert.ok(o.progress.includes(text),text+': '+why);
+  for(const text of ['repeating kept assertion observation (execution 2 of 2 maximum)','kept assertion repeat outcome: persistent kept assertion red in "kept" (line 2) (cap 2 executions)']) assert.ok(o.progress.includes(text),text+': '+why);
   assert.ok(o.refusals.some(s=>s.includes('red on the unchanged tree')&&s.includes('kept')), 'kept refusal changed: '+why);
  }
  if(e.skipped) assert.ok(o.checks[0].skipped.startsWith('the control run wrote no report'),'skip reason: '+why);

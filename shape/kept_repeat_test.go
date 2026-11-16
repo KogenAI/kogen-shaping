@@ -72,7 +72,7 @@ func TestPersistentKeptAssertionRepeatCap(t *testing.T) {
 			t.Fatalf("feedback lacks %q: %s", text, feedback)
 		}
 	}
-	if !strings.Contains(f.Stderr.String(), "persistent kept assertion red (cap 2 executions)") {
+	if !strings.Contains(f.Stderr.String(), `persistent kept assertion red in "B pins A" (line 2) (cap 2 executions)`) {
 		t.Fatalf("missing repeat evidence: %s", f.Stderr.String())
 	}
 }
@@ -139,7 +139,7 @@ func TestPersistentKeptOutlineRepeatCap(t *testing.T) {
 			t.Fatalf("feedback lacks %q: %s", text, feedback)
 		}
 	}
-	if !strings.Contains(f.Stderr.String(), "persistent kept assertion red (cap 2 executions)") {
+	if !strings.Contains(f.Stderr.String(), `persistent kept assertion red in "B pins A" (line 6) (cap 2 executions)`) {
 		t.Fatalf("missing repeat evidence: %s", f.Stderr.String())
 	}
 }

@@ -147,7 +147,7 @@ func TestUnpassableCompletedReuse(t *testing.T) {
 				if len(repeats) != 1 || repeats[0]["outcome"] != "persistent kept assertion red" || repeats[0]["execution_cap"] != float64(2) || len(refused) == 0 {
 					t.Fatalf("repeat=%v refusals=%v", repeats, refused)
 				}
-				for _, text := range []string{"kogen: repeating kept assertion observation (execution 2 of 2 maximum)", "kogen: kept assertion repeat outcome: persistent kept assertion red (cap 2 executions)"} {
+				for _, text := range []string{"kogen: repeating kept assertion observation (execution 2 of 2 maximum)", `kogen: kept assertion repeat outcome: persistent kept assertion red in "kept" (line 2) (cap 2 executions)`} {
 					if !strings.Contains(f.Stderr.String(), text) {
 						t.Fatalf("missing progress %q: %s", text, f.Stderr.String())
 					}

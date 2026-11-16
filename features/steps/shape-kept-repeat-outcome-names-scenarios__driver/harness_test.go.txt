@@ -1,0 +1,81 @@
+package shape
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-verification/verify"
+)
+
+// Acceptance harness of shape-kept-repeat-outcome-names-scenarios. It drives the real contractCheck
+// kept-assertion repeat with local Cucumber observations and writes the progress and the
+// kept_assertion_repeat event of three cases to the JSON file named by KRONS_OUT.
+func TestKeptRepeatOutcomeNamesHarness(t *testing.T) {
+	out := os.Getenv("KRONS_OUT")
+	if out == "" {
+		t.Fatal("KRONS_OUT is not set")
+	}
+	obs := map[string]any{}
+	observe := func(key, feature, steps string, kept []string) {
+		f := newShpFx(t)
+		node, modules := os.Getenv("KOGEN_NODE"), os.Getenv("KOGEN_CUCUMBER")
+		f.write(".kogen/intents/is-even/intent.md", shpIntentMD)
+		f.write(project.FeaturePath(shpSlug), feature)
+		f.write("features/steps/is_even_steps.js", steps)
+		f.write("features/steps/calc_steps.js", "// existing steps\n")
+		f.write("accept.sh", "#!/bin/sh\ncase \"$KOGEN_ACCEPTANCE_FEATURES\" in */check.feature) : > \"$KOGEN_ACCEPTANCE_REPORT\"; exit 0;; esac\nNODE_PATH="+ShellQuote(modules)+" "+ShellQuote(node)+" "+ShellQuote(filepath.Join(modules, "@cucumber/cucumber/bin/cucumber.js"))+" --strict --require 'features/steps/*.js' --format \"message:$KOGEN_ACCEPTANCE_REPORT\" \"$KOGEN_ACCEPTANCE_FEATURES\"\n")
+		sh := f.shaping()
+		sh.rd = &verify.Readiness{Root: f.Root, Repo: f.Repo, Config: sh.cfg, Tools: fixtureTools(f.S)}
+		sh.started = time.Now()
+		sh.role = project.Role{Provider: "chatgpt", Model: "gpt-6.1-sol", Effort: "high"}
+		ctx := context.Background()
+		first, err := sh.rd.Check(ctx, f.S, shpSlug)
+		if err != nil {
+			t.Fatalf("%s: first Check: %v", key, err)
+		}
+		sh.ready = first
+		sh.request = "keep the existing results"
+		sh.lastObservationsPath = ".kogen/local/repeat-observations.txt"
+		f.write(sh.lastObservationsPath, "first observation\n")
+		names := []any{}
+		for _, k := range kept {
+			names = append(names, k)
+		}
+		prop := map[string]any{"property": "existing results", "request": sh.request, "kind": "kept", "observable": true, "scenarios": names, "decision": "", "issues": []any{}}
+		review := map[string]any{"findings": []any{}, "environment": []any{}, "properties": []any{prop}}
+		verdicts := []any{}
+		for i := 1; i <= 4; i++ {
+			verdicts = append(verdicts, map[string]any{"finding": i, "verdict": "confirmed", "why": "persistent kept mismatch"})
+		}
+		f.Prov.contract = []shpStep{shpAnswer(shpCall("review", SubmitContractReviewTool, review)), shpAnswer(shpCall("confirm", SubmitContractConfirmationTool, map[string]any{"verdicts": verdicts}))}
+		if _, err := sh.contractCheck(ctx, first.SHA256, "first observation"); err != nil {
+			t.Fatalf("%s: contractCheck: %v", key, err)
+		}
+		repeats := shpNamed(f.events(), "kept_assertion_repeat")
+		if repeats == nil {
+			repeats = []map[string]any{}
+		}
+		obs[key] = map[string]any{"stderr": f.Stderr.String(), "events": repeats}
+	}
+	red := "const {Then}=require('@cucumber/cucumber'); const assert=require('node:assert/strict');\nThen('step red', function () { assert.strictEqual('observed', 'expected', 'expected=expected observed=observed'); });\n"
+	filler := func(n int) string { return strings.Repeat("  # filler\n", n) }
+	observe("one", "Feature: Accounts\n"+filler(10)+"  Scenario: Admin accounts list links each account\n    Then step red\n", red, []string{"Admin accounts list links each account"})
+	observe("two", "Feature: Order\n\n  Scenario: Zebra\n    Then step red\n\n  # separator\n  Scenario: Ant\n    Then step red\n", red, []string{"Zebra", "Ant"})
+	marker := filepath.Join(t.TempDir(), "seen")
+	firstOnly := fmt.Sprintf("const {Then}=require('@cucumber/cucumber'); const assert=require('node:assert/strict'); const fs=require('node:fs');\nThen('step red', function () { if (!fs.existsSync(%q)) { fs.writeFileSync(%q, 'x'); assert.strictEqual('observed', 'expected', 'expected=expected observed=observed'); } });\n", marker, marker)
+	observe("first-only", "Feature: Once\n\n  Scenario: Flaky once\n    Then step red\n", firstOnly, []string{"Flaky once"})
+	b, err := json.Marshal(obs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(out, b, 0o666); err != nil {
+		t.Fatal(err)
+	}
+}
