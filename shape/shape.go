@@ -1856,6 +1856,7 @@ func (sh *shaping) acceptFiles(ctx context.Context, submitted []proposedFile) (s
 					}
 					sh.ev.Record(map[string]any{"event": "title_shortened", "original": original, "title": short})
 					sh.bareProgress("kogen: shortened the title to 50 characters: " + short)
+					sh.notes = append(sh.notes, "the title was shortened to 50 characters: "+short+"; keep this title in later submissions")
 					intent, _, err = project.CheckIntent(sh.root, sh.slug, sh.overlay())
 				}
 			}

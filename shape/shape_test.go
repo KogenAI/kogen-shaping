@@ -1139,6 +1139,21 @@ func TestShapeShortensATooLongTitleAtOnce(t *testing.T) {
 		shpEq(t, "refused", strings.Join(shpRefused(f), " "), "")
 		shpEq(t, "progress lines", strings.Count(f.Stderr.String(), progressLine+"\n"), 1)
 	})
+	t.Run("later gate refused", func(t *testing.T) {
+		parallel(t)
+		decision := "- Zero is even. (evidence: nothing/here.rb) (source: request)"
+		f := newShpFx(t, shpSubmit("c1", shpTitled(long, decision)), shpSubmit("c2", shpFiles()))
+		f.setReport("PASSED", 0)
+		if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 0 {
+			t.Fatalf("exit %d, err %v\n%s", exit, err, f.Stdout)
+		}
+		out := shpOutputs(f.Prov.requests()[1])["c1"]
+		prefix := "note:\nthe title was shortened to 50 characters: " + short + "; keep this title in later submissions\n"
+		if !strings.HasPrefix(out, prefix) {
+			t.Fatalf("submission output lacks title note prefix: %s", out)
+		}
+		shpEq(t, "refused", strings.Join(shpRefused(f), " "), "1:decision_evidence")
+	})
 	t.Run("another problem remains", func(t *testing.T) {
 		parallel(t)
 		unsourced := shpTitled(long, "- Non-integers raise TypeError.")
@@ -1152,6 +1167,9 @@ func TestShapeShortensATooLongTitleAtOnce(t *testing.T) {
 			out := shpOutputs(f.Prov.requests()[map[string]int{"c1": 1, "c2": 2}[id]])[id]
 			shpContains(t, "feedback "+id, out, "title:")
 			shpContains(t, "feedback "+id, out, "decisions:")
+			if strings.Contains(out, "the title was shortened") {
+				t.Fatalf("unexpected title note before shortening: %s", out)
+			}
 		}
 		retained := f.read(".kogen/local/shaping/is-even/proposed/.kogen/intents/is-even/intent.md")
 		original := unsourced["files"].([]any)[0].(map[string]any)["content"].(string)
@@ -1166,7 +1184,8 @@ func TestShapeShortensATooLongTitleAtOnce(t *testing.T) {
 	})
 	t.Run("fifty characters", func(t *testing.T) {
 		parallel(t)
-		f := newShpFx(t, shpSubmit("c1", shpTitled(short, "")))
+		decision := "- Zero is even. (evidence: nothing/here.rb) (source: request)"
+		f := newShpFx(t, shpSubmit("c1", shpTitled(short, decision)), shpSubmit("c2", shpTitled(short, "")))
 		f.setReport("PASSED", 0)
 		if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 0 {
 			t.Fatalf("exit %d, err %v\n%s", exit, err, f.Stdout)
@@ -1174,6 +1193,10 @@ func TestShapeShortensATooLongTitleAtOnce(t *testing.T) {
 		shpEq(t, "title", strings.SplitN(f.read(".kogen/intents/is-even/intent.md"), "\n", 2)[0], "# "+short)
 		shpEq(t, "events", len(shpNamed(f.events(), "title_shortened")), 0)
 		shpEq(t, "progress", strings.Contains(f.Stderr.String(), "shortened the title"), false)
+		out := shpOutputs(f.Prov.requests()[1])["c1"]
+		if out == "" || strings.Contains(out, "the title was shortened") {
+			t.Fatalf("expected refusal without title note: %s", out)
+		}
 	})
 	t.Run("short title with trailing whitespace and a period", func(t *testing.T) {
 		parallel(t)

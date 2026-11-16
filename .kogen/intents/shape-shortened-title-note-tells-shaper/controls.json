@@ -1,0 +1,41 @@
+{
+  "correct": {
+    "files": {
+      "shape/shape.go": {
+        "patch": "diff --git a/shape/shape.go b/shape/shape.go\nindex 9722cd2..ffe9cee 100644\n--- a/shape/shape.go\n+++ b/shape/shape.go\n@@ -1856,6 +1856,7 @@ func (sh *shaping) acceptFiles(ctx context.Context, submitted []proposedFile) (s\n \t\t\t\t\t}\n \t\t\t\t\tsh.ev.Record(map[string]any{\"event\": \"title_shortened\", \"original\": original, \"title\": short})\n \t\t\t\t\tsh.bareProgress(\"kogen: shortened the title to 50 characters: \" + short)\n+\t\t\t\t\tsh.notes = append(sh.notes, \"the title was shortened to 50 characters: \"+short+\"; keep this title in later submissions\")\n \t\t\t\t\tintent, _, err = project.CheckIntent(sh.root, sh.slug, sh.overlay())\n \t\t\t\t}\n \t\t\t}\n"
+      }
+    }
+  },
+  "wrong": [
+    {
+      "name": "No note",
+      "scenario": "A shortened title is announced to the shaper in the submission output",
+      "step": "Then shape-shortened-title-note-tells-shaper: the \"refused\" output for c1 starts with",
+      "files": {
+        "shape/shape.go": {
+          "patch": "diff --git a/shape/shape.go b/shape/shape.go\nindex ffe9cee..9722cd2 100644\n--- a/shape/shape.go\n+++ b/shape/shape.go\n@@ -1856,7 +1856,6 @@ func (sh *shaping) acceptFiles(ctx context.Context, submitted []proposedFile) (s\n \t\t\t\t\t}\n \t\t\t\t\tsh.ev.Record(map[string]any{\"event\": \"title_shortened\", \"original\": original, \"title\": short})\n \t\t\t\t\tsh.bareProgress(\"kogen: shortened the title to 50 characters: \" + short)\n-\t\t\t\t\tsh.notes = append(sh.notes, \"the title was shortened to 50 characters: \"+short+\"; keep this title in later submissions\")\n \t\t\t\t\tintent, _, err = project.CheckIntent(sh.root, sh.slug, sh.overlay())\n \t\t\t\t}\n \t\t\t}\n"
+        }
+      }
+    },
+    {
+      "name": "Progress twice",
+      "scenario": "A title-only lint failure is shortened once and the shaping succeeds",
+      "step": "Then shape-shortened-title-note-tells-shaper: the \"lint-only\" case recorded 1 title_shortened event(s), 1 progress line(s) and exit 0",
+      "files": {
+        "shape/shape.go": {
+          "patch": "diff --git a/shape/shape.go b/shape/shape.go\nindex ffe9cee..9175ec3 100644\n--- a/shape/shape.go\n+++ b/shape/shape.go\n@@ -1856,6 +1856,7 @@ func (sh *shaping) acceptFiles(ctx context.Context, submitted []proposedFile) (s\n \t\t\t\t\t}\n \t\t\t\t\tsh.ev.Record(map[string]any{\"event\": \"title_shortened\", \"original\": original, \"title\": short})\n \t\t\t\t\tsh.bareProgress(\"kogen: shortened the title to 50 characters: \" + short)\n+\t\t\t\t\tsh.bareProgress(\"kogen: shortened the title to 50 characters: \" + short)\n \t\t\t\t\tsh.notes = append(sh.notes, \"the title was shortened to 50 characters: \"+short+\"; keep this title in later submissions\")\n \t\t\t\t\tintent, _, err = project.CheckIntent(sh.root, sh.slug, sh.overlay())\n \t\t\t\t}\n"
+        }
+      }
+    },
+    {
+      "name": "Note on every submission",
+      "scenario": "A fifty-character title gets no shortened-title note",
+      "step": "Then shape-shortened-title-note-tells-shaper: the \"fifty\" output for c1 is not empty and lacks \"the title was shortened\"",
+      "files": {
+        "shape/shape.go": {
+          "patch": "diff --git a/shape/shape.go b/shape/shape.go\nindex ffe9cee..af646e6 100644\n--- a/shape/shape.go\n+++ b/shape/shape.go\n@@ -1499,6 +1499,7 @@ func (sh *shaping) submit(ctx context.Context, args map[string]any) (string, out\n \tsh.packageKey, sh.unchangedOf, sh.unchanged = \"\", 0, false\n \tsh.priorRefusal, sh.lastCounted, sh.sameOf = sh.lastCounted, nil, 0\n \tsh.lastChecked, sh.contractRan = nil, false\n+\tsh.notes = append(sh.notes, \"the title was shortened to 50 characters: \"+\"; keep this title in later submissions\")\n \ttext, out, err := sh.submitOne(ctx, args)\n \tif err == nil && len(sh.notes) > 0 && out.kind != outQuestions {\n \t\ttext = \"note:\\n\" + strings.Join(sh.notes, \"\\n\") + \"\\n\" + text\n"
+        }
+      }
+    }
+  ]
+}

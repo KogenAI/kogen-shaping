@@ -1,0 +1,66 @@
+package shape
+
+import (
+	"encoding/json"
+	"os"
+	"strings"
+	"sync"
+	"testing"
+)
+
+// This supplied harness observes Shape, not a test the implementation must invent.
+func TestShortenedTitleNoteObservation(t *testing.T) {
+	const long = "Add an is-even check for integers and also reject all"
+	const short = "Add an is-even check for integers and also reject"
+	const bad = "- Zero is even. (evidence: nothing/here.rb) (source: request)"
+	type observation struct {
+		Exit     int      `json:"exit"`
+		Output   string   `json:"output"`
+		Requests int      `json:"requests"`
+		Events   int      `json:"events"`
+		Original string   `json:"original"`
+		Title    string   `json:"title"`
+		Progress int      `json:"progress"`
+		Refused  []string `json:"refused"`
+	}
+	var mu sync.Mutex
+	out := map[string]observation{}
+	// Subtests are parallel; cleanup runs after all of them finish.
+	t.Cleanup(func() {
+		b, err := json.Marshal(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(os.Getenv("SHORTEN_NOTE_OUT"), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	})
+	for _, c := range []struct {
+		name, title, decision string
+	}{
+		{"refused", long, bad},
+		{"lint-only", long, ""},
+		{"fifty", short, bad},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			parallel(t)
+			f := newShpFx(t, shpSubmit("c1", shpTitled(c.title, c.decision)), shpSubmit("c2", shpFiles()))
+			f.setReport("PASSED", 0)
+			exit, _ := f.shape("Add calc.is_even(n).")
+			reqs := f.Prov.requests()
+			o := observation{Exit: exit, Requests: len(reqs), Progress: strings.Count(f.Stderr.String(), "kogen: shortened the title to 50 characters: "+short+"\n"), Refused: shpRefused(f)}
+			if len(reqs) > 1 {
+				o.Output = shpOutputs(reqs[1])["c1"]
+			}
+			events := shpNamed(f.events(), "title_shortened")
+			o.Events = len(events)
+			if len(events) > 0 {
+				o.Original, _ = events[0]["original"].(string)
+				o.Title, _ = events[0]["title"].(string)
+			}
+			mu.Lock()
+			out[c.name] = o
+			mu.Unlock()
+		})
+	}
+}
