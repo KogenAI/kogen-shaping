@@ -148,7 +148,7 @@ func TestStaticChecksAttribution(t *testing.T) {
 	f := staticFx(t, `    - name: steps
       run: '! grep -q BAD `+step+`'
     - name: stale
-      run: '! grep -q BAD app.txt'
+      run: 'if grep -q BAD app.txt; then echo "app.txt"; exit 1; fi'
     - name: located
       run: 'if [ -f `+step+` ]; then echo "`+step+`:3:5: bad"; fi; exit 1'
     - name: suite
@@ -324,6 +324,67 @@ func TestStaticBaseRunReused(t *testing.T) {
 	}
 }
 
+// TestStaticChecksPreexistingSkipsTracedRerun: a check that fails identically without the shaped
+// files runs twice in the first round and once in the next (the base result is reused), never
+// under set -x, and is recorded pre-existing with the paths of its own output and no trace; a check
+// that passes without the shaped files and fails with them still runs the traced rerun.
+func TestStaticChecksPreexistingSkipsTracedRerun(t *testing.T) {
+	parallel(t)
+	const step = "features/steps/fixture_steps.js"
+	marker := filepath.Join(t.TempDir(), "old-marker")
+	// The traced rerun prefixes the check text with set -x, which shows in $-.
+	f := staticFx(t, `    - name: old
+      run: 'case "$-" in *x*) echo traced >> `+marker+`;; *) echo plain >> `+marker+`;; esac; echo "app.txt:3:1: old"; exit 1'
+    - name: new
+      run: 'if [ -f `+step+` ]; then echo "`+step+`:2:1: bad"; exit 1; fi'
+`)
+	f.write(step, "// BAD\n")
+	f.write("app.txt", "BAD\n")
+	cfg, err := project.LoadConfig(f.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, _, _ := f.session()
+	head := f.Repo.Head()
+	tree, err := f.Repo.Tree(head, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	round := func() *staticRun {
+		g := newStaticGateRunner(s, f.Repo, &verify.Readiness{Root: f.Root, Repo: f.Repo, Config: cfg}, cfg, f.Root, approveSlug, func(string) {})
+		run, err := g.run(context.Background(), head, tree, "package")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return run
+	}
+	runs := func() []string {
+		b, err := os.ReadFile(marker)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Fields(string(b))
+	}
+	first := round()
+	if got := runs(); !slices.Equal(got, []string{"plain", "plain"}) {
+		t.Errorf("round 1 runs of the pre-existing check %v, want the shaped and the base run, both plain", got)
+	}
+	old, added := first.Checks[0], first.Checks[1]
+	if old.Status != staticPreexisting || !slices.Equal(old.Paths, []string{"app.txt:3:1"}) || old.Trace != "" {
+		t.Errorf("round 1 old: %s %v trace %q", old.Status, old.Paths, old.Trace)
+	}
+	if added.Status != staticAttributable || added.Trace == "" || first.Outcome != staticRefused {
+		t.Errorf("round 1 new: %s trace %q, outcome %s", added.Status, added.Trace, first.Outcome)
+	}
+	second := round()
+	if got := runs(); !slices.Equal(got, []string{"plain", "plain", "plain"}) {
+		t.Errorf("after round 2 runs %v, want one more plain run (the base result is reused)", got)
+	}
+	if old := second.Checks[0]; old.Status != staticPreexisting || !slices.Equal(old.Paths, []string{"app.txt:3:1"}) || old.Trace != "" {
+		t.Errorf("round 2 old: %s %v trace %q", old.Status, old.Paths, old.Trace)
+	}
+}
+
 // TestStaticChecksRecordTimes: each check records the wall time of its run on the candidate and of
 // the base run that executed in this gate run, the run records the time of the copy, a check that
 // was not run or whose base run did not happen records 0, a later round that reuses the base result
@@ -367,9 +428,9 @@ func TestStaticChecksRecordTimes(t *testing.T) {
 			t.Errorf("round 1 check %s: wall_ms %d, base_wall_ms %d; want wall>0 %v, base>0 %v", c.Name, c.WallMS, c.BaseWallMS, want.wall, want.base)
 		}
 	}
-	// The traced re-run of a failing check counts toward wall_ms: plain 50 ms plus traced 50 ms.
-	if w := first.Checks[1].WallMS; w < 100 {
-		t.Errorf("stale wall_ms %d, want at least the plain and the traced run (100)", w)
+	// A pre-existing check does not run the traced re-run, so its wall_ms is the plain run only.
+	if w := first.Checks[1].WallMS; w < 50 {
+		t.Errorf("stale wall_ms %d, want at least the plain run (50)", w)
 	}
 	second := round()
 	for _, c := range second.Checks[1:3] {
@@ -425,10 +486,10 @@ func TestStaticChecksFlakyNotAttributable(t *testing.T) {
 		}
 		return run, progress
 	}
-	// Each execution in the shaped copy fails with another message (digits differ too); the base run passes.
+	// Each execution in the shaped copy fails with another message (digits differ too); the base run (no shaped files, so no features/steps) passes without counting.
 	run, progress := gate(func(count string) string {
 		return `    - name: unsteady
-      run: 'n=$(cat ` + count + ` 2>/dev/null || echo 0); n=$((n+1)); echo $n > ` + count + `; case $n in 1) echo "  Failure: alpha_test"; echo "3 errors"; exit 1;; 2) echo "Error: beta_test"; echo "7 errors"; exit 1;; esac; exit 0'
+      run: 'if test -z "$(ls features/steps)"; then exit 0; fi; n=$(cat ` + count + ` 2>/dev/null || echo 0); n=$((n+1)); echo $n > ` + count + `; case $n in 1) echo "  Failure: alpha_test"; echo "3 errors"; exit 1;; 2) echo "Error: beta_test"; echo "7 errors"; exit 1;; esac; exit 0'
 `
 	})
 	c := run.Checks[0]
@@ -454,9 +515,9 @@ func TestStaticChecksFlakyNotAttributable(t *testing.T) {
     - name: located
       run: 'if [ -f ` + step + ` ]; then echo "` + step + `:3:5: bad"; fi; exit 1'
     - name: tracedpath
-      run: 'n=$(cat ` + count + ` 2>/dev/null || echo 0); n=$((n+1)); echo $n > ` + count + `; case $n in 1) echo "Failure: alpha_test"; exit 1;; 2) echo "` + step + `:3:5: bad"; exit 1;; esac; exit 0'
+      run: 'if test -z "$(ls features/steps)"; then exit 0; fi; n=$(cat ` + count + ` 2>/dev/null || echo 0); n=$((n+1)); echo $n > ` + count + `; case $n in 1) echo "Failure: alpha_test"; exit 1;; 2) echo "` + step + `:3:5: bad"; exit 1;; esac; exit 0'
     - name: unsteady
-      run: 'n=$(cat ` + count + `2 2>/dev/null || echo 0); n=$((n+1)); echo $n > ` + count + `2; case $n in 1) echo "Failure: alpha_test"; exit 1;; 2) echo "Error: beta_test"; exit 1;; esac; exit 0'
+      run: 'if test -z "$(ls features/steps)"; then exit 0; fi; n=$(cat ` + count + `2 2>/dev/null || echo 0); n=$((n+1)); echo $n > ` + count + `2; case $n in 1) echo "Failure: alpha_test"; exit 1;; 2) echo "Error: beta_test"; exit 1;; esac; exit 0'
 `
 	})
 	for i, w := range []string{staticAttributable, staticAttributable, staticAttributable, staticFlaky} {

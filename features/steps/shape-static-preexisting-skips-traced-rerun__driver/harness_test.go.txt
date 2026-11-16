@@ -1,0 +1,91 @@
+package shape
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-verification/verify"
+)
+
+// TestStaticPreexistingSkipsTracedHarness runs the real static gate of the shape package on three
+// configured checks and writes what it observed as JSON to SPSTR_OUT.
+func TestStaticPreexistingSkipsTracedHarness(t *testing.T) {
+	parallel(t)
+	const step = "features/steps/fixture_steps.js"
+
+	type round struct {
+		Runs     []string `json:"runs"`
+		Status   string   `json:"status"`
+		Outcome  string   `json:"outcome"`
+		Paths    []string `json:"paths"`
+		Trace    string   `json:"trace"`
+		Failing  []string `json:"failing"`
+		Traced   []string `json:"traced_failing"`
+		Progress string   `json:"progress"`
+	}
+
+	// gate runs the single configured check `body` in `rounds` fresh gate runners over the same tree,
+	// the way Shape rounds do. body receives the marker file in which each execution of the check
+	// appends "plain" or "traced" (traced: the check text ran under `set -x`).
+	gate := func(body func(mark, count string) string, rounds int) []round {
+		dir := t.TempDir()
+		mark, count := filepath.Join(dir, "mark"), filepath.Join(dir, "count")
+		f := staticFx(t, "    - name: probe\n      run: '"+body(mark, count)+"'\n")
+		f.write(step, "// BAD\n")
+		cfg, err := project.LoadConfig(f.Root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s, _, _ := f.session()
+		head := f.Repo.Head()
+		tree, err := f.Repo.Tree(head, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []round
+		seen := 0
+		for i := 0; i < rounds; i++ {
+			var progress []string
+			g := newStaticGateRunner(s, f.Repo, &verify.Readiness{Root: f.Root, Repo: f.Repo, Config: cfg}, cfg, f.Root, approveSlug, func(l string) { progress = append(progress, l) })
+			run, err := g.run(context.Background(), head, tree, "package")
+			if err != nil {
+				t.Fatal(err)
+			}
+			b, _ := os.ReadFile(mark)
+			lines := strings.Fields(string(b))
+			c := run.Checks[0]
+			out = append(out, round{Runs: append([]string{}, lines[seen:]...), Status: c.Status, Outcome: run.Outcome, Paths: c.Paths, Trace: c.Trace, Failing: c.Failing, Traced: c.TracedFailing, Progress: strings.Join(progress, "\n")})
+			seen = len(lines)
+		}
+		return out
+	}
+	record := `m=$(case $- in *x*) echo traced;; *) echo plain;; esac); echo $m >> `
+
+	obs := map[string][]round{}
+	// The same failure with and without the shaped files, naming only app.txt.
+	obs["preexisting"] = gate(func(mark, count string) string {
+		return record + mark + `; echo "Error: app.txt:3:1: broken"; exit 1`
+	}, 2)
+	// Passes without the shaped step files and fails with it, naming no path.
+	obs["attributable"] = gate(func(mark, count string) string {
+		return record + mark + `; if test -n "$(ls features/steps)"; then echo "Failure: same_test"; exit 1; fi`
+	}, 1)
+	// Passes without the shaped step files; with it fails differently on its first two executions.
+	obs["flaky"] = gate(func(mark, count string) string {
+		return record + mark + `; if test -z "$(ls features/steps)"; then exit 0; fi; n=$(cat ` + count + ` 2>/dev/null || echo 0); n=$((n+1)); echo $n > ` + count +
+			`; case $n in 1) echo "Failure: alpha_test"; exit 1;; 2) echo "Error: beta_test"; exit 1;; esac; exit 0`
+	}, 1)
+
+	b, err := json.Marshal(obs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(os.Getenv("SPSTR_OUT"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}

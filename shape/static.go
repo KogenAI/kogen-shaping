@@ -559,13 +559,6 @@ func (g *staticGateRunner) run(ctx context.Context, head, tree, sha string) (*st
 			g.progress(fmt.Sprintf("kogen: static check %s passed", c.Name))
 			continue
 		}
-		tracedStart := time.Now()
-		traced, err := g.s.RunContext(ctx, "set -x\n"+c.Run, dir, opts)
-		if err != nil {
-			return nil, err
-		}
-		c.WallMS += time.Since(tracedStart).Milliseconds()
-		c.Trace = g.bounded(traced.Output)
 		if baseTree == "" {
 			if baseTree, err = g.baseTreeID(tree, shapedPaths); err != nil {
 				return nil, err
@@ -596,7 +589,21 @@ func (g *staticGateRunner) run(ctx context.Context, head, tree, sha string) (*st
 				attributable = true
 			}
 		}
-		if attributable && len(named) == 0 && len(namedPaths(shapedPaths, traced.Output)) == 0 {
+		if !attributable {
+			// Pre-existing: the traced re-run cannot change the verdict, so it is not run.
+			c.Status = staticPreexisting
+			c.Paths = staticEntries(namedPaths(others, res.Output), res.Output, "")
+			g.judged(fmt.Sprintf("kogen: static check %s failed (exit %d) without the shaped files too%s: pre-existing failure in %s; the shaped files are not established by this check", c.Name, res.Status, reusedMark, listOr(c.Paths, "(no path named)")))
+			continue
+		}
+		tracedStart := time.Now()
+		traced, err := g.s.RunContext(ctx, "set -x\n"+c.Run, dir, opts)
+		if err != nil {
+			return nil, err
+		}
+		c.WallMS += time.Since(tracedStart).Milliseconds()
+		c.Trace = g.bounded(traced.Output)
+		if len(named) == 0 && len(namedPaths(shapedPaths, traced.Output)) == 0 {
 			if failing, tracedFailing := failingLines(res.Output), failingLines(traced.Output); !slices.Equal(failing, tracedFailing) {
 				c.Status = staticFlaky
 				c.Failing, c.TracedFailing = g.boundedLines(failing), g.boundedLines(tracedFailing)
@@ -604,18 +611,12 @@ func (g *staticGateRunner) run(ctx context.Context, head, tree, sha string) (*st
 				continue
 			}
 		}
-		if attributable {
-			if len(named) == 0 {
-				named = namedPaths(shapedPaths, traced.Output)
-			}
-			c.Status = staticAttributable
-			c.Paths = staticEntries(named, res.Output, traced.Output)
-			g.judged(fmt.Sprintf("kogen: static check %s failed (exit %d) because of the shaped files%s: %s", c.Name, res.Status, reusedMark, listOr(c.Paths, "(not named by the check)")))
-			continue
+		if len(named) == 0 {
+			named = namedPaths(shapedPaths, traced.Output)
 		}
-		c.Status = staticPreexisting
-		c.Paths = staticEntries(namedPaths(others, res.Output, traced.Output), res.Output, traced.Output)
-		g.judged(fmt.Sprintf("kogen: static check %s failed (exit %d) without the shaped files too%s: pre-existing failure in %s; the shaped files are not established by this check", c.Name, res.Status, reusedMark, listOr(c.Paths, "(no path named)")))
+		c.Status = staticAttributable
+		c.Paths = staticEntries(named, res.Output, traced.Output)
+		g.judged(fmt.Sprintf("kogen: static check %s failed (exit %d) because of the shaped files%s: %s", c.Name, res.Status, reusedMark, listOr(c.Paths, "(not named by the check)")))
 	}
 
 	run.Outcome = staticChecked
