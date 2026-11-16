@@ -527,7 +527,10 @@ func (sh *shaping) decisionCheckWithEvidence(ctx context.Context, intent, eviden
 			return nil, err
 		}
 		defer x.close()
+		sh.progress("kogen: checking the stated decisions")
+		started := time.Now()
 		res, err := x.round(ctx, "")
+		sh.bareProgress(fmt.Sprintf("kogen: decision check finished (%d s)", int64(time.Since(started)/time.Second)))
 		sh.decisionRounds += x.rounds
 		if err != nil {
 			return nil, err

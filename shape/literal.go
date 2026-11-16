@@ -406,7 +406,10 @@ func (sh *shaping) literalCheck(ctx context.Context) ([]string, error) {
 			return nil, err
 		}
 		defer x.close()
+		sh.progress("kogen: checking the required literals")
+		started := time.Now()
 		res, err := x.round(ctx, "")
+		sh.bareProgress(fmt.Sprintf("kogen: literal check finished (%d s)", int64(time.Since(started)/time.Second)))
 		sh.literalRounds += x.rounds
 		if err != nil {
 			return nil, err

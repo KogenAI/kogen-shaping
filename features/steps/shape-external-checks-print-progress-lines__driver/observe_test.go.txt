@@ -1,0 +1,89 @@
+package shape
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/KogenAI/kogen-executor/executor"
+)
+
+type progressAcceptanceWriter struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (w *progressAcceptanceWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.b.Write(p)
+}
+func (w *progressAcceptanceWriter) text() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.b.String()
+}
+
+func TestExternalProgressAcceptance(t *testing.T) {
+	mode := os.Getenv("CHECK_PROGRESS_MODE")
+	ack := map[string]any{"files": []any{map[string]any{"path": ".kogen/intents/is-even/acceptance.feature", "content": shpFeature}}}
+	f := newShpFx(t, shpSubmit("c1", shpFiles()), shpSubmit("c2", ack))
+	var x *shapeExec
+	w := &progressAcceptanceWriter{}
+	type snapshot struct{ Kind, Before, Returning string }
+	var snapshots []snapshot
+	var mu sync.Mutex
+	if mode == "external" {
+		f.useExternalShape()
+		literalCalls := 0
+		callback := func(kind string) func(int, string) (executor.RoundResult, error) {
+			return func(n int, root string) (executor.RoundResult, error) {
+				before := w.text()
+				payload := map[string]any{"items": []any{}}
+				if kind == "literal" {
+					literalCalls++
+					status := "required"
+					if literalCalls > 1 {
+						status = "informal"
+					}
+					payload["items"] = []any{map[string]any{"literal": "ZeroDivisionError", "source": "request", "source_quote": "Raise exactly ZeroDivisionError for 0.", "status": status, "package_value": "", "why": "because"}}
+				}
+				r, e := result(payload)(n, root)
+				mu.Lock()
+				snapshots = append(snapshots, snapshot{kind, before, w.text()})
+				mu.Unlock()
+				return r, e
+			}
+		}
+		x = &shapeExec{t: t, rounds: []func(int, string) (executor.RoundResult, error){result(shpFiles()), result(shpFiles()), result(ack)}, decision: []func(int, string) (executor.RoundResult, error){callback("decision")}, literal: []func(int, string) (executor.RoundResult, error){callback("literal")}}
+	} else if mode != "native" {
+		t.Fatalf("unknown mode %q", mode)
+	}
+	f.newSession()
+	f.S.Stderr = w
+	in := ShapeInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Request: "Add calc.is_even(n).", Client: f.Client}
+	if x != nil {
+		in.External = x.external()
+		in.Request += " Raise exactly ZeroDivisionError for 0."
+	}
+	exit, err := Shape(context.Background(), f.S, in)
+	if err != nil || exit != 0 {
+		t.Fatalf("Shape exit=%d err=%v\n%s", exit, err, w.text())
+	}
+	report := map[string]any{"output": w.text(), "snapshots": snapshots, "decisionEvents": len(shpNamed(f.events(), "decision_check")), "literalEvents": len(shpNamed(f.events(), "literal_check"))}
+	if x != nil {
+		report["decisionRounds"] = x.decisionCalls
+		report["literalRounds"] = x.literalCalls
+		report["nativeRequests"] = len(f.Prov.allRequests())
+	}
+	b, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(os.Getenv("CHECK_PROGRESS_REPORT"), b, 0600); err != nil {
+		t.Fatal(err)
+	}
+}
