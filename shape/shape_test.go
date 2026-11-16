@@ -735,11 +735,12 @@ func TestShapeAChangedPackageAfterRedGetsFreshChecks(t *testing.T) {
 	shpEq(t, "requests", len(f.Prov.requests()), 3)
 	shpContains(t, "second feedback", shpOutputs(f.Prov.requests()[2])["c2"], "Readiness observations")
 	shpEq(t, "runner check plus two dry runs", f.runs(), 3)
-	for name, checks := range map[string][]map[string]any{"decision": f.Prov.decisionRequests(), "literal": f.Prov.literalRequests()} {
-		keys := cacheKeys(checks)
-		if len(keys) != 2 || keys[0] == "" || keys[1] == "" || keys[0] == keys[1] {
-			t.Fatalf("%s reviews did not independently check original and changed packages: %q", name, keys)
-		}
+	// Only a step file changed: the decision check's whole input is identical, so its answer is
+	// reused; the literal check still runs on the changed package.
+	shpEq(t, "decision reviews", len(f.Prov.decisionRequests()), 1)
+	keys := cacheKeys(f.Prov.literalRequests())
+	if len(keys) != 2 || keys[0] == "" || keys[1] == "" || keys[0] == keys[1] {
+		t.Fatalf("literal reviews did not independently check original and changed packages: %q", keys)
 	}
 	shpContains(t, "step file", f.read("features/steps/is-even__steps.js"), "// changed")
 }

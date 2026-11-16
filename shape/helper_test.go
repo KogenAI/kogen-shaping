@@ -378,6 +378,28 @@ func shpFiles() map[string]any {
 	}}
 }
 
+// shpRevision is a copy of a submission whose intent.md prose names revision n, so the decision
+// check's input differs from every other revision's (an identical input reuses its answer).
+func shpRevision(base map[string]any, n int) map[string]any {
+	out := map[string]any{}
+	for k, v := range base {
+		out[k] = v
+	}
+	var files []any
+	for _, file := range base["files"].([]any) {
+		m := map[string]any{}
+		for k, v := range file.(map[string]any) {
+			m[k] = v
+		}
+		if strings.HasSuffix(m["path"].(string), "/intent.md") {
+			m["content"] = strings.Replace(m["content"].(string), "returns True for even integers.\n", fmt.Sprintf("returns True for even integers (revision %d).\n", n), 1)
+		}
+		files = append(files, m)
+	}
+	out["files"] = files
+	return out
+}
+
 func shpEnv(extra ...string) []string {
 	var env []string
 	for _, kv := range os.Environ() {

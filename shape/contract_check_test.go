@@ -457,8 +457,9 @@ func TestContractCheckRefusesAConfirmedContradictionAndPublishesItsCorrection(t 
 	if !strings.HasPrefix(ccInput(reqs[2]), "Slug: is-even\n\n# Candidate intent.md") || strings.Contains(ccInput(reqs[2]), "Findings to verify") {
 		t.Fatalf("second review input %q", ccInput(reqs[2])[:200])
 	}
-	// Their tokens join the usage total Shape prints.
-	shpContains(t, "usage line", f.Stdout.String(), "shape gpt-6.1-sol/high input=1045 cached=400 output=300 reasoning=100 wall_ms=")
+	// Their tokens join the usage total Shape prints. The correction changes only the feature, so
+	// the second submission reuses the decision answer of the first: one decision call is missing.
+	shpContains(t, "usage line", f.Stdout.String(), "shape gpt-6.1-sol/high input=936 cached=360 output=270 reasoning=90 wall_ms=")
 }
 
 func TestContractCheckUnevidencedAndRefutedFindingsNeverRefuse(t *testing.T) {
@@ -931,8 +932,8 @@ func TestContractCheckExternalShape(t *testing.T) {
 		if len(reviews) != 2 || reviews[0]["result"] != "refused" || reviews[1]["result"] != "clean" {
 			t.Fatalf("events %v", reviews)
 		}
-		// The sessions' rounds count in the usage line.
-		shpMatch(t, "usage line", f.Stdout.String(), `shape claude-opus-5-5/xhigh claude-code 10 round\(s\) wall_ms=\d+`)
+		// The sessions' rounds count in the usage line; the correction reuses the decision answer.
+		shpMatch(t, "usage line", f.Stdout.String(), `shape claude-opus-5-5/xhigh claude-code 9 round\(s\) wall_ms=\d+`)
 	})
 
 	t.Run("a session that ends without a result is incomplete and the candidate goes on", func(t *testing.T) {

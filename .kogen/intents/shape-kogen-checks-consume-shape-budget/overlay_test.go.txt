@@ -1,0 +1,141 @@
+package shape
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+// TestOverlayReadinessOverlapsCheapChecks: a 4 s static check, a 4 s decision check and a 4 s
+// readiness acceptance run overlap, so one passing submission finishes in under 6.5 s.
+func TestOverlayReadinessOverlapsCheapChecks(t *testing.T) {
+	parallel(t)
+	f := newShpFx(t, shpSubmit("c1", shpFiles()), shpSubmit("c2", map[string]any{"files": []any{map[string]any{"path": ".kogen/intents/is-even/acceptance.feature", "content": shpFeature}}}))
+	staticMark := filepath.Join(f.Aux, "static-slept")
+	acceptMark := filepath.Join(f.Aux, "accept-slept")
+	f.write(".kogen/project.yaml", "version: 1\ncommands:\n  checks:\n    - name: slow\n      run: '[ -e \""+staticMark+"\" ] || { : > \""+staticMark+"\"; sleep 4; }'\n  acceptance: {run: sh accept.sh, steps_dir: features/steps}\n")
+	script := f.read("accept.sh")
+	marker := "if [ -f '" + f.Aux + "/exit' ]"
+	if !strings.Contains(script, marker) {
+		t.Fatal("accept.sh fixture changed")
+	}
+	f.write("accept.sh", strings.Replace(script, marker, "[ -e '"+acceptMark+"' ] || { : > '"+acceptMark+"'; sleep 4; }\n"+marker, 1))
+	f.git("add", "-A")
+	f.git("commit", "-qm", "slow checks")
+	slept := false
+	f.Prov.route = func(req map[string]any) *shpStep {
+		if decisionRequest(req) && !slept {
+			slept = true
+			time.Sleep(4 * time.Second)
+		}
+		return nil
+	}
+	start := time.Now()
+	exit, err := f.shape(orderRequest)
+	took := time.Since(start)
+	if err != nil || exit != 0 {
+		t.Fatalf("exit %d, err %v\n%s", exit, err, f.Stderr)
+	}
+	if took >= 6500*time.Millisecond {
+		t.Fatalf("shape took %v; readiness did not overlap the static and decision checks (want < 6.5 s)", took)
+	}
+	names := strings.Join(eventNames(f.events()), ",")
+	for _, name := range []string{"static_checks", "decision_check", "literal_check", "unpassable_check", "contract_review", "readiness_review_reused"} {
+		if strings.Count(names, name+",") != 1 {
+			t.Fatalf("event %s not recorded exactly once: %s", name, names)
+		}
+	}
+}
+
+// TestOverlayCombinedRefusalsKeepOrder: a decision refusal that arrives after 3 s and a readiness
+// refusal that arrives at once are reported decision first, readiness last.
+func TestOverlayCombinedRefusalsKeepOrder(t *testing.T) {
+	parallel(t)
+	args := shpFiles()
+	f := newShpFx(t, shpSubmit("c1", args), shpSubmit("c2", args), shpSubmit("c3", args))
+	decision := orderDecisionRefusal()
+	f.Prov.route = func(req map[string]any) *shpStep {
+		if decisionRequest(req) {
+			time.Sleep(3 * time.Second)
+			return &decision
+		}
+		return nil
+	}
+	f.setReport("UNDEFINED", 1)
+	if _, err := f.shape(orderRequest); err == nil {
+		t.Fatal("a refused package was published")
+	}
+	rounds := refusalGates(f)
+	if len(rounds) == 0 || strings.Join(rounds[0], ",") != "decision_check,readiness" {
+		t.Fatalf("first round refused by %v, want decision_check,readiness", rounds)
+	}
+	fed := shpOutputs(f.Prov.requests()[1])["c1"]
+	di, ri := strings.Index(fed, "Decision check: "), strings.Index(fed, "not ready:\n")
+	if di < 0 || ri < 0 || di > ri || !strings.HasSuffix(fed, strings.TrimLeft(fed[ri:], "\n")) {
+		t.Fatalf("feedback is not the decision refusal then the readiness refusal:\n%s", fed)
+	}
+	var refusedAt []string
+	for _, e := range shpNamed(f.events(), "submission_refused") {
+		if e["attempt"] == any(float64(1)) {
+			refusedAt = append(refusedAt, e["gate"].(string))
+		}
+	}
+	if strings.Join(refusedAt, ",") != "decision_check,readiness" {
+		t.Fatalf("submission_refused events of attempt 1: %v", refusedAt)
+	}
+}
+
+// TestOverlayDecisionAnswerReuse: an identical decision-check input makes no second checker call;
+// a changed decision line calls the checker again and uses its new answer.
+func TestOverlayDecisionAnswerReuse(t *testing.T) {
+	parallel(t)
+	const request = "Deliver the message exactly once."
+	f := newShpFx(t)
+	sh := f.shaping()
+	sh.role = sh.cfg.Models["shape"]
+	sh.request = request
+	f.Prov.route = func(req map[string]any) *shpStep {
+		if !decisionRequest(req) {
+			return nil
+		}
+		verdict, value := "contradicts", "at least once"
+		if strings.Contains(fmt.Sprint(req["input"]), "Deliver exactly once") {
+			verdict, value = "follows", "exactly once"
+		}
+		item := map[string]any{"statement": "- Deliver at least once. (source: request)", "request_quotes": []any{request}, "verdict": verdict, "intent_value": value, "request_value": "exactly once", "difference": "different guarantees", "why": "The delivery guarantee differs."}
+		if verdict == "follows" {
+			item["statement"] = "- Deliver exactly once. (source: request)"
+		}
+		answer := shpAnswer(shpCall("d", SubmitDecisionCheckTool, map[string]any{"items": []any{item}}))
+		return &answer
+	}
+	intent := "# Candidate\n\n## Decisions\n- Deliver at least once. (source: request)\n"
+	_, want := decisionOutcome([]decisionItem{{statement: "- Deliver at least once. (source: request)", quotes: []string{request}, verdict: "contradicts", intentValue: "at least once", requestValue: "exactly once", difference: "different guarantees", why: "The delivery guarantee differs."}}, request, intent)
+	for n := 1; n <= 2; n++ {
+		sh.submissions = n
+		want := append([]string(nil), want...)
+		if n == 2 {
+			want = append(want, "note: this statement is unchanged since submission 1 and was refused for the same reason; change the statement itself, not the text around it")
+		}
+		got, err := sh.decisionCheckWithEvidence(t.Context(), intent, "")
+		if err != nil || strings.Join(got, "\n") != strings.Join(want, "\n") {
+			t.Fatalf("submission %d: got %q, err %v; want %q", n, got, err, want)
+		}
+	}
+	if n := len(f.Prov.decisionRequests()); n != 1 {
+		t.Fatalf("%d decision checker calls after two identical-input submissions, want 1", n)
+	}
+	sh.submissions = 3
+	changed := "# Candidate\n\n## Decisions\n- Deliver exactly once. (source: request)\n"
+	got, err := sh.decisionCheckWithEvidence(t.Context(), changed, "")
+	if err != nil || len(got) != 0 {
+		t.Fatalf("submission 3: got %q, err %v; want the checker's new accepting answer", got, err)
+	}
+	if n := len(f.Prov.decisionRequests()); n != 2 {
+		t.Fatalf("%d decision checker calls after a changed decision line, want 2", n)
+	}
+	_ = os.Stderr
+}

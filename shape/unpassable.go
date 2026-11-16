@@ -591,6 +591,19 @@ type completedUnpassable struct {
 // repository contains. It runs only for a result with a failed scenario, records one event and
 // refuses only on positive evidence.
 func (sh *shaping) unpassableGate(ctx context.Context, ready *verify.Ready) error {
+	return sh.unpassableGateInto(ctx, ready, sh.ev.Record, nil)
+}
+
+// unpassableGateInto is unpassableGate recording its event with record. With effects, the result
+// it remembers is left there for the caller to apply instead of being stored in sh.
+func (sh *shaping) unpassableGateInto(ctx context.Context, ready *verify.Ready, record func(map[string]any), fx *gateEffects) error {
+	remember := func(r *completedUnpassable) {
+		if fx != nil {
+			fx.unpassable, fx.unpassableSet = r, true
+		} else {
+			sh.unpassableResult = r
+		}
+	}
 	if !ready.Failures() {
 		return nil
 	}
@@ -600,7 +613,7 @@ func (sh *shaping) unpassableGate(ctx context.Context, ready *verify.Ready) erro
 		}
 		return nil
 	}
-	sh.unpassableResult = nil
+	remember(nil)
 	run, reason, err := sh.unpassableControl(ctx, ready)
 	if err != nil {
 		return err
@@ -610,7 +623,7 @@ func (sh *shaping) unpassableGate(ctx context.Context, ready *verify.Ready) erro
 		steps, reason = judgeUnpassable(ready, run)
 	}
 	if reason != "" {
-		sh.ev.Record(map[string]any{"event": "unpassable_check", "ok": true, "skipped": reason, "steps": []any{}})
+		record(map[string]any{"event": "unpassable_check", "ok": true, "skipped": reason, "steps": []any{}})
 		return nil
 	}
 	e := &unpassableError{}
@@ -621,10 +634,13 @@ func (sh *shaping) unpassableGate(ctx context.Context, ready *verify.Ready) erro
 			e.items = append(e.items, s.item())
 		}
 	}
-	sh.ev.Record(map[string]any{"event": "unpassable_check", "ok": len(e.items) == 0, "steps": list})
-	sh.unpassableResult = &completedUnpassable{packageHash: ready.SHA256, tree: ready.CandidateTree}
+	record(map[string]any{"event": "unpassable_check", "ok": len(e.items) == 0, "steps": list})
+	result := &completedUnpassable{packageHash: ready.SHA256, tree: ready.CandidateTree}
 	if len(e.items) > 0 {
-		sh.unpassableResult.refusal = e
+		result.refusal = e
+	}
+	remember(result)
+	if len(e.items) > 0 {
 		return e
 	}
 	return nil

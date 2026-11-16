@@ -165,6 +165,12 @@ func preparationItem(sc verify.ScenarioResult, where, why string, exit int, reda
 // preparationGate refuses a ready result in which a scenario fails in its preparation, and
 // remembers the failures it refused for the rest of this Shape run.
 func (sh *shaping) preparationGate(ready *verify.Ready) error {
+	return sh.preparationGateInto(ready, nil)
+}
+
+// preparationGateInto is preparationGate; with effects, the failure signatures it refuses are left
+// there for the caller to apply instead of being added to sh.
+func (sh *shaping) preparationGateInto(ready *verify.Ready, fx *gateEffects) error {
 	redactor := verify.NewRedactor(sh.s.Env, sh.s.Getenv("HOME"))
 	failures := preparationFailures(ready, sh.preparationRefused, redactor)
 	if len(failures) == 0 {
@@ -176,7 +182,12 @@ func (sh *shaping) preparationGate(ready *verify.Ready) error {
 	}
 	for _, f := range failures {
 		if f.signature != "" {
-			sh.preparationRefused = append(sh.preparationRefused, preparationSignature{signature: f.signature, attempt: sh.submissions})
+			sig := preparationSignature{signature: f.signature, attempt: sh.submissions}
+			if fx != nil {
+				fx.preparation = append(fx.preparation, sig)
+			} else {
+				sh.preparationRefused = append(sh.preparationRefused, sig)
+			}
 		}
 	}
 	return e

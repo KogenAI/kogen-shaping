@@ -115,7 +115,7 @@ func TestFixingSomeGatesEachRoundIsNotStoppedEarly(t *testing.T) {
 	parallel(t)
 	bad := shpFiles()
 	bad["decisions"] = []any{map[string]any{"decision": "A"}}
-	f := newShpFx(t, shpSubmit("c1", bad), shpSubmit("c2", bad), shpSubmit("c3", bad), shpSubmit("c4", shpFiles()), shpAck("ack"))
+	f := newShpFx(t, shpSubmit("c1", shpRevision(bad, 1)), shpSubmit("c2", shpRevision(bad, 2)), shpSubmit("c3", shpRevision(bad, 3)), shpSubmit("c4", shpFiles()), shpAck("ack"))
 	var decisions, literals atomic.Int32
 	decision, literal := orderDecisionRefusal(), orderLiteralRefusal()
 	f.Prov.route = func(req map[string]any) *shpStep {

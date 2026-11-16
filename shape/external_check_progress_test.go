@@ -71,14 +71,19 @@ func TestExternalCheckProgress(t *testing.T) {
 	if err != nil || exit != 0 {
 		t.Fatalf("exit %d, err %v\n%s", exit, err, w.text())
 	}
-	if x.decisionCalls != 2 || x.literalCalls != 2 {
+	// Both submissions give the decision check the same input, so its answer is reused.
+	if x.decisionCalls != 1 || x.literalCalls != 2 {
 		t.Fatalf("decision rounds %d, literal rounds %d", x.decisionCalls, x.literalCalls)
 	}
 	for kind, wording := range map[string]string{"decision": "stated decisions", "literal": "required literals"} {
 		pattern := `(?m)^kogen: (?:checking the ` + wording + `|` + kind + ` check finished) \([0-9]+ s\)$`
 		lines := regexp.MustCompile(pattern).FindAllString(w.text(), -1)
-		if len(lines) != 4 {
-			t.Fatalf("%s: expected two start/finish pairs, got %v\n%s", kind, lines, w.text())
+		pairs := 2
+		if kind == "decision" {
+			pairs = 1
+		}
+		if len(lines) != 2*pairs {
+			t.Fatalf("%s: expected %d start/finish pairs, got %v\n%s", kind, pairs, lines, w.text())
 		}
 		for i, line := range lines {
 			if strings.Contains(line, "finished") != (i%2 == 1) {

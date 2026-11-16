@@ -1,0 +1,1 @@
+{"deferred":"The correct implementation reschedules checkSubmission/cheapGates in shape/shape.go and adds a decision-answer cache in shape/decision.go; writing it honestly inside the shaping budget is not feasible, so the Build writes it and the three Go-test scenarios judge it."}

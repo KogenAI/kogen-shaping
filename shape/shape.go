@@ -590,11 +590,12 @@ type shaping struct {
 	request string // the request text of this shaping
 	// refusedStatements retains the earliest actual refusal in this active run.
 	refusedStatements map[string]int
-	decisionChecks    int              // decision check calls made
-	pendingMarks      []assumptionMark // lines the last decision check found to be assumptions
-	notes             []string         // advisory notes for the shaper's next answer
-	decisionUsage     provider.Usage   // the native decision checks' tokens
-	decisionRounds    int              // the external decision check sessions' rounds
+	decisionChecks    int                 // decision check calls made
+	decisionAnswers   decisionAnswerCache // the model answers of this run, by decision-check input
+	pendingMarks      []assumptionMark    // lines the last decision check found to be assumptions
+	notes             []string            // advisory notes for the shaper's next answer
+	decisionUsage     provider.Usage      // the native decision checks' tokens
+	decisionRounds    int                 // the external decision check sessions' rounds
 
 	rounds        []map[string]any // the questions and answers of the shaping state, in round order
 	literalChecks int              // literal check calls made
@@ -1950,10 +1951,11 @@ func (sh *shaping) checkSubmission(ctx context.Context, files []string) (string,
 	if err != nil {
 		return "", outcome{}, err
 	}
-	cheap, err := sh.cheapGates(ctx, hash)
+	cheap, err := sh.cheapGates(ctx, files, hash)
 	if err != nil || cheap.done {
 		return cheap.text, cheap.out, err
 	}
+	defer cheap.readiness.stop()
 	evidenceHash := cheap.evidenceHash
 	if hash, err = sh.packageHash(); err != nil {
 		return "", outcome{}, err
@@ -1965,7 +1967,8 @@ func (sh *shaping) checkSubmission(ctx context.Context, files []string) (string,
 		// contract review already refused was ready, so it is not checked again.
 		if !slices.ContainsFunc(cheap.held, func(h heldRefusal) bool { return h.gate == contractGate }) {
 			ready := sh.ready
-			_, _, err := sh.certify(ctx, files)
+			cert, err := sh.joinReadiness(ctx, files, cheap.readiness, hash)
+			sh.applyCertification(cert)
 			sh.ready, sh.lastFresh, sh.lastObservations = ready, false, ""
 			if gate, problems, text, ok := readinessRefusal(err); ok {
 				cheap.held = append(cheap.held, heldRefusal{gate: gate, problems: cutProblems(problems), text: text})
@@ -1974,7 +1977,9 @@ func (sh *shaping) checkSubmission(ctx context.Context, files []string) (string,
 		text, out, _ := sh.settleHeld(cheap.held)
 		return text, out, nil
 	}
-	text, result, err := sh.certify(ctx, files)
+	cert, err := sh.joinReadiness(ctx, files, cheap.readiness, hash)
+	sh.applyCertification(cert)
+	text, result := cert.text, cert.out
 	if gate, problems, refusal, ok := readinessRefusal(err); ok {
 		sh.refused(gate, problems)
 		return refusal, outcome{kind: outInvalid, problems: problems}, nil
@@ -2060,6 +2065,7 @@ type cheapResult struct {
 	done         bool
 	held         []heldRefusal // the cheap gates' refusals, not yet recorded
 	evidenceHash string
+	readiness    *readinessRun // the readiness observation that ran with them; nil when none did
 }
 
 // cheapGates runs every gate that needs no other to pass first: the contract refusal an
@@ -2067,7 +2073,7 @@ type cheapResult struct {
 // the step self-check, the static checks and the decision, literal and example checks. All of them
 // run on every submission and their refusals come back as one, with the readiness refusal when it
 // refuses too. The contract review is expensive and follows only when none refused.
-func (sh *shaping) cheapGates(ctx context.Context, hash string) (cheapResult, error) {
+func (sh *shaping) cheapGates(ctx context.Context, files []string, hash string) (res cheapResult, err error) {
 	sh.startBatch()
 	defer func() { sh.batching, sh.batch = false, nil }()
 	if text, _, refused := sh.contractRefusal(hash); refused {
@@ -2099,57 +2105,33 @@ func (sh *shaping) cheapGates(ctx context.Context, hash string) (cheapResult, er
 		return cheapResult{text: "accepted: unchanged checked observations acknowledged", out: outcome{kind: outReady}, done: true}, nil
 	}
 	sh.readinessReview = nil
-	if err := sh.postSubmitChecks(ctx, string(written), evidence, hash); err != nil {
+	// Readiness observes its own working copy, so it runs together with the other checks. A
+	// package the contract review already refused was ready and is not observed again.
+	var run *readinessRun
+	if !slices.ContainsFunc(sh.batch, func(h heldRefusal) bool { return h.gate == contractGate }) {
+		run = sh.startReadiness(ctx, files, hash)
+	}
+	defer func() {
+		if err != nil {
+			run.stop()
+		}
+	}()
+	if err = sh.postSubmitChecks(ctx, string(written), evidence, hash); err != nil {
 		return cheapResult{}, err
 	}
 	if held := sh.collectBatch(); len(held) > 0 {
-		return cheapResult{held: held}, nil
+		return cheapResult{held: held, readiness: run}, nil
 	}
-	if err := sh.applyAssumptionMarks(); err != nil {
+	if len(sh.pendingMarks) > 0 {
+		// The marks may change the package after the observation started: it is discarded and
+		// readiness runs again on the marked package.
+		run.stop()
+		run = nil
+	}
+	if err = sh.applyAssumptionMarks(); err != nil {
 		return cheapResult{}, err
 	}
-	return cheapResult{evidenceHash: evidenceHash}, nil
-}
-
-func (sh *shaping) certify(ctx context.Context, files []string) (string, outcome, error) {
-	sh.lastFresh, sh.lastObservations = false, ""
-	if _, err := project.SourceComparison(sh.root, sh.slug); err != nil {
-		return "", outcome{}, err
-	}
-	// Fixers may change submitted declarations. The final formatted package must retain the
-	// same executable artifacts before it can be certified.
-	if intent, _, err := project.CheckIntent(sh.root, sh.slug, nil); err == nil {
-		if problems := sh.retainedProblems(intent, files); len(problems) > 0 {
-			e := sys.Fail("intent", "lint", "the Intent needs changes", 1)
-			e.Lines = problems
-			return "", outcome{}, e
-		}
-	}
-	if sh.ready != nil && sh.rd.Current(sh.s, sh.slug, sh.ready) {
-		return "accepted: unchanged checked observations acknowledged", outcome{kind: outReady}, nil
-	}
-	var ready *verify.Ready
-	err := sh.ev.Timed("readiness", func() error {
-		var err error
-		ready, err = sh.rd.Check(ctx, sh.s, sh.slug)
-		return err
-	})
-	if err != nil {
-		return "", outcome{}, err
-	}
-	sh.ready = ready
-	reference := filepath.Join(sh.root, ".kogen/local/shaping", sh.slug, fmt.Sprintf("observations-%d.txt", sh.requests))
-	sh.lastObservationsPath = fmt.Sprintf(".kogen/local/shaping/%s/observations-%d.txt", sh.slug, sh.requests)
-	observations := verify.Observations(sh.slug, ready, reference)
-	if err := os.WriteFile(reference, []byte(observations), 0o666); err != nil {
-		return "", outcome{}, err
-	}
-	sh.lastFresh = true
-	if ready.Failures() {
-		sh.lastObservations = observations
-		return verify.Acknowledgment(sh.slug, ready, reference), outcome{kind: outObservations}, nil
-	}
-	return "accepted: the Intent is ready", outcome{kind: outReady}, nil
+	return cheapResult{evidenceHash: evidenceHash, readiness: run}, nil
 }
 
 // unwrittenTestsError is the refusal of a candidate whose acceptance runs named tests that did

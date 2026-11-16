@@ -237,7 +237,7 @@ func TestExternalShapeDecisionCheck(t *testing.T) {
 	}
 	ack := map[string]any{"files": []any{map[string]any{"path": ".kogen/intents/is-even/acceptance.feature", "content": shpFeature}}}
 	x := &shapeExec{t: t,
-		rounds:   []func(int, string) (executor.RoundResult, error){result(shpFiles()), result(shpFiles()), result(shpFiles()), result(ack)},
+		rounds:   []func(int, string) (executor.RoundResult, error){result(shpRevision(shpFiles(), 1)), result(shpRevision(shpFiles(), 2)), result(shpRevision(shpFiles(), 3)), result(ack)},
 		decision: []func(int, string) (executor.RoundResult, error){check("contradicts", "", ""), check("contradicts", "TypeError", "raise TypeError"), check("follows", "", ""), check("contradicts", "TypeError", "raise TypeError")}}
 	if exit, err := f.shapeWith(x, "Add calc.is_even(n). Non-integers raise TypeError."); err != nil || exit != 0 {
 		t.Fatalf("acknowledgment reopened a reviewed decision: exit %d, err %v\n%s", exit, err, f.Stderr)

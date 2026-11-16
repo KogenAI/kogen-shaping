@@ -272,24 +272,27 @@ func (e *Evidence) Probe(fn func() (verify.ProbeResult, error)) (verify.ProbeRes
 	t := e.Millis()
 	r, err := fn()
 	ended := e.Millis()
+	e.Record(probeEvent(t, ended, r, err))
+	e.Interval("probe", t, ended)
+	return r, err
+}
+
+// probeEvent is the probe_result event of one declared check that ran from t to ended (Millis values).
+func probeEvent(t, ended int64, r verify.ProbeResult, err error) map[string]any {
 	if err != nil {
-		e.Record(map[string]any{
+		return map[string]any{
 			"event": "probe_result", "started_ms": t, "wall_ms": ended - t,
 			"status": cancelledOrFailed(err), "detail": inspectError(err),
-		})
-		e.Interval("probe", t, ended)
-		return r, err
+		}
 	}
 	status := "failed"
 	if r.Status == 0 {
 		status = "completed"
 	}
-	e.Record(map[string]any{
+	return map[string]any{
 		"event": "probe_result", "started_ms": t, "wall_ms": ended - t,
 		"status": status, "timeout": r.TimedOut, "detail": r,
-	})
-	e.Interval("probe", t, ended)
-	return r, nil
+	}
 }
 
 // ProbeText records the probe tool's result text (what the model is shown) as a

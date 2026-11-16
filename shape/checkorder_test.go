@@ -65,8 +65,9 @@ func TestStaticRefusalDiscardsTheModelChecks(t *testing.T) {
 	for _, e := range shpNamed(events, "submission_refused") {
 		shpEq(t, "gate", e["gate"], staticGate)
 	}
-	if n := len(f.Prov.decisionRequests()) + len(f.Prov.literalRequests()); n != 6 {
-		t.Fatalf("%d decision or literal model calls, want 6", n)
+	// The identical package gets the literal check each time; the decision answer is reused.
+	if n, m := len(f.Prov.decisionRequests()), len(f.Prov.literalRequests()); n != 1 || m != 3 {
+		t.Fatalf("%d decision and %d literal model calls, want 1 and 3", n, m)
 	}
 	for _, name := range []string{"decision_check", "literal_check"} {
 		if n := len(shpNamed(events, name)); n != 0 {

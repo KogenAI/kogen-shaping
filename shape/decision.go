@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/KogenAI/kogen-executor/executor"
@@ -518,6 +519,57 @@ func (sh *shaping) decisionCheckWithEvidence(ctx context.Context, intent, eviden
 		earlier = "none"
 	}
 	input := "Slug: " + sh.slug + "\n\n# Request\n\n" + sh.request + "\n\n# Earlier questions and answers\n\n" + earlier + "\n\n# Candidate intent.md\n\n" + decisionIntent(intent) + evidence
+	// The model's answer for a byte-identical input is reused within this run: no new model or
+	// executor call. Everything computed from the answer still runs per submission.
+	key := ContentHash([]byte(input))
+	args, reused := sh.decisionAnswers.get(key)
+	if !reused {
+		var err error
+		if args, err = sh.askDecisionCheck(ctx, input); err != nil {
+			return nil, err
+		}
+	}
+	items, err := parseDecisionCheck(args)
+	if err != nil {
+		return nil, err
+	}
+	if !reused {
+		sh.decisionAnswers.put(key, args)
+	}
+	locked := map[string]bool{}
+	if sh.ledger != nil {
+		for _, d := range sh.ledger.standing() {
+			locked[decisionLineKey(d.intentLine())] = true
+		}
+	}
+	refusedStatements := maps.Clone(sh.refusedStatements)
+	event, lines, marks, notes := decisionResolveRepeated(items, sh.request, intent, locked, sh.keepExisting, func(statement string) string {
+		key := normalizeWhitespace(statement)
+		if first, ok := refusedStatements[key]; ok {
+			if first < sh.submissions {
+				return fmt.Sprintf("note: this statement is unchanged since submission %d and was refused for the same reason; change the statement itself, not the text around it", first)
+			}
+			return ""
+		}
+		if refusedStatements == nil {
+			refusedStatements = map[string]int{}
+		}
+		refusedStatements[key] = sh.submissions
+		return ""
+	})
+	publishModelCheck(ctx, func() {
+		sh.refusedStatements = refusedStatements
+		sh.pendingMarks = normalizedMarks
+		sh.ev.Record(event)
+		sh.pendingMarks = append(sh.pendingMarks, marks...)
+		sh.notes = append(sh.notes, notes...)
+	})
+	return lines, nil
+}
+
+// askDecisionCheck gives the decision check's input to the model, or to the external executor, and
+// returns the arguments of its answer.
+func (sh *shaping) askDecisionCheck(ctx context.Context, input string) (map[string]any, error) {
 	var args map[string]any
 	sh.decisionChecks++
 	if sh.ext != nil {
@@ -571,39 +623,29 @@ func (sh *shaping) decisionCheckWithEvidence(ctx context.Context, intent, eviden
 		}
 		args = calls[0].Args()
 	}
-	items, err := parseDecisionCheck(args)
-	if err != nil {
-		return nil, err
+	return args, nil
+}
+
+// decisionAnswerCache remembers the model's answer to each decision-check input of one Shape run.
+type decisionAnswerCache struct {
+	mu      sync.Mutex
+	answers map[string]map[string]any
+}
+
+func (c *decisionAnswerCache) get(key string) (map[string]any, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	args, ok := c.answers[key]
+	return args, ok
+}
+
+func (c *decisionAnswerCache) put(key string, args map[string]any) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.answers == nil {
+		c.answers = map[string]map[string]any{}
 	}
-	locked := map[string]bool{}
-	if sh.ledger != nil {
-		for _, d := range sh.ledger.standing() {
-			locked[decisionLineKey(d.intentLine())] = true
-		}
-	}
-	refusedStatements := maps.Clone(sh.refusedStatements)
-	event, lines, marks, notes := decisionResolveRepeated(items, sh.request, intent, locked, sh.keepExisting, func(statement string) string {
-		key := normalizeWhitespace(statement)
-		if first, ok := refusedStatements[key]; ok {
-			if first < sh.submissions {
-				return fmt.Sprintf("note: this statement is unchanged since submission %d and was refused for the same reason; change the statement itself, not the text around it", first)
-			}
-			return ""
-		}
-		if refusedStatements == nil {
-			refusedStatements = map[string]int{}
-		}
-		refusedStatements[key] = sh.submissions
-		return ""
-	})
-	publishModelCheck(ctx, func() {
-		sh.refusedStatements = refusedStatements
-		sh.pendingMarks = normalizedMarks
-		sh.ev.Record(event)
-		sh.pendingMarks = append(sh.pendingMarks, marks...)
-		sh.notes = append(sh.notes, notes...)
-	})
-	return lines, nil
+	c.answers[key] = args
 }
 
 // markedStatement reports whether every occurrence of the statement in intent.md (compared
