@@ -1,0 +1,62 @@
+package shape
+
+import (
+	"encoding/json"
+	"os"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/KogenAI/kogen-loop/sys"
+)
+
+// This supplied harness observes Shape, not a test the implementation must invent.
+func TestBudgetStopCopyObservation(t *testing.T) {
+	w := responsesWire
+	bad := func(p string) shpStep {
+		return w.shapeSubmit(p, map[string]any{"files": []any{map[string]any{"path": p, "content": "x\n"}}})
+	}
+	type observation struct {
+		Exit     int      `json:"exit"`
+		Class    string   `json:"class"`
+		Reason   string   `json:"reason"`
+		Detail   string   `json:"detail"`
+		Lines    []string `json:"lines"`
+		Requests int      `json:"requests"`
+		Refusals int      `json:"refusals"`
+	}
+	var mu sync.Mutex
+	out := map[string]observation{}
+	// budgetFx schedules parallel subtests; cleanup runs after all of them finish.
+	t.Cleanup(func() {
+		b, err := json.Marshal(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(os.Getenv("BUDGET_COPY_OUT"), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	})
+	for _, c := range []struct {
+		name  string
+		step  time.Duration
+		steps []shpStep
+	}{
+		{"submitted", 8 * time.Minute, []shpStep{bad("first.go"), bad("second.go")}},
+		{"none", 8 * time.Minute, []shpStep{w.readReadme("r1"), w.readReadme("r2")}},
+		{"answer", 6 * time.Minute, []shpStep{bad("first.go"), bad("second.go"), w.prose("Still investigating.\nMore detail.")}},
+		{"no-tool", time.Minute, []shpStep{bad("first.go"), bad("second.go"), w.prose("one"), w.prose("two"), w.prose("three")}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := budgetFx(t, c.step, c.steps...)
+			exit, err := f.shape("Bound shaping.")
+			e, ok := sys.AsError(err)
+			if !ok {
+				t.Fatalf("expected a structured refusal, got %v", err)
+			}
+			mu.Lock()
+			out[c.name] = observation{exit, e.Class, e.Reason, e.Detail, e.Lines, len(f.Prov.requests()), len(shpNamed(f.events(), "submission_refused"))}
+			mu.Unlock()
+		})
+	}
+}

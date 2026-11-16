@@ -1,0 +1,25 @@
+{
+  "correct": {
+    "files": {
+      "shape/budget.go": {
+        "patch": "--- a/shape/budget.go\n+++ b/shape/budget.go\n@@ -36,6 +36,9 @@\n // it names the budget, the time spent, the requests made, and the last refusal if there was one.\n func budgetStop(last lastSubmission, answer string, answers int, elapsed time.Duration, requests int, attempts []timedAttempt, install time.Duration) outcome {\n \tresult := noToolStop(last, answer)\n+\tif last.attempt > 0 {\n+\t\tresult.problems = result.problems[1:]\n+\t}\n \tresult.detail = fmt.Sprintf(\"the shaper used its %d-minute shaping budget (%s elapsed, %d requests) without a submission that passed; shaping stopped\",\n \t\tint(shapingBudget/time.Minute), budgetText(elapsed), requests)\n \tif answers > 0 {\n"
+      },
+      "shape/budget_stop_test.go": "package shape\n\nimport (\n\t\"strings\"\n\t\"testing\"\n\t\"time\"\n)\n\nfunc TestBudgetStopReportsSubmissionTruthfully(t *testing.T) {\n\tw := responsesWire\n\tfor _, submitted := range []bool{true, false} {\n\t\tname := \"no submission\"\n\t\tsteps := []shpStep{w.readReadme(\"r1\"), w.readReadme(\"r2\")}\n\t\tif submitted {\n\t\t\tname = \"two refused submissions\"\n\t\t\tbad := func(p string) shpStep {\n\t\t\t\treturn w.shapeSubmit(p, map[string]any{\"files\": []any{map[string]any{\"path\": p, \"content\": \"x\\n\"}}})\n\t\t\t}\n\t\t\tsteps = []shpStep{bad(\"first.go\"), bad(\"second.go\")}\n\t\t}\n\t\tt.Run(name, func(t *testing.T) {\n\t\t\tf := budgetFx(t, 8*time.Minute, steps...)\n\t\t\texit, err := f.shape(\"Bound shaping.\")\n\t\t\te := shpWantError(t, err, \"shape\", \"invalid_output\", \"15-minute\", 1)\n\t\t\tshpEq(t, \"exit\", exit, 1)\n\t\t\ttext := strings.Join(e.Lines, \"\\n\")\n\t\t\tshpEq(t, \"no-submit line\", strings.Contains(text, \"the shaper ended without calling submit\"), !submitted)\n\t\t\tif submitted {\n\t\t\t\tfor _, want := range []string{\n\t\t\t\t\t\"last refusal (attempt 2, gate validation):\",\n\t\t\t\t\t\"earliest unresolved refusal (attempt 1, gate validation):\",\n\t\t\t\t\t\"attempt 1: gate validation, model request 480 s, Kogen checks 0 s, 420 s remaining\",\n\t\t\t\t\t\"attempt 2: gate validation, model request 480 s, Kogen checks 0 s, 0 s remaining\",\n\t\t\t\t} {\n\t\t\t\t\tshpContains(t, \"refusal\", text, want)\n\t\t\t\t}\n\t\t\t}\n\t\t\tshpContains(t, \"refusal\", text, budgetFigureLine)\n\t\t\tshpEq(t, \"requests\", len(f.Prov.requests()), 2)\n\t\t})\n\t}\n}\n"
+    }
+  },
+  "wrong": [
+    {
+      "name": "Drop the no-submit line for every stop",
+      "scenario": "Budget without submission and no-tool-limit refusals retain the line",
+      "step": "Then shape-budget-stop-drops-no-submit-line: the \"none\" refusal equals",
+      "files": {
+        "shape/budget.go": {
+          "patch": "--- a/shape/budget.go\n+++ b/shape/budget.go\n@@ -36,9 +36,6 @@\n // it names the budget, the time spent, the requests made, and the last refusal if there was one.\n func budgetStop(last lastSubmission, answer string, answers int, elapsed time.Duration, requests int, attempts []timedAttempt, install time.Duration) outcome {\n \tresult := noToolStop(last, answer)\n-\tif last.attempt > 0 {\n-\t\tresult.problems = result.problems[1:]\n-\t}\n \tresult.detail = fmt.Sprintf(\"the shaper used its %d-minute shaping budget (%s elapsed, %d requests) without a submission that passed; shaping stopped\",\n \t\tint(shapingBudget/time.Minute), budgetText(elapsed), requests)\n \tif answers > 0 {\n"
+        },
+        "shape/force.go": {
+          "patch": "--- a/shape/force.go\n+++ b/shape/force.go\n@@ -145,7 +145,7 @@\n // noToolStop is the outcome of reaching the no-tool limit: it names the last submission the\n // shaper was asked to act on and the first line of its last tool-free answer.\n func noToolStop(last lastSubmission, answer string) outcome {\n-\tlines := []string{\"the shaper ended without calling submit\"}\n+\tlines := []string{}\n \tvar detail string\n \tswitch last.kind {\n \tcase outInvalid:\n"
+        }
+      }
+    }
+  ]
+}

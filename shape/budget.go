@@ -36,6 +36,9 @@ func externalBrief() string {
 // it names the budget, the time spent, the requests made, and the last refusal if there was one.
 func budgetStop(last lastSubmission, answer string, answers int, elapsed time.Duration, requests int, attempts []timedAttempt, install time.Duration) outcome {
 	result := noToolStop(last, answer)
+	if last.attempt > 0 {
+		result.problems = result.problems[1:]
+	}
 	result.detail = fmt.Sprintf("the shaper used its %d-minute shaping budget (%s elapsed, %d requests) without a submission that passed; shaping stopped",
 		int(shapingBudget/time.Minute), budgetText(elapsed), requests)
 	if answers > 0 {
