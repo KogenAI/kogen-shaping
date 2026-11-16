@@ -1,0 +1,94 @@
+package shape
+
+import (
+	"encoding/json"
+	"os"
+	"reflect"
+	"testing"
+
+	"github.com/KogenAI/kogen-loop/sys"
+)
+
+type malformedDiagnosticCase struct {
+	Name  string `json:"name"`
+	Items []any  `json:"items"`
+	Want  string `json:"want"`
+}
+
+func malformedDiagnosticCases(t *testing.T, parser string) []malformedDiagnosticCase {
+	t.Helper()
+	var cases map[string][]malformedDiagnosticCase
+	if err := json.Unmarshal([]byte(os.Getenv("MALFORMED_DIAGNOSTIC_CASES")), &cases); err != nil {
+		t.Fatal(err)
+	}
+	if len(cases[parser]) == 0 {
+		t.Fatalf("no %s cases supplied", parser)
+	}
+	return cases[parser]
+}
+
+func TestMalformedLiteralItemDiagnostics(t *testing.T) {
+	for _, c := range malformedDiagnosticCases(t, "literal") {
+		t.Run(c.Name, func(t *testing.T) {
+			items, err := parseLiteralCheck(map[string]any{"items": c.Items})
+			if c.Want != "" {
+				malformedDiagnosticError(t, err, "literal", c.Want)
+				if items != nil {
+					t.Fatalf("invalid payload returned items: %#v", items)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := []any{}
+			for _, it := range items {
+				got = append(got, map[string]any{"literal": it.literal, "source": it.source, "source_quote": it.quote, "package_value": it.packageValue, "why": it.why, "status": it.status})
+			}
+			if !reflect.DeepEqual(got, c.Items) {
+				t.Fatalf("valid literal items changed: got %#v, want %#v", got, c.Items)
+			}
+		})
+	}
+}
+
+func TestMalformedDecisionItemDiagnostics(t *testing.T) {
+	for _, c := range malformedDiagnosticCases(t, "decision") {
+		t.Run(c.Name, func(t *testing.T) {
+			items, err := parseDecisionCheck(map[string]any{"items": c.Items})
+			if c.Want != "" {
+				malformedDiagnosticError(t, err, "decision", c.Want)
+				if items != nil {
+					t.Fatalf("invalid payload returned items: %#v", items)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := []any{}
+			for _, it := range items {
+				quotes := []any{}
+				for _, q := range it.quotes {
+					quotes = append(quotes, q)
+				}
+				got = append(got, map[string]any{"statement": it.statement, "request_quotes": quotes, "verdict": it.verdict, "intent_value": it.intentValue, "request_value": it.requestValue, "difference": it.difference, "why": it.why})
+			}
+			if !reflect.DeepEqual(got, c.Items) {
+				t.Fatalf("valid decision items changed: got %#v, want %#v", got, c.Items)
+			}
+		})
+	}
+}
+
+func malformedDiagnosticError(t *testing.T, err error, parser, want string) {
+	t.Helper()
+	e, ok := sys.AsError(err)
+	if !ok || e.Class != "shape" || e.Reason != parser+"_check_invalid" || e.Exit != 1 {
+		t.Fatalf("wrong error envelope: %v", err)
+	}
+	full := "shape/" + parser + "_check_invalid: the " + parser + " check answer is not a valid submit_" + parser + "_check payload (" + want + "); nothing was published"
+	if err.Error() != full {
+		t.Fatalf("got %q, want %q", err.Error(), full)
+	}
+}

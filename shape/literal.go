@@ -93,24 +93,72 @@ func parseLiteralCheck(args map[string]any) ([]literalItem, error) {
 		return nil, literalInvalid("the payload has fields other than items")
 	}
 	items := []literalItem{}
-	for _, raw := range list {
+	malformed := 0
+	firstProblem := ""
+	for i, raw := range list {
+		var it literalItem
+		problem := ""
 		m, ok := raw.(map[string]any)
 		if !ok {
-			return nil, literalInvalid("an item must be an object")
+			problem = "must be an object"
+		} else {
+			fields := []string{"literal", "source", "source_quote", "package_value", "why", "status"}
+			for _, field := range fields {
+				value, exists := m[field]
+				if !exists {
+					problem = field + " is missing"
+					break
+				}
+				text, ok := value.(string)
+				if !ok {
+					problem = field + " must be a string"
+					break
+				}
+				switch field {
+				case "literal":
+					it.literal = text
+				case "source":
+					it.source = text
+				case "source_quote":
+					it.quote = text
+				case "package_value":
+					it.packageValue = text
+				case "why":
+					it.why = text
+				case "status":
+					it.status = text
+				}
+			}
+			if problem == "" {
+				var unknown []string
+				for field := range m {
+					if !slices.Contains(fields, field) {
+						unknown = append(unknown, field)
+					}
+				}
+				if len(unknown) > 0 {
+					slices.Sort(unknown)
+					problem = "unknown field " + unknown[0]
+				}
+			}
+			if problem == "" && !slices.Contains([]string{"required", "superseded", "informal", "secret"}, it.status) {
+				problem = "status must be one of required, superseded, informal, secret"
+			}
 		}
-		var it literalItem
-		var okL, okS, okQ, okP, okW, okT bool
-		it.literal, okL = m["literal"].(string)
-		it.source, okS = m["source"].(string)
-		it.quote, okQ = m["source_quote"].(string)
-		it.packageValue, okP = m["package_value"].(string)
-		it.why, okW = m["why"].(string)
-		it.status, okT = m["status"].(string)
-		if !okL || !okS || !okQ || !okP || !okW || !okT || len(m) != 6 ||
-			!slices.Contains([]string{"required", "superseded", "informal", "secret"}, it.status) {
-			return nil, literalInvalid("an item is malformed")
+		if problem != "" {
+			malformed++
+			if firstProblem == "" {
+				firstProblem = fmt.Sprintf("item %d is malformed: %s", i+1, problem)
+			}
+			continue
 		}
 		items = append(items, it)
+	}
+	if malformed > 0 {
+		if malformed > 1 {
+			firstProblem += fmt.Sprintf(" (%d malformed items)", malformed)
+		}
+		return nil, literalInvalid(firstProblem)
 	}
 	return items, nil
 }

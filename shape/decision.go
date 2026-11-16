@@ -93,33 +93,92 @@ func parseDecisionCheck(args map[string]any) ([]decisionItem, error) {
 		return nil, decisionInvalid("items must be a list")
 	}
 	items := []decisionItem{}
-	for _, raw := range list {
+	malformed := 0
+	firstProblem := ""
+	for i, raw := range list {
+		var it decisionItem
+		problem := ""
 		m, ok := raw.(map[string]any)
 		if !ok {
-			return nil, decisionInvalid("an item must be an object")
-		}
-		var it decisionItem
-		var okS, okV, okI, okR, okD, okW bool
-		it.statement, okS = m["statement"].(string)
-		it.verdict, okV = m["verdict"].(string)
-		it.intentValue, okI = m["intent_value"].(string)
-		it.requestValue, okR = m["request_value"].(string)
-		it.difference, okD = m["difference"].(string)
-		it.why, okW = m["why"].(string)
-		quotes, okQ := m["request_quotes"].([]any)
-		if !okS || !okV || !okI || !okR || !okD || !okW || !okQ || len(m) != 7 ||
-			!slices.Contains([]string{"follows", "contradicts", "consequence", "unsupported"}, it.verdict) {
-			return nil, decisionInvalid("an item is malformed")
-		}
-		it.quotes = []string{}
-		for _, q := range quotes {
-			qs, ok := q.(string)
-			if !ok {
-				return nil, decisionInvalid("a request quote must be a string")
+			problem = "must be an object"
+		} else {
+			fields := []string{"statement", "request_quotes", "verdict", "intent_value", "request_value", "difference", "why"}
+			for _, field := range fields {
+				value, exists := m[field]
+				if !exists {
+					problem = field + " is missing"
+					break
+				}
+				if field == "request_quotes" {
+					quotes, ok := value.([]any)
+					if !ok {
+						problem = "request_quotes must be a list"
+						break
+					}
+					it.quotes = []string{}
+					for _, quote := range quotes {
+						text, ok := quote.(string)
+						if !ok {
+							problem = "request_quotes must contain only strings"
+							break
+						}
+						it.quotes = append(it.quotes, text)
+					}
+					if problem != "" {
+						break
+					}
+					continue
+				}
+				text, ok := value.(string)
+				if !ok {
+					problem = field + " must be a string"
+					break
+				}
+				switch field {
+				case "statement":
+					it.statement = text
+				case "verdict":
+					it.verdict = text
+				case "intent_value":
+					it.intentValue = text
+				case "request_value":
+					it.requestValue = text
+				case "difference":
+					it.difference = text
+				case "why":
+					it.why = text
+				}
 			}
-			it.quotes = append(it.quotes, qs)
+			if problem == "" {
+				var unknown []string
+				for field := range m {
+					if !slices.Contains(fields, field) {
+						unknown = append(unknown, field)
+					}
+				}
+				if len(unknown) > 0 {
+					slices.Sort(unknown)
+					problem = "unknown field " + unknown[0]
+				}
+			}
+			if problem == "" && !slices.Contains([]string{"follows", "contradicts", "consequence", "unsupported"}, it.verdict) {
+				problem = "verdict must be one of follows, contradicts, consequence, unsupported"
+			}
+		}
+		if problem != "" {
+			malformed++
+			if firstProblem == "" {
+				firstProblem = fmt.Sprintf("item %d is malformed: %s", i+1, problem)
+			}
+			continue
 		}
 		items = append(items, it)
+	}
+	if malformed > 0 {
+		if malformed > 1 {
+			firstProblem += fmt.Sprintf(" (%d malformed items)", malformed)
+		}
+		return nil, decisionInvalid(firstProblem)
 	}
 	if len(args) != 1 {
 		return nil, decisionInvalid("the payload has fields other than items")

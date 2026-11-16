@@ -1,6 +1,7 @@
 package shape
 
 import (
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -212,6 +213,43 @@ func TestParseLiteralCheck(t *testing.T) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
+	unknown := good()
+	unknown["zeta"], unknown["alpha"] = "", ""
+	for _, tc := range []struct {
+		name  string
+		items []any
+		want  string
+	}{
+		{"omitted required field", []any{good(), good(), without("status")}, "item 3 is malformed: status is missing"},
+		{"wrong type", []any{with("literal", 7)}, "item 1 is malformed: literal must be a string"},
+		{"wrong enum", []any{with("status", "maybe")}, "item 1 is malformed: status must be one of required, superseded, informal, secret"},
+		{"nonobject", []any{good(), nil}, "item 2 is malformed: must be an object"},
+		{"count malformed items", []any{good(), without("status"), with("status", "maybe")}, "item 2 is malformed: status is missing (2 malformed items)"},
+		{"required order", []any{map[string]any{}}, "item 1 is malformed: literal is missing"},
+		{"sorted unknown fields", []any{unknown}, "item 1 is malformed: unknown field alpha"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			items, err := parseLiteralCheck(map[string]any{"items": tc.items})
+			want := "shape/literal_check_invalid: the literal check answer is not a valid submit_literal_check payload (" + tc.want + "); nothing was published"
+			e, ok := sys.AsError(err)
+			if !ok || e.Class != "shape" || e.Reason != "literal_check_invalid" || e.Exit != 1 || e.Error() != want || items != nil {
+				t.Fatalf("items %v, error %v; want %s", items, err, want)
+			}
+		})
+	}
+	var valid []any
+	for _, value := range []string{"required", "superseded", "informal", "secret"} {
+		valid = append(valid, with("status", value))
+	}
+	wantItems := []literalItem{}
+	for _, value := range []string{"required", "superseded", "informal", "secret"} {
+		wantItems = append(wantItems, literalItem{literal: "l", source: "request", quote: "q", packageValue: "", why: "w", status: value})
+	}
+	got, err := parseLiteralCheck(map[string]any{"items": valid})
+	if err != nil || !reflect.DeepEqual(got, wantItems) {
+		t.Fatalf("valid items %v, error %v; want %v", got, err, wantItems)
+	}
+
 }
 
 func TestLiteralInstructions(t *testing.T) {

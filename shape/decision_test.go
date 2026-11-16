@@ -2,6 +2,7 @@ package shape
 
 import (
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -165,6 +166,45 @@ func TestParseDecisionCheck(t *testing.T) {
 			t.Errorf("%s: err %v", name, err)
 		}
 	}
+	unknown := good()
+	unknown["zeta"], unknown["alpha"] = "", ""
+	for _, tc := range []struct {
+		name  string
+		items []any
+		want  string
+	}{
+		{"omitted required field", []any{good(), good(), without("why")}, "item 3 is malformed: why is missing"},
+		{"wrong type", []any{with("statement", 7)}, "item 1 is malformed: statement must be a string"},
+		{"wrong enum", []any{with("verdict", "maybe")}, "item 1 is malformed: verdict must be one of follows, contradicts, consequence, unsupported"},
+		{"nonobject", []any{good(), nil}, "item 2 is malformed: must be an object"},
+		{"count malformed items", []any{good(), without("why"), with("verdict", "maybe")}, "item 2 is malformed: why is missing (2 malformed items)"},
+		{"required order", []any{map[string]any{}}, "item 1 is malformed: statement is missing"},
+		{"sorted unknown fields", []any{unknown}, "item 1 is malformed: unknown field alpha"},
+		{"quotes type", []any{with("request_quotes", "q")}, "item 1 is malformed: request_quotes must be a list"},
+		{"quote element", []any{with("request_quotes", []any{"q", 7})}, "item 1 is malformed: request_quotes must contain only strings"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			items, err := parseDecisionCheck(map[string]any{"items": tc.items})
+			want := "shape/decision_check_invalid: the decision check answer is not a valid submit_decision_check payload (" + tc.want + "); nothing was published"
+			e, ok := sys.AsError(err)
+			if !ok || e.Class != "shape" || e.Reason != "decision_check_invalid" || e.Exit != 1 || e.Error() != want || items != nil {
+				t.Fatalf("items %v, error %v; want %s", items, err, want)
+			}
+		})
+	}
+	var valid []any
+	for _, value := range []string{"follows", "contradicts", "consequence", "unsupported"} {
+		valid = append(valid, with("verdict", value))
+	}
+	wantItems := []decisionItem{}
+	for _, value := range []string{"follows", "contradicts", "consequence", "unsupported"} {
+		wantItems = append(wantItems, decisionItem{statement: "s", quotes: []string{"q"}, verdict: value, intentValue: "", requestValue: "", difference: "", why: "w"})
+	}
+	got, err := parseDecisionCheck(map[string]any{"items": valid})
+	if err != nil || !reflect.DeepEqual(got, wantItems) {
+		t.Fatalf("valid items %v, error %v; want %v", got, err, wantItems)
+	}
+
 }
 
 func TestDecisionInstructionsKeepSourceTag(t *testing.T) {

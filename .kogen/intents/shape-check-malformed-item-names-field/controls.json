@@ -1,0 +1,74 @@
+{
+  "correct": {
+    "files": {
+      "shape/literal.go": {
+        "patch": "--- a/shape/literal.go\n+++ b/shape/literal.go\n@@ -90,25 +90,56 @@\n \tif len(args) != 1 {\n \t\treturn nil, literalInvalid(\"the payload has fields other than items\")\n \t}\n+\tfields := []string{\"literal\", \"source\", \"source_quote\", \"package_value\", \"why\", \"status\"}\n+\tproblem := func(raw any) string {\n+\t\tm, ok := raw.(map[string]any)\n+\t\tif !ok {\n+\t\t\treturn \"must be an object\"\n+\t\t}\n+\t\tfor _, field := range fields {\n+\t\t\tvalue, exists := m[field]\n+\t\t\tif !exists {\n+\t\t\t\treturn field + \" is missing\"\n+\t\t\t}\n+\t\t\tif _, ok := value.(string); !ok {\n+\t\t\t\treturn field + \" must be a string\"\n+\t\t\t}\n+\t\t}\n+\t\tvar unknown []string\n+\t\tfor key := range m {\n+\t\t\tif !slices.Contains(fields, key) {\n+\t\t\t\tunknown = append(unknown, key)\n+\t\t\t}\n+\t\t}\n+\t\tslices.Sort(unknown)\n+\t\tif len(unknown) > 0 {\n+\t\t\treturn \"unknown field \" + unknown[0]\n+\t\t}\n+\t\tif !slices.Contains([]string{\"required\", \"superseded\", \"informal\", \"secret\"}, m[\"status\"].(string)) {\n+\t\t\treturn \"status must be one of required, superseded, informal, secret\"\n+\t\t}\n+\t\treturn \"\"\n+\t}\n+\tfirst, count, why := 0, 0, \"\"\n+\tfor i, raw := range list {\n+\t\tif p := problem(raw); p != \"\" {\n+\t\t\tcount++\n+\t\t\tif count == 1 {\n+\t\t\t\tfirst, why = i+1, p\n+\t\t\t}\n+\t\t}\n+\t}\n+\tif count > 0 {\n+\t\tmessage := fmt.Sprintf(\"item %d is malformed: %s\", first, why)\n+\t\tif count > 1 {\n+\t\t\tmessage += fmt.Sprintf(\" (%d malformed items)\", count)\n+\t\t}\n+\t\treturn nil, literalInvalid(message)\n+\t}\n \titems := []literalItem{}\n \tfor _, raw := range list {\n-\t\tm, ok := raw.(map[string]any)\n-\t\tif !ok {\n-\t\t\treturn nil, literalInvalid(\"an item must be an object\")\n-\t\t}\n-\t\tvar it literalItem\n-\t\tvar okL, okS, okQ, okP, okW, okT bool\n-\t\tit.literal, okL = m[\"literal\"].(string)\n-\t\tit.source, okS = m[\"source\"].(string)\n-\t\tit.quote, okQ = m[\"source_quote\"].(string)\n-\t\tit.packageValue, okP = m[\"package_value\"].(string)\n-\t\tit.why, okW = m[\"why\"].(string)\n-\t\tit.status, okT = m[\"status\"].(string)\n-\t\tif !okL || !okS || !okQ || !okP || !okW || !okT || len(m) != 6 ||\n-\t\t\t!slices.Contains([]string{\"required\", \"superseded\", \"informal\", \"secret\"}, it.status) {\n-\t\t\treturn nil, literalInvalid(\"an item is malformed\")\n-\t\t}\n-\t\titems = append(items, it)\n+\t\tm := raw.(map[string]any)\n+\t\titems = append(items, literalItem{literal: m[\"literal\"].(string), source: m[\"source\"].(string), quote: m[\"source_quote\"].(string), packageValue: m[\"package_value\"].(string), why: m[\"why\"].(string), status: m[\"status\"].(string)})\n \t}\n \treturn items, nil\n }\n"
+      },
+      "shape/decision.go": {
+        "patch": "--- a/shape/decision.go\n+++ b/shape/decision.go\n@@ -91,34 +91,72 @@\n \tif !ok {\n \t\treturn nil, decisionInvalid(\"items must be a list\")\n \t}\n+\tfields := []string{\"statement\", \"request_quotes\", \"verdict\", \"intent_value\", \"request_value\", \"difference\", \"why\"}\n+\tproblem := func(raw any) string {\n+\t\tm, ok := raw.(map[string]any)\n+\t\tif !ok {\n+\t\t\treturn \"must be an object\"\n+\t\t}\n+\t\tfor _, field := range fields {\n+\t\t\tvalue, exists := m[field]\n+\t\t\tif !exists {\n+\t\t\t\treturn field + \" is missing\"\n+\t\t\t}\n+\t\t\tif field == \"request_quotes\" {\n+\t\t\t\tquotes, ok := value.([]any)\n+\t\t\t\tif !ok {\n+\t\t\t\t\treturn \"request_quotes must be a list\"\n+\t\t\t\t}\n+\t\t\t\tfor _, q := range quotes {\n+\t\t\t\t\tif _, ok := q.(string); !ok {\n+\t\t\t\t\t\treturn \"request_quotes must contain only strings\"\n+\t\t\t\t\t}\n+\t\t\t\t}\n+\t\t\t\tcontinue\n+\t\t\t}\n+\t\t\tif _, ok := value.(string); !ok {\n+\t\t\t\treturn field + \" must be a string\"\n+\t\t\t}\n+\t\t}\n+\t\tvar unknown []string\n+\t\tfor key := range m {\n+\t\t\tif !slices.Contains(fields, key) {\n+\t\t\t\tunknown = append(unknown, key)\n+\t\t\t}\n+\t\t}\n+\t\tslices.Sort(unknown)\n+\t\tif len(unknown) > 0 {\n+\t\t\treturn \"unknown field \" + unknown[0]\n+\t\t}\n+\t\tif !slices.Contains([]string{\"follows\", \"contradicts\", \"consequence\", \"unsupported\"}, m[\"verdict\"].(string)) {\n+\t\t\treturn \"verdict must be one of follows, contradicts, consequence, unsupported\"\n+\t\t}\n+\t\treturn \"\"\n+\t}\n+\tfirst, count, why := 0, 0, \"\"\n+\tfor i, raw := range list {\n+\t\tif p := problem(raw); p != \"\" {\n+\t\t\tcount++\n+\t\t\tif count == 1 {\n+\t\t\t\tfirst, why = i+1, p\n+\t\t\t}\n+\t\t}\n+\t}\n+\tif count > 0 {\n+\t\tmessage := fmt.Sprintf(\"item %d is malformed: %s\", first, why)\n+\t\tif count > 1 {\n+\t\t\tmessage += fmt.Sprintf(\" (%d malformed items)\", count)\n+\t\t}\n+\t\treturn nil, decisionInvalid(message)\n+\t}\n \titems := []decisionItem{}\n \tfor _, raw := range list {\n-\t\tm, ok := raw.(map[string]any)\n-\t\tif !ok {\n-\t\t\treturn nil, decisionInvalid(\"an item must be an object\")\n-\t\t}\n-\t\tvar it decisionItem\n-\t\tvar okS, okV, okI, okR, okD, okW bool\n-\t\tit.statement, okS = m[\"statement\"].(string)\n-\t\tit.verdict, okV = m[\"verdict\"].(string)\n-\t\tit.intentValue, okI = m[\"intent_value\"].(string)\n-\t\tit.requestValue, okR = m[\"request_value\"].(string)\n-\t\tit.difference, okD = m[\"difference\"].(string)\n-\t\tit.why, okW = m[\"why\"].(string)\n-\t\tquotes, okQ := m[\"request_quotes\"].([]any)\n-\t\tif !okS || !okV || !okI || !okR || !okD || !okW || !okQ || len(m) != 7 ||\n-\t\t\t!slices.Contains([]string{\"follows\", \"contradicts\", \"consequence\", \"unsupported\"}, it.verdict) {\n-\t\t\treturn nil, decisionInvalid(\"an item is malformed\")\n-\t\t}\n-\t\tit.quotes = []string{}\n-\t\tfor _, q := range quotes {\n-\t\t\tqs, ok := q.(string)\n-\t\t\tif !ok {\n-\t\t\t\treturn nil, decisionInvalid(\"a request quote must be a string\")\n-\t\t\t}\n-\t\t\tit.quotes = append(it.quotes, qs)\n-\t\t}\n-\t\titems = append(items, it)\n+\t\tm := raw.(map[string]any)\n+\t\tquotes := []string{}\n+\t\tfor _, q := range m[\"request_quotes\"].([]any) {\n+\t\t\tquotes = append(quotes, q.(string))\n+\t\t}\n+\t\titems = append(items, decisionItem{statement: m[\"statement\"].(string), quotes: quotes, verdict: m[\"verdict\"].(string), intentValue: m[\"intent_value\"].(string), requestValue: m[\"request_value\"].(string), difference: m[\"difference\"].(string), why: m[\"why\"].(string)})\n \t}\n \tif len(args) != 1 {\n \t\treturn nil, decisionInvalid(\"the payload has fields other than items\")\n"
+      }
+    }
+  },
+  "wrong": [
+    {
+      "name": "literal still reports generic malformed",
+      "scenario": "Diagnose malformed literal items without changing validity",
+      "step": "Then shape-check-malformed-item-names-field: named test \"TestMalformedLiteralItemDiagnostics\" passes every supplied case",
+      "files": {
+        "shape/literal.go": {
+          "patch": "--- a/shape/literal.go\n+++ b/shape/literal.go\n@@ -130,7 +130,8 @@\n \t\t}\n \t}\n \tif count > 0 {\n-\t\tmessage := fmt.Sprintf(\"item %d is malformed: %s\", first, why)\n+\t\tmessage := \"an item is malformed\"\n+\t\t_, _ = first, why\n \t\tif count > 1 {\n \t\t\tmessage += fmt.Sprintf(\" (%d malformed items)\", count)\n \t\t}\n"
+        }
+      }
+    },
+    {
+      "name": "decision still reports generic malformed",
+      "scenario": "Diagnose malformed decision items without changing validity",
+      "step": "Then shape-check-malformed-item-names-field: named test \"TestMalformedDecisionItemDiagnostics\" passes every supplied case",
+      "files": {
+        "shape/decision.go": {
+          "patch": "--- a/shape/decision.go\n+++ b/shape/decision.go\n@@ -143,7 +143,8 @@\n \t\t}\n \t}\n \tif count > 0 {\n-\t\tmessage := fmt.Sprintf(\"item %d is malformed: %s\", first, why)\n+\t\tmessage := \"an item is malformed\"\n+\t\t_, _ = first, why\n \t\tif count > 1 {\n \t\t\tmessage += fmt.Sprintf(\" (%d malformed items)\", count)\n \t\t}\n"
+        }
+      }
+    },
+    {
+      "name": "item numbering is zero based",
+      "scenario": "Diagnose malformed literal items without changing validity",
+      "step": "Then shape-check-malformed-item-names-field: named test \"TestMalformedLiteralItemDiagnostics\" passes every supplied case",
+      "files": {
+        "shape/literal.go": {
+          "patch": "--- a/shape/literal.go\n+++ b/shape/literal.go\n@@ -125,7 +125,7 @@\n \t\tif p := problem(raw); p != \"\" {\n \t\t\tcount++\n \t\t\tif count == 1 {\n-\t\t\t\tfirst, why = i+1, p\n+\t\t\t\tfirst, why = i, p\n \t\t\t}\n \t\t}\n \t}\n"
+        }
+      }
+    },
+    {
+      "name": "malformed count is omitted",
+      "scenario": "Diagnose malformed decision items without changing validity",
+      "step": "Then shape-check-malformed-item-names-field: named test \"TestMalformedDecisionItemDiagnostics\" passes every supplied case",
+      "files": {
+        "shape/decision.go": {
+          "patch": "--- a/shape/decision.go\n+++ b/shape/decision.go\n@@ -145,7 +145,7 @@\n \tif count > 0 {\n \t\tmessage := fmt.Sprintf(\"item %d is malformed: %s\", first, why)\n \t\tif count > 1 {\n-\t\t\tmessage += fmt.Sprintf(\" (%d malformed items)\", count)\n+\t\t\tmessage += \"\"\n \t\t}\n \t\treturn nil, decisionInvalid(message)\n \t}\n"
+        }
+      }
+    },
+    {
+      "name": "allowed statuses omitted",
+      "scenario": "Diagnose malformed literal items without changing validity",
+      "step": "Then shape-check-malformed-item-names-field: named test \"TestMalformedLiteralItemDiagnostics\" passes every supplied case",
+      "files": {
+        "shape/literal.go": {
+          "patch": "--- a/shape/literal.go\n+++ b/shape/literal.go\n@@ -116,7 +116,7 @@\n \t\t\treturn \"unknown field \" + unknown[0]\n \t\t}\n \t\tif !slices.Contains([]string{\"required\", \"superseded\", \"informal\", \"secret\"}, m[\"status\"].(string)) {\n-\t\t\treturn \"status must be one of required, superseded, informal, secret\"\n+\t\t\treturn \"status is invalid\"\n \t\t}\n \t\treturn \"\"\n \t}\n"
+        }
+      }
+    },
+    {
+      "name": "valid item why discarded",
+      "scenario": "Diagnose malformed decision items without changing validity",
+      "step": "Then shape-check-malformed-item-names-field: named test \"TestMalformedDecisionItemDiagnostics\" passes every supplied case",
+      "files": {
+        "shape/decision.go": {
+          "patch": "--- a/shape/decision.go\n+++ b/shape/decision.go\n@@ -156,7 +156,7 @@\n \t\tfor _, q := range m[\"request_quotes\"].([]any) {\n \t\t\tquotes = append(quotes, q.(string))\n \t\t}\n-\t\titems = append(items, decisionItem{statement: m[\"statement\"].(string), quotes: quotes, verdict: m[\"verdict\"].(string), intentValue: m[\"intent_value\"].(string), requestValue: m[\"request_value\"].(string), difference: m[\"difference\"].(string), why: m[\"why\"].(string)})\n+\t\titems = append(items, decisionItem{statement: m[\"statement\"].(string), quotes: quotes, verdict: m[\"verdict\"].(string), intentValue: m[\"intent_value\"].(string), requestValue: m[\"request_value\"].(string), difference: m[\"difference\"].(string), why: \"\"})\n \t}\n \tif len(args) != 1 {\n \t\treturn nil, decisionInvalid(\"the payload has fields other than items\")\n"
+        }
+      }
+    }
+  ]
+}
