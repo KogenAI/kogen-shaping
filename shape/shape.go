@@ -83,6 +83,10 @@ func shapeRun(ctx context.Context, s *sys.Session, in ShapeInput) (exit int, err
 	}
 	root, slug := repo.Dir, in.Slug
 	stateDir := filepath.Join(root, ".kogen/local/shaping", slug)
+	// A shaping record directory makes an Intent a Shape draft. This run's own evidence
+	// creates the directory, so whether one existed is read before that.
+	hadRecord := shapingRecordDir(root, slug)
+	dropRecord := false
 	if _, statErr := os.Stat(filepath.Join(root, project.IntentDir(slug))); errors.Is(statErr, fs.ErrNotExist) {
 		if err := os.Remove(draftRefusalPath(root, slug)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return 0, err
@@ -101,6 +105,9 @@ func shapeRun(ctx context.Context, s *sys.Session, in ShapeInput) (exit int, err
 			if spent := ev.Spent(); spent != nil {
 				s.Progress(spent.Line())
 			}
+		}
+		if dropRecord {
+			os.RemoveAll(stateDir) // the answer left no draft: keep the Intent without a record
 		}
 	}()
 	ev.Record(agent.BudgetEvent(in.Client))
@@ -143,9 +150,13 @@ func shapeRun(ctx context.Context, s *sys.Session, in ShapeInput) (exit int, err
 			if err != nil {
 				return 0, err
 			}
-			if refusal == nil {
+			if refusal == nil && (!hadRecord || !unmatchedPass(root, slug, cfg)) {
+				dropRecord = !hadRecord
 				return 0, draftDiagnostic(root, slug, "exists", slug+" is already shaped", 5, nil, nil)
 			}
+		}
+		if err := clearShapePass(root, slug); err != nil {
+			return 0, err
 		}
 		if err := os.Remove(filepath.Join(stateDir, ledgerFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return 0, err
@@ -870,6 +881,9 @@ func (sh *shaping) shape(ctx context.Context, st *state) (int, error) {
 		return 0, err
 	}
 	if err := sh.rd.RecordPass(sh.s, sh.slug, sh.ready); err != nil {
+		return 0, err
+	}
+	if err := recordShapePass(sh.root, sh.slug, sh.cfg); err != nil {
 		return 0, err
 	}
 	if err := os.Remove(draftRefusalPath(sh.root, sh.slug)); err != nil && !errors.Is(err, fs.ErrNotExist) {

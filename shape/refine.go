@@ -1475,6 +1475,9 @@ func (r *refine) replace(ctx context.Context, changes map[string]string, ready *
 	if err := r.rd.RecordPass(r.s, r.slug, ready); err != nil {
 		return err
 	}
+	if err := refinePass(r.root, r.slug, r.cfg); err != nil {
+		return err
+	}
 	if err := project.ValidateSource(r.pinned); err != nil {
 		return err
 	}

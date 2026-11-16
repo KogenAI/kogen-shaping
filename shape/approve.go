@@ -95,6 +95,13 @@ func approveLocked(ctx context.Context, s *sys.Session, in ApproveInput, repo *g
 			e.Lines = append(e.Lines, draftRecovery(slug)...)
 			return 0, e
 		}
+		// A shaping conversation with a saved state is judged by its own pending questions.
+		_, noState := os.Stat(filepath.Join(root, ".kogen/local/shaping", slug, "state.json"))
+		if cfg, err := project.LoadConfig(root); err == nil && noState != nil && shapingRecordDir(root, slug) && unmatchedPass(root, slug, cfg) {
+			e := sys.Fail("intent", "not_ready", "no passed Shape checks are recorded for this package", 1)
+			e.Lines = append(e.Lines, draftRecovery(slug)...)
+			return 0, e
+		}
 	}
 	unmerged, err := repo.Observing().OK("ls-files", "--unmerged", "--format=%(path)", "-z")
 	if err != nil {
