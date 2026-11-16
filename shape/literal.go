@@ -226,6 +226,18 @@ var provenanceParagraph = regexp.MustCompile("(?i)^(studio\\s+)?(issue|ticket|bl
 
 var blankLines = regexp.MustCompile(`\n\s*\n`)
 
+var softWrapBreak = regexp.MustCompile(`[ \t]*\r?\n[ \t]*`)
+
+// softWrapVariant is literal with each soft-wrapped line break and its surrounding spaces
+// replaced by one space; false when the literal has no line break or has a blank line (a real
+// paragraph break).
+func softWrapVariant(literal string) (string, bool) {
+	if !strings.Contains(literal, "\n") || blankLines.MatchString(literal) {
+		return "", false
+	}
+	return softWrapBreak.ReplaceAllString(literal, " "), true
+}
+
 // provenanceOnly is whether literal is an id (it has a digit) that the request gives only in
 // provenance paragraphs: every request paragraph that contains it is one. An id that a request
 // line also shows as output, in a code span or in any other sentence, is a product literal.
@@ -271,6 +283,10 @@ func literalOutcome(items []literalItem, sources map[string]string, files []pack
 		}
 		return false
 	}
+	softWrapped := func(s string) bool {
+		v, ok := softWrapVariant(s)
+		return ok && inPackage(v)
+	}
 	counts := map[string]int{}
 	events := make([]any, len(items))
 	var problems []string
@@ -288,6 +304,8 @@ func literalOutcome(items []literalItem, sources map[string]string, files []pack
 			// An id that the request gives only to say which Studio record it comes from.
 			it.status = "informal"
 		case inPackage(it.literal):
+			it.status = "present"
+		case softWrapped(it.literal):
 			it.status = "present"
 		case strings.TrimSpace(it.packageValue) != "" && it.packageValue != it.literal && inPackage(it.packageValue):
 			it.status = "changed"

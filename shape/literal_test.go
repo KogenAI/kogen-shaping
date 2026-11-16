@@ -289,3 +289,31 @@ func TestLiteralInstructionsAllowEquivalentArgvWithoutWeakeningDisplays(t *testi
 		}
 	}
 }
+
+func TestLiteralOutcomeSoftWrappedRequestLiteral(t *testing.T) {
+	parallel(t)
+	red := verify.NewRedactor(nil, "")
+	cases := []struct {
+		name, literal, pkg, packageValue, status string
+	}{
+		{"one-space text", "50 cards\nleft", "warn at 50 cards left now", "", "present"},
+		{"indented break", "50 cards\n    left", "warn at 50 cards left now", "", "present"},
+		{"exact bytes", "50 cards\nleft", "50 cards\nleft", "", "present"},
+		{"other character changed", "50 cards\nleft", "50 cards, left", "50 cards, left", "changed"},
+		{"other character, no package value", "50 cards\nleft", "50 cards, left", "", "missing"},
+		{"blank line", "50 cards\n\nleft", "50 cards left", "", "missing"},
+		{"no line break", "50 cards  left", "50 cards left", "", "missing"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			parallel(t)
+			sources := map[string]string{"request": c.literal}
+			event, _ := literalOutcome([]literalItem{litItem(c.literal, "request", c.literal, "required", c.packageValue)}, sources,
+				[]packageFile{{"intent.md", c.pkg}}, red)
+			item := event["items"].([]any)[0].(map[string]any)
+			if item["status"] != c.status || item["literal"] != c.literal {
+				t.Errorf("item = %v, want status %s with literal %q", item, c.status, c.literal)
+			}
+		})
+	}
+}
