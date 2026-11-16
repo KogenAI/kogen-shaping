@@ -434,3 +434,27 @@ func TestTheShaperAndRefinePoliciesStateTheDiscoveryRulesAndTheRecordingSentence
 		t.Error("verify.Guidance and the embedded feasibility guidance differ")
 	}
 }
+
+func TestDocumentationResultLineCountsTheSourcesOfARetrievedSearch(t *testing.T) {
+	parallel(t)
+	ev, err := NewEvidence(t.TempDir(), "fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := func(n string) string { return `{"url":"https://docs.example/` + n + `","title":"Page ` + n + `"}` }
+	result := func(op, status, sources string) string {
+		return `{"operation":"` + op + `","status":"` + status + `","query":"q","url":null,"sources":[` + sources + `],"untrusted":false,"truncated":false,"error":null}`
+	}
+	for _, c := range []struct{ name, op, status, sources, want string }{
+		{"two sources", "search", "retrieved", src("1") + "," + src("2"), "kogen: documentation result: search retrieved (2 sources)"},
+		{"one source", "search", "retrieved", src("1"), "kogen: documentation result: search retrieved (1 source)"},
+		{"no sources", "search", "retrieved", "", "kogen: documentation result: search retrieved (0 sources)"},
+		{"fetch", "fetch", "retrieved", src("1") + "," + src("2"), "kogen: documentation result: fetch retrieved"},
+		{"another status", "search", "unreachable", src("1"), "kogen: documentation result: search unreachable"},
+	} {
+		row := ev.RetainDocumentation(map[string]any{"operation": c.op, "query": "q"}, result(c.op, c.status, c.sources))
+		if _, finished := DocumentationProgress(row); finished != c.want {
+			t.Errorf("%s: finished line %q, want %q", c.name, finished, c.want)
+		}
+	}
+}

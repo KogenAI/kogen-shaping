@@ -1,0 +1,40 @@
+package shape
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"testing"
+)
+
+// TestDocumentationResultLineHarness retains documentation lookups the way a shaping session does
+// (RetainDocumentation on a scripted tool result) and writes the progress lines DocumentationProgress
+// gives for them to the file named by SDRLCS_OUT.
+func TestDocumentationResultLineHarness(t *testing.T) {
+	parallel(t)
+	ev, err := NewEvidence(t.TempDir(), "fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := func(n int) string {
+		return fmt.Sprintf(`{"url":"https://docs.example/%d","title":"Page %d","rank":%d}`, n, n, n)
+	}
+	lookup := func(args map[string]any, text string) map[string]string {
+		started, finished := DocumentationProgress(ev.RetainDocumentation(args, text))
+		return map[string]string{"started": started, "finished": finished}
+	}
+	obs := map[string]any{
+		"two":         lookup(map[string]any{"operation": "search", "query": "cache controls"}, `{"operation":"search","status":"retrieved","query":"cache controls","url":null,"sources":[`+source(1)+","+source(2)+`],"untrusted":false,"truncated":false,"error":null}`),
+		"zero":        lookup(map[string]any{"operation": "search", "query": "nothing here"}, `{"operation":"search","status":"retrieved","query":"nothing here","url":null,"sources":[],"untrusted":false,"truncated":false,"error":null}`),
+		"one":         lookup(map[string]any{"operation": "search", "query": "one hit"}, `{"operation":"search","status":"retrieved","query":"one hit","url":null,"sources":[`+source(1)+`],"untrusted":false,"truncated":false,"error":null}`),
+		"fetch":       lookup(map[string]any{"operation": "fetch", "url": "https://docs.example/1"}, `{"operation":"fetch","status":"retrieved","query":null,"url":"https://docs.example/1","sources":[`+source(1)+","+source(2)+`],"untrusted":false,"truncated":false,"error":null}`),
+		"unsupported": lookup(map[string]any{"operation": "search", "query": "missing provider"}, "not json"),
+	}
+	b, err := json.Marshal(obs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(os.Getenv("SDRLCS_OUT"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}

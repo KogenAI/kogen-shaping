@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/KogenAI/kogen-coordinator/project"
@@ -44,7 +45,8 @@ func (e *Evidence) RetainDocumentation(args map[string]any, text string) map[str
 }
 
 // DocumentationProgress are the two progress lines of a retained lookup: what was asked
-// (with line breaks in the reference made spaces) and how it ended.
+// (with line breaks in the reference made spaces) and how it ended; a retrieved search also
+// names how many sources it returned.
 func DocumentationProgress(row map[string]any) (started, finished string) {
 	operation, _ := row["operation"].(string)
 	reference := "-"
@@ -55,7 +57,15 @@ func DocumentationProgress(row map[string]any) (started, finished string) {
 		}
 	}
 	status, _ := row["status"].(string)
-	return "kogen: documentation: " + operation + " " + reference, "kogen: documentation result: " + operation + " " + status
+	finished = "kogen: documentation result: " + operation + " " + status
+	if sources, ok := row["sources"].([]any); ok && operation == "search" && status == "retrieved" {
+		noun := " sources"
+		if len(sources) == 1 {
+			noun = " source"
+		}
+		finished += " (" + strconv.Itoa(len(sources)) + noun + ")"
+	}
+	return "kogen: documentation: " + operation + " " + reference, finished
 }
 
 func documentationRecord(args map[string]any, text string) map[string]any {
