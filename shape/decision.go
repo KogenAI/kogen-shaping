@@ -575,7 +575,7 @@ func (sh *shaping) askDecisionCheck(ctx context.Context, input string) (map[stri
 	sh.decisionChecks++
 	if sh.ext != nil {
 		x, err := startExternal(ctx, sh.ext, sh.extMax, sh.repo, sh.root, sh.s.Getenv("HOME"),
-			fmt.Sprintf("%s/executor-decision-%d", sh.ev.Dir, sh.decisionChecks), sh.slug, sh.role, decisionInstructions+"\n\n"+input, "", mustJSON(decisionSchema()), sh.ev, nil)
+			fmt.Sprintf("%s/executor-decision-%d", sh.ev.Dir, sh.decisionChecks), sh.slug, sh.role, sh.withRules(decisionInstructions)+"\n\n"+input, "", mustJSON(decisionSchema()), sh.ev, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -602,7 +602,7 @@ func (sh *shaping) askDecisionCheck(ctx context.Context, input string) (map[stri
 		}
 		cacheID := startConversation(sh.ev, "decision-check")
 		req := conversationRequest(provider.Request{
-			Role: ProviderRole(sh.role), Instructions: decisionInstructions,
+			Role: ProviderRole(sh.role), Instructions: sh.withRules(decisionInstructions),
 			Input: []any{map[string]any{"role": "user", "content": input}}, Tools: []any{decisionToolDef()},
 			Scope: sh.ev.Dir, Context: map[string]any{"phase": "shape", "role": "shape", "slug": sh.slug},
 		}, cacheID)

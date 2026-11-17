@@ -24,6 +24,7 @@ import (
 	"github.com/KogenAI/kogen-coordinator/durable"
 	"github.com/KogenAI/kogen-coordinator/git"
 	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-coordinator/rules"
 	"github.com/KogenAI/kogen-executor/agent"
 	"github.com/KogenAI/kogen-executor/executor"
 	"github.com/KogenAI/kogen-loop/provider"
@@ -86,6 +87,7 @@ func shapeRun(ctx context.Context, s *sys.Session, in ShapeInput) (exit int, err
 	// A shaping record directory makes an Intent a Shape draft. This run's own evidence
 	// creates the directory, so whether one existed is read before that.
 	hadRecord := shapingRecordDir(root, slug)
+	answering := false
 	dropRecord := false
 	if _, statErr := os.Stat(filepath.Join(root, project.IntentDir(slug))); errors.Is(statErr, fs.ErrNotExist) {
 		if err := os.Remove(draftRefusalPath(root, slug)); err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -180,6 +182,7 @@ func shapeRun(ctx context.Context, s *sys.Session, in ShapeInput) (exit int, err
 		if err := st.answer(in.Request); err != nil {
 			return 0, err
 		}
+		answering = true
 	}
 
 	if missing := st.unanswered(); len(missing) > 0 {
@@ -190,6 +193,16 @@ func shapeRun(ctx context.Context, s *sys.Session, in ShapeInput) (exit int, err
 			return 0, err
 		}
 		return printQuestions(s, slug, missing), nil
+	}
+	// The Studio rules are loaded for every run, before any readiness work or model call, and
+	// never held between runs.
+	boundary := "run"
+	if answering {
+		boundary = "answer"
+	}
+	studio, err := loadStudioRules(ctx, s, root, ev, boundary, rules.Options{Now: in.Now})
+	if err != nil {
+		return 0, err
 	}
 	if len(cfg.Checks) == 0 {
 		s.Progress("warning: commands.checks is empty; Builds will not run your tests")
@@ -209,7 +222,7 @@ func shapeRun(ctx context.Context, s *sys.Session, in ShapeInput) (exit int, err
 	}
 	sh := &shaping{s: s, in: in, repo: repo, root: root, slug: slug, cfg: cfg, role: cfg.Models["shape"], ev: ev, ext: ext, extMax: extMax,
 		rd: rd, client: client, stateDir: stateDir, originals: map[string]original{}, proposed: map[string]string{},
-		ledger: ledger, round: len(st.Rounds) + 1,
+		ledger: ledger, round: len(st.Rounds) + 1, rules: studio,
 		contractSessions: map[string]int{}, contractChecked: map[string]bool{}, contractRefused: map[string]contractConfirmed{}}
 	return sh.shape(ctx, st)
 }
@@ -571,6 +584,8 @@ type shaping struct {
 	// ext is the executor of an external shape role (nil: the native shaper).
 	ext    executor.Executor
 	extMax int
+	// rules is the Studio rule snapshot this run loaded; nil without Studio configuration.
+	rules *studioRules
 
 	started       time.Time
 	toolDefs      []any
@@ -982,7 +997,7 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 		sh.ev.Record(event)
 
 		req := conversationRequest(provider.Request{
-			Role: ProviderRole(sh.role), Instructions: ShaperInstructions(), Input: input, Tools: sh.toolDefs,
+			Role: ProviderRole(sh.role), Instructions: sh.withRules(ShaperInstructions()), Input: input, Tools: sh.toolDefs,
 			Scope: sh.ev.Dir, Context: map[string]any{"phase": "shape", "role": "shape", "slug": sh.slug},
 		}, sh.cacheID)
 		turns.apply(&req)
@@ -1145,7 +1160,7 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 // a row end it like the native shaper.
 func (sh *shaping) converseExternal(ctx context.Context, blocks []any) (outcome, *extSession, error) {
 	sh.externalReads = make(map[string]bool)
-	stable := ShaperInstructions() + "\n\n" + externalBrief() + "\n\n" + blocksText(blocks)
+	stable := sh.withRules(ShaperInstructions()) + "\n\n" + externalBrief() + "\n\n" + blocksText(blocks)
 	x, err := startExternal(ctx, sh.ext, sh.extMax, sh.repo, sh.root, sh.s.Getenv("HOME"),
 		filepath.Join(sh.ev.Dir, "executor-shape"), sh.slug, sh.role, stable, budgetLine(sh.chargedTime()), shaperSubmitSchema(), sh.ev,
 		func(e map[string]any) {

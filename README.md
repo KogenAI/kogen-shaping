@@ -57,6 +57,16 @@ or an existing Intent. For pending questions, rerun the same command with the an
 request file or on stdin (for example `printf '1: a\n' | ./kogen-shape --project /example/checkout --slug my-intent --request -`).
 The existing Shape question and answer semantics apply. Standalone Refine is not provided.
 
+## Studio rules
+
+When the project has `.kogen/studio-rules.yaml`, Shape loads the scoped Studio rule snapshot with kogen-coordinator's
+`rules.Load` at the start of every run (the answer run after a resume included), reading the token from the variable
+that file names. The applicable rules reach the shaper, the contract review and confirmation, and the decision and
+literal checks as advisory text, and the run appends one `studio_rules` event (boundary, origin, snapshot hash, rule
+ids and revisions) to `.kogen/local/shaping/<slug>/events.ndjson`. A refused or unavailable load stops the run
+before any model call with `rules/refused: <reason>` or `rules/unavailable: <reason>` and a `studio_rules_refused`
+event. Without the file nothing changes. Rules never override approval, checks or protected paths.
+
 ## Testing
 
 The Go commands build and test the packages. Some integration tests run real

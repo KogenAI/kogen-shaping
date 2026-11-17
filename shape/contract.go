@@ -868,6 +868,7 @@ func (sh *shaping) contractCall(ctx context.Context, kind, input string) (map[st
 	if kind == "confirmation" {
 		instructions, submit, schema, def, doing = contractConfirmationInstructions, SubmitContractConfirmationTool, contractConfirmationSchema(), contractConfirmationToolDef(), "kogen: confirming contract findings"
 	}
+	instructions = sh.withRules(instructions)
 	if sh.ext != nil {
 		return sh.contractExternal(ctx, kind, instructions+"\n\n"+input, schema)
 	}

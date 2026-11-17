@@ -401,7 +401,7 @@ func (sh *shaping) literalCheck(ctx context.Context) ([]string, error) {
 	sh.literalChecks++
 	if sh.ext != nil {
 		x, err := startExternal(ctx, sh.ext, sh.extMax, sh.repo, sh.root, sh.s.Getenv("HOME"),
-			fmt.Sprintf("%s/executor-literal-%d", sh.ev.Dir, sh.literalChecks), sh.slug, sh.role, literalInstructions+"\n\n"+input, "", mustJSON(literalSchema()), sh.ev, nil)
+			fmt.Sprintf("%s/executor-literal-%d", sh.ev.Dir, sh.literalChecks), sh.slug, sh.role, sh.withRules(literalInstructions)+"\n\n"+input, "", mustJSON(literalSchema()), sh.ev, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -428,7 +428,7 @@ func (sh *shaping) literalCheck(ctx context.Context) ([]string, error) {
 		}
 		cacheID := startConversation(sh.ev, "literal-check")
 		req := conversationRequest(provider.Request{
-			Role: ProviderRole(sh.role), Instructions: literalInstructions,
+			Role: ProviderRole(sh.role), Instructions: sh.withRules(literalInstructions),
 			Input: []any{map[string]any{"role": "user", "content": input}}, Tools: []any{literalToolDef()},
 			Scope: sh.ev.Dir, Context: map[string]any{"phase": "shape", "role": "shape", "slug": sh.slug},
 		}, cacheID)
