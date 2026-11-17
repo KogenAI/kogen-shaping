@@ -189,3 +189,21 @@ func TestShaperAndRefineShareTheGuidancePassages(t *testing.T) {
 		t.Error("the submit definition lost the acknowledgment guidance")
 	}
 }
+
+// TestShaperPromptRequiresACollectionScalingScenario checks, without a model, that the rendered
+// shaper prompt carries the collection rule and its skip rule.
+func TestShaperPromptRequiresACollectionScalingScenario(t *testing.T) {
+	text := shaperPrompt("shaper")
+	for _, want := range []string{
+		"- Work over a collection. When the request describes an operation over a collection of records of unknown size",
+		"runs the operation twice with different record counts",
+		"stays within the same stated upper bound for both counts",
+		"the controls.json wrong implementation for it does that work once per record",
+		"Skip this scenario only with a `- none: <reason>` line in `## Tests`",
+		"A request that does not process a collection gets no such scenario.",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the shaper prompt lacks %q", want)
+		}
+	}
+}
