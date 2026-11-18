@@ -1,0 +1,1 @@
+{"deferred":"The correct implementation needs a go.mod and go.sum bump of kogen-coordinator to e643661cb646 whose module hashes only a networked go get can produce, and the Build's own Go tests (shape/fixer_revert_test.go) must be written against that guard; acceptance instead runs independent probe tests in a scratch copy, so the Build writes the implementation."}

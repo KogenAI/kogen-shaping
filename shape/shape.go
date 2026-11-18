@@ -2340,8 +2340,8 @@ func (sh *shaping) fixAttempt(ctx context.Context, paths []string) error {
 		case known:
 			os.RemoveAll(file)
 		default:
-			if _, ok := sh.repo.Show("HEAD", p); ok {
-				if _, err := sh.repo.OK("restore", "--source=HEAD", "--staged", "--worktree", "--", ":(literal)"+p); err != nil {
+			if blob, ok := sh.repo.Show("HEAD", p); ok {
+				if err := sh.revertToHead(p, blob); err != nil {
 					return err
 				}
 			} else {
@@ -2350,6 +2350,42 @@ func (sh *shaping) fixAttempt(ctx context.Context, paths []string) error {
 		}
 	}
 	return nil
+}
+
+// revertToHead puts a tracked path back to its HEAD blob, HEAD mode and unstaged state
+// without a command the Git guard refuses: it writes the blob itself and re-indexes the
+// same blob with update-index.
+func (sh *shaping) revertToHead(p, blob string) error {
+	out, err := sh.repo.OK("ls-tree", "-z", "HEAD", "--", p)
+	if err != nil {
+		return err
+	}
+	meta, path, ok := strings.Cut(strings.TrimRight(out, "\x00"), "\t")
+	fields := strings.Split(meta, " ")
+	if !ok || path != p || len(fields) != 3 {
+		return fmt.Errorf("git ls-tree: unexpected entry %q for %s", out, p)
+	}
+	mode, object := fields[0], fields[2]
+	file := filepath.Join(sh.root, p)
+	if err := os.RemoveAll(file); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(file), 0o777); err != nil {
+		return err
+	}
+	switch mode {
+	case "120000":
+		err = os.Symlink(blob, file)
+	case "100755":
+		err = os.WriteFile(file, []byte(blob), 0o755)
+	default:
+		err = os.WriteFile(file, []byte(blob), 0o666)
+	}
+	if err != nil {
+		return err
+	}
+	_, err = sh.repo.OK("update-index", "--add", "--cacheinfo", mode+","+object+","+p)
+	return err
 }
 
 // ---- validation of a submission (SHP-4) ----

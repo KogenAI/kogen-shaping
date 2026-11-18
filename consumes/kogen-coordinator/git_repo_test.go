@@ -318,17 +318,35 @@ func TestRepoOK(t *testing.T) {
 		t.Errorf("git.Repo.OK clone: the clone's Head = %q, want %q", got, head)
 	}
 
-	// Restoring one literal path from HEAD, staged and in the work tree.
+	// Returning one path to HEAD without a refused command: the tree entry through ls-tree, the
+	// blob written back, and the same blob re-indexed with update-index (restore is refused).
 	write(t, dir, "a.txt", "dirty\n")
 	runGit(t, dir, "add", "a.txt")
-	if _, err := repo.OK("restore", "--source=HEAD", "--staged", "--worktree", "--", ":(literal)a.txt"); err != nil {
-		t.Fatalf("git.Repo.OK restore: %v", err)
+	if _, err := repo.OK("restore", "--source=HEAD", "--staged", "--worktree", "--", ":(literal)a.txt"); !errors.Is(err, git.ErrForbidden) {
+		t.Fatalf("git.Repo.OK restore: err = %v, want git.ErrForbidden", err)
+	}
+	entry, err := repo.OK("ls-tree", "-z", "HEAD", "--", "a.txt")
+	if err != nil {
+		t.Fatalf("git.Repo.OK ls-tree: %v", err)
+	}
+	meta, _, _ := strings.Cut(entry, "\t")
+	f := strings.Split(meta, " ")
+	if len(f) != 3 {
+		t.Fatalf("git.Repo.OK ls-tree entry = %q, want mode, type and object", entry)
+	}
+	blob, ok := repo.Show("HEAD", "a.txt")
+	if !ok {
+		t.Fatal("git.Repo.Show HEAD a.txt: no content")
+	}
+	write(t, dir, "a.txt", blob)
+	if _, err := repo.OK("update-index", "--add", "--cacheinfo", f[0]+","+f[2]+",a.txt"); err != nil {
+		t.Fatalf("git.Repo.OK update-index: %v", err)
 	}
 	if b, _ := os.ReadFile(filepath.Join(dir, "a.txt")); string(b) != "a\n" {
-		t.Errorf("git.Repo.OK restore left a.txt = %q, want the committed bytes", b)
+		t.Errorf("a.txt = %q, want the committed bytes", b)
 	}
 	if got, err := repo.ChangedPaths(); err != nil || len(got) != 0 {
-		t.Errorf("git.Repo.OK restore left changes %v, %v", got, err)
+		t.Errorf("git.Repo.OK update-index left changes %v, %v", got, err)
 	}
 }
 
