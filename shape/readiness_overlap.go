@@ -6,7 +6,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-loop/sys"
@@ -90,6 +94,14 @@ type readinessRun struct {
 	err    error
 	events *deferredEvidence
 	fx     gateEffects
+
+	// overlapped is set by the caller that ran static or model checks while the observation had
+	// not ended.
+	overlapped bool
+	started    time.Time
+	wallMS     atomic.Int64 // the wall time of the observation, set before done is closed
+	endedMS    atomic.Int64 // when it ended, in the evidence's milliseconds, set before done is closed
+	finished   atomic.Bool
 }
 
 // stop abandons the observation and waits for it to end; it does nothing for a nil run.
@@ -121,7 +133,7 @@ func (sh *shaping) startReadiness(ctx context.Context, files []string, hash stri
 		sh.s.Stderr = &lockedWriter{w: sh.s.Stderr}
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	run := &readinessRun{cancel: cancel, done: make(chan struct{}), hash: hash, events: &deferredEvidence{ev: sh.ev}}
+	run := &readinessRun{cancel: cancel, done: make(chan struct{}), hash: hash, events: &deferredEvidence{ev: sh.ev}, started: time.Now()}
 	// Computing the protected files writes the configuration's diagnostics: the observation gets
 	// its own copy, as it runs while the shaping's package hash is computed.
 	cfg := *sh.cfg
@@ -138,24 +150,86 @@ func (sh *shaping) startReadiness(ctx context.Context, files []string, hash stri
 	}
 	go func() {
 		defer close(run.done)
-		run.cert, run.err = sh.certify(ctx, files, &rd, &run.fx)
+		run.cert, run.err = sh.observeReadiness(ctx, files, &rd, &run.fx)
+		run.wallMS.Store(time.Since(run.started).Milliseconds())
+		run.endedMS.Store(sh.ev.Millis())
+		run.finished.Store(true)
 	}()
 	return run
 }
 
+// readinessTimeoutRepeated is the last line of the refusal of a readiness that timed out twice.
+const readinessTimeoutRepeated = "Readiness was repeated alone after the concurrent checks ended; both runs timed out."
+
+// observeReadiness is one readiness observation of the package on disk: the test seam
+// readinessObserver when set, otherwise certify.
+func (sh *shaping) observeReadiness(ctx context.Context, files []string, rd *verify.Readiness, fx *gateEffects) (certification, error) {
+	if sh.readinessObserver != nil {
+		return sh.readinessObserver(ctx, files)
+	}
+	return sh.certify(ctx, files, rd, fx)
+}
+
+// isAcceptanceTimeout reports whether err is the refusal of an acceptance run that exceeded its time limit.
+func isAcceptanceTimeout(err error) bool {
+	e, ok := sys.AsError(err)
+	return ok && e.Class == "intent" && e.Reason == "not_ready" && e.Detail == "acceptance timed out" &&
+		len(e.Lines) > 0 && strings.HasPrefix(e.Lines[0], "acceptance timed out")
+}
+
+// phaseIntervals is how many intervals the evidence holds for phase.
+func (sh *shaping) phaseIntervals(phase string) int {
+	sh.ev.mu.Lock()
+	defer sh.ev.mu.Unlock()
+	return len(sh.ev.intervals[phase])
+}
+
+// overlapSince reports whether an interval of phase added since it held n of them began before the
+// observation ended.
+func (sh *shaping) overlapSince(run *readinessRun, phase string, n int) bool {
+	sh.ev.mu.Lock()
+	added := slices.Clone(sh.ev.intervals[phase][n:])
+	sh.ev.mu.Unlock()
+	for _, iv := range added {
+		if !run.finished.Load() || iv[0] < run.endedMS.Load() {
+			return true
+		}
+	}
+	return false
+}
+
 // joinReadiness is the readiness observation of the package on disk, whose hash is given. The
 // overlapped observation is used, with its held events and gate effects, when it ran on that
-// package; otherwise readiness runs on it now.
+// package; otherwise readiness runs on it now. An acceptance timeout of an observation that
+// shared the host with static or model checks is observed once more, alone, now that they ended.
 func (sh *shaping) joinReadiness(ctx context.Context, files []string, run *readinessRun, hash string) (certification, error) {
 	if run != nil {
 		<-run.done
 		if run.hash == hash {
 			run.events.flush()
+			if run.overlapped && isAcceptanceTimeout(run.err) {
+				return sh.repeatReadiness(ctx, files, hash, run.wallMS.Load())
+			}
 			sh.applyGateEffects(&run.fx)
 			return run.cert, run.err
 		}
 	}
-	return sh.certify(ctx, files, sh.rd, nil)
+	return sh.observeReadiness(ctx, files, sh.rd, nil)
+}
+
+// repeatReadiness observes the package again, alone, after its overlapped observation timed out.
+// Its result replaces the timeout; a second timeout keeps its refusal and says so.
+func (sh *shaping) repeatReadiness(ctx context.Context, files []string, hash string, firstWallMS int64) (certification, error) {
+	sh.progress("kogen: readiness timed out while other checks ran; repeating it alone")
+	sh.ev.Record(map[string]any{"event": "readiness_repeated", "package": hash, "first_wall_ms": firstWallMS})
+	cert, err := sh.observeReadiness(ctx, files, sh.rd, nil)
+	if isAcceptanceTimeout(err) {
+		e, _ := sys.AsError(err)
+		c := *e
+		c.Lines = append(slices.Clone(e.Lines), readinessTimeoutRepeated)
+		return cert, &c
+	}
+	return cert, err
 }
 
 // applyCertification makes the observation shaping's current one.

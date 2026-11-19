@@ -1,0 +1,1 @@
+{"deferred":"The correct implementation touches readiness_overlap.go, shape.go and checkorder.go and the harness needs the readinessObserver seam to compile; the Build writes the implementation, and the acceptance judges it through the real startReadiness, postSubmitChecks and joinReadiness."}

@@ -682,11 +682,14 @@ type shaping struct {
 	pending           *shapeRefusal
 	// lastObservationsPath is the observations file of the last readiness check, relative to the root.
 	lastObservationsPath string
-	lastFresh            bool               // the last certify ran readiness
-	staticLast           *staticRun         // the last run of the static gate, reused for the identical candidate
-	staticTimeouts       *staticTimeoutMemo // timed-out static checks of this session only; never persisted
-	lastObservations     string             // the readiness observations of that check; "" when green
-	readinessReview      *readinessReview   // same-invocation proof awaiting acknowledgment
+	lastFresh            bool // the last certify ran readiness
+	// readinessObserver is a test seam: when set, it is called instead of certify for every
+	// readiness observation of a package.
+	readinessObserver func(ctx context.Context, files []string) (certification, error)
+	staticLast        *staticRun         // the last run of the static gate, reused for the identical candidate
+	staticTimeouts    *staticTimeoutMemo // timed-out static checks of this session only; never persisted
+	lastObservations  string             // the readiness observations of that check; "" when green
+	readinessReview   *readinessReview   // same-invocation proof awaiting acknowledgment
 
 	// providerErr, when set, ends a check that a provider error stopped (Refine's checks, which
 	// run through a shaping bound to its scratch checkout); nil: the shaping's own ending.
@@ -2154,8 +2157,14 @@ func (sh *shaping) cheapGates(ctx context.Context, files []string, hash string) 
 			run.stop()
 		}
 	}()
+	staticBefore, modelBefore, lastStatic := sh.phaseIntervals("static"), sh.phaseIntervals("model_checks"), sh.staticLast
 	if err = sh.postSubmitChecks(ctx, string(written), evidence, hash); err != nil {
 		return cheapResult{}, err
+	}
+	if run != nil {
+		// A static result reused without running ran no process beside the observation.
+		staticRan := sh.staticLast != lastStatic && sh.staticLast != nil && len(sh.staticLast.Checks) > 0
+		run.overlapped = (staticRan && sh.overlapSince(run, "static", staticBefore)) || sh.overlapSince(run, "model_checks", modelBefore)
 	}
 	if held := sh.collectBatch(); len(held) > 0 {
 		return cheapResult{held: held, readiness: run}, nil

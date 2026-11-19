@@ -766,7 +766,7 @@ func (f *shpFx) events() []map[string]any {
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	var out []map[string]any
+	out := []map[string]any{}
 	for _, line := range strings.Split(string(b), "\n") {
 		if line == "" {
 			continue

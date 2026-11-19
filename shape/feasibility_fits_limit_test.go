@@ -2,6 +2,8 @@ package shape
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -111,8 +113,9 @@ func TestShapeAcceptanceFitsLimit(t *testing.T) {
 	if !isolatedTmp(t) {
 		return
 	}
-	// The first run of the acceptance command never ends and is stopped at a deadline of half a
-	// second; the deadline is lifted before the corrected run, which is not meant to race it.
+	// The acceptance command never ends until the submission is refused and is stopped at a deadline
+	// of half a second, also in the repeat of the overlapped observation; the deadline is lifted and
+	// the command released before the corrected run, which is not meant to race it.
 	production, restore := verify.ContractShapeAcceptanceDeadline(500 * time.Millisecond)
 	defer restore()
 	if production != 120*time.Second {
@@ -120,15 +123,19 @@ func TestShapeAcceptanceFitsLimit(t *testing.T) {
 	}
 	f := newShpFx(t, shpSubmit("slow", shpFiles()), shpAck("retry"), shpAck("ack"))
 	script := f.read("accept.sh")
-	script = strings.Replace(script, "if [ -f '", fmt.Sprintf("if [ ! -f '%s/blocked' ]; then touch '%s/blocked'; while :; do sleep 0.1; done; fi\nif [ -f '", f.Aux, f.Aux), 1)
+	script = strings.Replace(script, "if [ -f '", fmt.Sprintf("if [ ! -f '%s/released' ]; then while :; do sleep 0.1; done; fi\nif [ -f '", f.Aux), 1)
 	f.write("accept.sh", script)
-	var calls atomic.Int32
-	f.Prov.route = func(_ map[string]any) *shpStep {
-		if calls.Add(1) == 2 {
+	var released atomic.Bool
+	f.Prov.route = func(req map[string]any) *shpStep {
+		// The shaper's request that carries the refusal: nothing runs beside it.
+		if strings.Contains(fmt.Sprint(req), readinessTimeoutRepeated) && released.CompareAndSwap(false, true) {
 			if f.exists(".kogen/local/readiness/is-even.json") {
 				t.Error("timed-out submission recorded reusable readiness")
 			}
 			verify.ContractShapeAcceptanceDeadline(time.Minute)
+			if err := os.WriteFile(filepath.Join(f.Aux, "released"), nil, 0o644); err != nil {
+				t.Error(err)
+			}
 		}
 		return nil
 	}
@@ -138,6 +145,7 @@ func TestShapeAcceptanceFitsLimit(t *testing.T) {
 	}
 	feedback := shpOutputs(f.Prov.requests()[1])["slow"]
 	shpContains(t, "acceptance", feedback, "acceptance timed out")
+	shpContains(t, "repeat", feedback, readinessTimeoutRepeated)
 	shpContains(t, "limit", feedback, "120-second")
 	if !f.exists(".kogen/local/readiness/is-even.json") {
 		t.Fatal("corrected acceptance did not publish readiness")
