@@ -37,8 +37,11 @@ const (
 	controlsMaxFiles = 8
 	controlsMaxBytes = 65536
 
-	// controlsTimeCap is the total wall time of the runs of one candidate.
+	// controlsTimeCap is the base of the total wall time of the runs of one candidate; the cap
+	// is the larger of it and controlsTimePerRun for each planned run.
 	controlsTimeCap = 300 * time.Second
+	// controlsTimePerRun is the time cap each planned run adds.
+	controlsTimePerRun = 60 * time.Second
 )
 
 // controlsOverlay is the "files" of one implementation: whole contents, and for large files
@@ -637,7 +640,7 @@ func (sh *shaping) controlsRun(ctx context.Context, expected []project.Scenario,
 	// command runs one command in the copy within the time that remains; ran is false when the
 	// time cap ended it or left no time to start it.
 	command := func(cmd string, extra map[string]string) (status int, ran bool, err error) {
-		remaining := time.Until(deadline)
+		remaining := deadline.Sub(sh.ev.clock())
 		if remaining <= 0 {
 			res.cutOff = true
 			return 0, false, nil
@@ -905,8 +908,8 @@ func (sh *shaping) wrongImplementationCheck(ctx context.Context, hash string) (c
 	}
 
 	started := 0
-	begin := time.Now()
-	lines, controls, err := sh.controlsLines(ctx, intent, scenarios, feature, stepFiles, props, timeCap, &started)
+	begin := sh.ev.clock()
+	lines, controls, plan, err := sh.controlsCheck(ctx, intent, scenarios, feature, stepFiles, props, timeCap, &started)
 	if err != nil {
 		return contractConfirmed{}, err
 	}
@@ -920,8 +923,12 @@ func (sh *shaping) wrongImplementationCheck(ctx context.Context, hash string) (c
 	if recorded == nil {
 		recorded = []string{}
 	}
-	sh.ev.Record(map[string]any{"event": "wrong_implementation_check", "package": hash, "result": result, "runs": started,
-		"seconds": int(time.Since(begin).Seconds()), "problems": recorded, "controls": controls})
+	event := map[string]any{"event": "wrong_implementation_check", "package": hash, "result": result, "runs": started,
+		"seconds": int(sh.ev.clock().Sub(begin).Seconds()), "problems": recorded, "controls": controls}
+	if plan.runs > 0 {
+		event["time_cap_seconds"], event["planned_runs"] = plan.seconds, plan.runs
+	}
+	sh.ev.Record(event)
 	return confirmed, nil
 }
 
@@ -962,16 +969,69 @@ func controlsEvidenceOf(w controlsImpl, scenarios []project.Scenario, feature []
 	return ev
 }
 
+// controlsPlan is the time cap and the planned runs of a check that planned runs.
+type controlsPlan struct{ seconds, runs int }
+
+// controlsCapFor is the time cap of a candidate of n planned runs: the larger of the base and
+// the time per planned run.
+func controlsCapFor(base time.Duration, n int) time.Duration {
+	return max(base, time.Duration(n)*controlsTimePerRun)
+}
+
 // controlsLines are the problem lines of the wrong-implementation check, nil when it is clean,
-// and the evidence of each wrong implementation that was run.
-func (sh *shaping) controlsLines(ctx context.Context, intent *project.Intent, scenarios []project.Scenario, feature, stepFiles []string, props []controlsProp, timeCap time.Duration, started *int) ([]string, []controlsEvidence, error) {
+// and the evidence of each wrong implementation that was run. base is the base of the time cap.
+func (sh *shaping) controlsLines(ctx context.Context, intent *project.Intent, scenarios []project.Scenario, feature, stepFiles []string, props []controlsProp, base time.Duration, started *int) ([]string, []controlsEvidence, error) {
+	lines, evidence, _, err := sh.controlsCheck(ctx, intent, scenarios, feature, stepFiles, props, base, started)
+	return lines, evidence, err
+}
+
+// controlsFinishedRejected are the problem lines of the finished wrong implementations the
+// judgement rejects (rules 2 to 5), given the runs finished so far (index 0 is the correct one).
+func controlsFinishedRejected(props []controlsProp, cf *controlsFile, scenarios []project.Scenario, feature []string, runs []controlsRunResult, stepFiles []string) []string {
+	var lines []string
+	for _, p := range props {
+		inP := map[int]bool{}
+		for _, k := range p.scenarios {
+			inP[k] = true
+		}
+		for wi, w := range cf.wrong {
+			if wi+1 >= len(runs) || !runs[wi+1].complete {
+				continue
+			}
+			run := runs[wi+1]
+			bestRule, reason, any := -1, "", false
+			for _, k := range controlsWitness(scenarios, w, feature) {
+				if !inP[k] {
+					continue
+				}
+				any = true
+				rule, why := controlsJudge(w, scenarios[k], run.cases[scenarios[k].Line], controlsStepLines(scenarios[k], w.step, feature), feature, run, stepFiles)
+				if rule == 0 {
+					bestRule = 0
+					break
+				}
+				if rule > bestRule {
+					bestRule, reason = rule, why
+				}
+			}
+			if any && bestRule > 0 {
+				lines = append(lines, controlsPropertyLine(p.report, reason))
+			}
+		}
+	}
+	return lines
+}
+
+// controlsCheck is controlsLines with the time cap and the planned runs it applied.
+func (sh *shaping) controlsCheck(ctx context.Context, intent *project.Intent, scenarios []project.Scenario, feature, stepFiles []string, props []controlsProp, base time.Duration, started *int) ([]string, []controlsEvidence, controlsPlan, error) {
+	var plan controlsPlan
 	rel := project.IntentDir(sh.slug) + "/controls.json"
 	raw, err := os.ReadFile(filepath.Join(sh.root, rel))
 	if errors.Is(err, fs.ErrNotExist) {
-		return []string{fmt.Sprintf(`- controls.json: %s does not exist; write it as {"correct":{"files":{"<path>":"<content>","<large path>":{"patch":"<unified diff>"}}},"wrong":[{"name":"<name>","scenario":"<scenario>","step":"<step line>","files":{"<path>":"<content>"}}]}, or, only when the correct implementation is too large to write within the shaping budget, {"deferred":"<reason>"}`, rel)}, []controlsEvidence{}, nil
+		return []string{fmt.Sprintf(`- controls.json: %s does not exist; write it as {"correct":{"files":{"<path>":"<content>","<large path>":{"patch":"<unified diff>"}}},"wrong":[{"name":"<name>","scenario":"<scenario>","step":"<step line>","files":{"<path>":"<content>"}}]}, or, only when the correct implementation is too large to write within the shaping budget, {"deferred":"<reason>"}`, rel)}, []controlsEvidence{}, plan, nil
 	}
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, plan, err
 	}
 	rules := controlsRules{acceptance: intent.Acceptance, protect: sh.cfg.Protect}
 	if sh.cfg.Acceptance != nil {
@@ -979,26 +1039,47 @@ func (sh *shaping) controlsLines(ctx context.Context, intent *project.Intent, sc
 	}
 	cf, problems := parseControls(raw, scenarios, feature, rules)
 	if len(problems) > 0 {
-		return problems, []controlsEvidence{}, nil
+		return problems, []controlsEvidence{}, plan, nil
 	}
 	if cf.deferred != "" {
-		return nil, []controlsEvidence{}, nil
+		return nil, []controlsEvidence{}, plan, nil
 	}
 	n := 1 + len(cf.wrong)
 	if n > controlsMaxRuns {
 		return []string{fmt.Sprintf("- run cap: this candidate needs %d runs (the correct implementation and %d wrong ones), above the cap of %d runs per candidate; nothing was run. Supply at most %d wrong implementations.",
-			n, len(cf.wrong), controlsMaxRuns, controlsMaxRuns-1)}, []controlsEvidence{}, nil
+			n, len(cf.wrong), controlsMaxRuns, controlsMaxRuns-1)}, []controlsEvidence{}, plan, nil
 	}
+	timeCap := controlsCapFor(base, n)
 	seconds := int(timeCap / time.Second)
-	deadline := time.Now().Add(timeCap)
+	plan = controlsPlan{seconds: seconds, runs: n}
+	begin := sh.ev.clock()
+	deadline := begin.Add(timeCap)
 	evidence := []controlsEvidence{}
-	timeLine := func(completed int) []string {
-		return []string{fmt.Sprintf("- time cap: the runs exceeded the total time cap of %d seconds per candidate after %d of %d runs completed; the check stopped. Make the implementations or the steps faster.", seconds, completed, n)}
-	}
+	var correctTook time.Duration
 	runs := make([]controlsRunResult, 0, n)
+	timeLine := func(completed int) []string {
+		average := 0
+		if completed > 0 {
+			average = int(sh.ev.clock().Sub(begin).Seconds()) / completed
+		}
+		line := fmt.Sprintf("- time cap: the runs exceeded the total time cap of %d seconds per candidate (%d planned runs; the cap is the larger of %d seconds and %d seconds per planned run) after %d of %d runs completed; the check stopped. The completed runs took %d seconds on average.",
+			seconds, n, int(base/time.Second), int(controlsTimePerRun/time.Second), completed, n, average)
+		took := correctTook
+		if len(runs) == 0 {
+			// The cap ended the correct run itself: it ran for everything elapsed so far.
+			took = sh.ev.clock().Sub(begin)
+		}
+		if took > timeCap/2 {
+			line += fmt.Sprintf(" The project's own run is the slow part: the correct implementation's run alone took %d seconds, more than half of the cap. Make the project's setup or acceptance command faster, or supply fewer wrong implementations.", int(took.Seconds()))
+		} else {
+			line += " Make the implementations or the steps faster."
+		}
+		// A run that finished keeps its verdict.
+		return append([]string{line}, controlsFinishedRejected(props, cf, scenarios, feature, runs, stepFiles)...)
+	}
 	for i := 0; i < n; i++ {
-		if time.Until(deadline) <= 0 {
-			return timeLine(i), evidence, nil
+		if deadline.Sub(sh.ev.clock()) <= 0 {
+			return timeLine(i), evidence, plan, nil
 		}
 		impl, overlays := "correct implementation", []controlsOverlay{cf.correct}
 		if i > 0 {
@@ -1019,26 +1100,27 @@ func (sh *shaping) controlsLines(ctx context.Context, intent *project.Intent, sc
 		}
 		run, err := sh.controlsRun(ctx, expected, narrow, deadline, overlays...)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, plan, err
 		}
 		if run.cutOff {
-			return timeLine(i), evidence, nil
+			return timeLine(i), evidence, plan, nil
 		}
 		if run.patch != nil {
 			who, tail := "the correct implementation", ""
 			if i > 0 {
 				who, tail = impl, " with the correct implementation applied"
 			}
-			return []string{fmt.Sprintf("- controls.json: %s: %s: the patch does not apply to the candidate tree%s: %s", who, run.patch.path, tail, run.patch.reason)}, evidence, nil
+			return []string{fmt.Sprintf("- controls.json: %s: %s: the patch does not apply to the candidate tree%s: %s", who, run.patch.path, tail, run.patch.reason)}, evidence, plan, nil
 		}
 		runs = append(runs, run)
 		if i == 0 {
+			correctTook = sh.ev.clock().Sub(begin)
 			if lines := controlsUnreachable(props, scenarios, feature, run); len(lines) > 0 {
-				return lines, evidence, nil
+				return lines, evidence, plan, nil
 			}
 		} else {
 			evidence = append(evidence, controlsEvidenceOf(cf.wrong[i-1], scenarios, feature, run, stepFiles))
 		}
 	}
-	return controlsJudgeAll(props, cf, scenarios, feature, runs, stepFiles), evidence, nil
+	return controlsJudgeAll(props, cf, scenarios, feature, runs, stepFiles), evidence, plan, nil
 }
