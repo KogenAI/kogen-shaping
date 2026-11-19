@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -94,7 +95,7 @@ func (sh *shaping) stepSelfcheck(ctx context.Context) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		items = verify.StepItems(own, raw)
+		items = refineExitCodeItems(verify.StepItems(own, raw), raw.Defs)
 		for _, it := range items {
 			if it.Check == "steps" && it.Detail == "undefined step" && unescapedStringArgument(it.Target, raw.Defs) {
 				quoteHint = true
@@ -336,4 +337,109 @@ func selfcheckObserverDetail(actual, expected int, stderr string) string {
 		detail += "\nstderr: " + tail
 	}
 	return detail
+}
+
+// The exit-code refinement of the step self-check. verify.StepItems judges a whole step file
+// on the raw text of its definition bodies, so a go run mentioned in a comment counts and a stderr
+// comparison through go run does not. Each exit_code item is re-judged here per definition, on the
+// body without comments, and only for a definition that calls a process-running function.
+
+// processCall is a call of a function whose name suggests that it runs a program.
+var processCall = regexp.MustCompile(`(?i)[\w$]*(spawn|exec|fork|system|shell|run|command|cmd)[\w$]*\s*\(`)
+
+// stderrComparisons are the texts that make a line mentioning stderr a comparison of it.
+var stderrComparisons = []string{"assert", "expect", "==", ".includes(", ".match(", "toContain", "toMatch", "toBe", "toEqual", ".test("}
+
+// refineExitCodeItems replaces every exit_code item by one item per offending definition of its
+// file, in file order, or by one ok item when the file has none.
+func refineExitCodeItems(items []verify.StepItem, defs []verify.StepDef) []verify.StepItem {
+	var out []verify.StepItem
+	for _, it := range items {
+		if it.Check != "exit_code" {
+			out = append(out, it)
+			continue
+		}
+		n := len(out)
+		for _, d := range defs {
+			if d.File != it.Target {
+				continue
+			}
+			if w := stepExitWrapper(d.Body); w != "" {
+				out = append(out, verify.StepItem{Check: "exit_code", Target: it.Target, Detail: "step definition " + d.Pattern + " asserts an exit code but obtains it through " + w + ", which changes exit codes; build the binary (go build) and run it instead"})
+			}
+		}
+		if len(out) == n {
+			out = append(out, verify.StepItem{Check: "exit_code", Target: it.Target, OK: true})
+		}
+	}
+	return out
+}
+
+// stepExitWrapper is the wrapper (go run, npm run, npx) through which a step definition body, with
+// its comments removed, runs a program whose exit code or stderr it asserts; "" if none.
+func stepExitWrapper(body string) string {
+	body = stripComments(body)
+	if !processCall.MatchString(body) {
+		return ""
+	}
+	if stderrAsserted(body) {
+		body += "\nexit" // a stderr assertion is judged like an exit status mention
+	}
+	return verify.ExitWrapper(body)
+}
+
+// stderrAsserted reports whether a line of the body mentions stderr together with a comparison.
+func stderrAsserted(body string) bool {
+	for _, line := range strings.Split(body, "\n") {
+		if !strings.Contains(strings.ToLower(line), "stderr") {
+			continue
+		}
+		for _, c := range stderrComparisons {
+			if strings.Contains(line, c) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// stripComments removes the // and /* */ comments of JavaScript source outside string and template
+// literals, keeping its newlines.
+func stripComments(src string) string {
+	var b strings.Builder
+	rs := []rune(src)
+	for i := 0; i < len(rs); i++ {
+		c := rs[i]
+		switch {
+		case c == '/' && i+1 < len(rs) && rs[i+1] == '/':
+			for i+1 < len(rs) && rs[i+1] != '\n' {
+				i++
+			}
+		case c == '/' && i+1 < len(rs) && rs[i+1] == '*':
+			i += 2
+			for i < len(rs) && !(rs[i] == '*' && i+1 < len(rs) && rs[i+1] == '/') {
+				if rs[i] == '\n' {
+					b.WriteRune('\n')
+				}
+				i++
+			}
+			i++
+			b.WriteRune(' ')
+		case c == '\'' || c == '"' || c == '`':
+			b.WriteRune(c)
+			for i++; i < len(rs) && rs[i] != c; i++ {
+				b.WriteRune(rs[i])
+				if rs[i] == '\\' && i+1 < len(rs) {
+					i++
+					b.WriteRune(rs[i])
+				}
+			}
+			if i < len(rs) {
+				b.WriteRune(c)
+			}
+		default:
+			b.WriteRune(c)
+		}
+	}
+	return b.String()
 }

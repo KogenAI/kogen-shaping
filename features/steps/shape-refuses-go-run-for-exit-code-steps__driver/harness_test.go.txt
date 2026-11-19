@@ -1,0 +1,54 @@
+package shape
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/KogenAI/kogen-verification/verify"
+)
+
+// TestShapeRefusesGoRunHarness runs the step self-check on small step files, one per fixture, and writes the
+// feedback text of each to the file named by SRGR_OUT.
+func TestShapeRefusesGoRunHarness(t *testing.T) {
+	parallel(t)
+	const header = "const { Then } = require('@cucumber/cucumber');\nconst { spawnSync } = require('child_process');\nconst assert = require('assert');\n"
+	const feature = "Feature: Exit code\n  Scenario: Exit code\n    Then is-even: the program exits with code 2\n"
+	const runExit = "Then('is-even: the program exits with code 2', function () {\n  const r = spawnSync('sh', ['-c', 'go run ./cmd/x']);\n  assert.strictEqual(r.status, 2);\n});\n"
+	fixtures := map[string]string{
+		"go run exit code": header + runExit,
+		"go run stderr":    header + "Then('is-even: the program exits with code 2', function () {\n  const r = spawnSync('sh', ['-c', 'go run ./cmd/x']);\n  assert.match(r.stderr.toString(), /boom/);\n});\n",
+		"go run two steps": header + runExit + "Then('is-even: the program exits with code 3', function () {\n  const r = spawnSync('sh', ['-c', 'go run ./cmd/y']);\n  assert.strictEqual(r.status, 3);\n});\n",
+		"compiled binary":  header + "Then('is-even: the program exits with code 2', function () {\n  const build = spawnSync('go', ['build', '-o', '/tmp/x', './cmd/x']);\n  assert.strictEqual(build.status, 0);\n  const r = spawnSync('/tmp/x');\n  assert.strictEqual(r.status, 2);\n});\n",
+		"go run output only": header + "Then('is-even: the program exits with code 2', function () {\n  const r = spawnSync('sh', ['-c', 'go run ./cmd/x']);\n  this.log = r.stderr.toString();\n  assert.ok(r.stdout.toString().includes('hi'));\n});\n",
+		"go run in a comment": "// go run ./cmd/x is not used in this file\n" + header + "Then('is-even: the program exits with code 2', function () {\n  // go run would report status 1 for exit code 2, so build the binary first\n  const build = spawnSync('go', ['build', '-o', '/tmp/x', './cmd/x']);\n  assert.strictEqual(build.status, 0);\n  const r = spawnSync('/tmp/x');\n  assert.strictEqual(r.status, 2);\n});\n",
+		"go run in a string": header + "Then('is-even: the program exits with code 2', function () {\n  const note = 'go run changes the exit status';\n  assert.ok(note.length > 0);\n});\n",
+	}
+	f := newShpFx(t)
+	f.newSession()
+	f.write(".kogen/intents/is-even/intent.md", shpScopedIntentMD)
+	f.write(".kogen/intents/is-even/acceptance.feature", feature)
+	ev, err := NewEvidence(filepath.Join(f.Root, ".kogen/local/shaping", shpSlug), shpSlug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sh := &shaping{s: f.S, root: f.Root, slug: shpSlug, ev: ev, rd: &verify.Readiness{}}
+	out := map[string]string{}
+	for name, src := range fixtures {
+		f.write("features/steps/is-even__steps.js", src)
+		feedback, err := sh.stepSelfcheck(context.Background())
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		out[name] = feedback
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(os.Getenv("SRGR_OUT"), b, 0o666); err != nil {
+		t.Fatal(err)
+	}
+}

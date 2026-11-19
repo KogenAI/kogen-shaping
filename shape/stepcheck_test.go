@@ -194,3 +194,47 @@ func TestSelfcheckStderrTailUTF8Boundary(t *testing.T) {
 		t.Fatalf("tail must be valid UTF-8 and at most 4096 bytes: length %d, valid %v", len(got), utf8.ValidString(got))
 	}
 }
+
+func TestRefineExitCodeItemsJudgesEachDefinition(t *testing.T) {
+	parallel(t)
+	const file = "features/steps/is-even__steps.js"
+	spawn := func(cmd, check string) string {
+		return "const r = spawnSync('sh', ['-c', '" + cmd + "']);\n" + check + "\n"
+	}
+	line := func(pattern, wrapper string) verify.StepItem {
+		return verify.StepItem{Check: "exit_code", Target: file, Detail: "step definition " + pattern + " asserts an exit code but obtains it through " + wrapper +
+			", which changes exit codes; build the binary (go build) and run it instead"}
+	}
+	ok := verify.StepItem{Check: "exit_code", Target: file, OK: true}
+	cases := []struct {
+		name string
+		defs []verify.StepDef
+		want []verify.StepItem
+	}{
+		{"exit status", []verify.StepDef{{File: file, Pattern: "a", Body: spawn("go run ./x", "assert.strictEqual(r.status, 2);")}}, []verify.StepItem{line("a", "go run")}},
+		{"stderr comparison", []verify.StepDef{{File: file, Pattern: "a", Body: spawn("go run ./x", "assert.match(r.stderr.toString(), /boom/);")}}, []verify.StepItem{line("a", "go run")}},
+		{"npm run stderr", []verify.StepDef{{File: file, Pattern: "a", Body: spawn("npm run t", "expect(r.stderr).toBe('x');")}}, []verify.StepItem{line("a", "npm run")}},
+		{"two offending definitions", []verify.StepDef{
+			{File: file, Pattern: "a", Body: spawn("go run ./x", "assert.equal(r.status, 2);")},
+			{File: file, Pattern: "b", Body: spawn("go run ./y", "assert.equal(r.status, 3);")},
+		}, []verify.StepItem{line("a", "go run"), line("b", "go run")}},
+		{"one offending among two", []verify.StepDef{
+			{File: file, Pattern: "a", Body: spawn("./bin", "assert.equal(r.status, 2);")},
+			{File: file, Pattern: "b", Body: spawn("go run ./y", "assert.equal(r.status, 3);")},
+		}, []verify.StepItem{line("b", "go run")}},
+		{"another file", []verify.StepDef{{File: "other.js", Pattern: "a", Body: spawn("go run ./x", "assert.equal(r.status, 2);")}}, []verify.StepItem{ok}},
+		{"compiled binary", []verify.StepDef{{File: file, Pattern: "a", Body: spawn("./bin", "assert.equal(r.status, 2);")}}, []verify.StepItem{ok}},
+		{"output only", []verify.StepDef{{File: file, Pattern: "a", Body: spawn("go run ./x", "this.log = r.stderr.toString();\nassert.ok(r.stdout.includes('hi'));")}}, []verify.StepItem{ok}},
+		{"comment", []verify.StepDef{{File: file, Pattern: "a", Body: "// go run changes the exit status\n/* go run\nexit */\n" + spawn("./bin", "assert.equal(r.status, 2);")}}, []verify.StepItem{ok}},
+		{"string without call", []verify.StepDef{{File: file, Pattern: "a", Body: "const note = 'go run changes the exit status';\nassert.ok(note);\n"}}, []verify.StepItem{ok}},
+		{"comment marker in a string", []verify.StepDef{{File: file, Pattern: "a", Body: spawn("go run ./x // y", "assert.equal(r.status, 2);")}}, []verify.StepItem{line("a", "go run")}},
+	}
+	for _, c := range cases {
+		items := []verify.StepItem{{Check: "load", Target: file, OK: true}, {Check: "exit_code", Target: file, OK: true}}
+		got := refineExitCodeItems(items, c.defs)
+		want := append([]verify.StepItem{items[0]}, c.want...)
+		if !slices.Equal(got, want) {
+			t.Errorf("%s: got %+v, want %+v", c.name, got, want)
+		}
+	}
+}
