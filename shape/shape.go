@@ -708,7 +708,9 @@ func (sh *shaping) toolSpan(fn func() error) error {
 
 func (sh *shaping) sinceStart() time.Duration { return sh.ev.clock().Sub(sh.started) }
 
-func (sh *shaping) chargedTime() time.Duration { return max(0, sh.sinceStart()-sh.ev.InstallTime()) }
+func (sh *shaping) chargedTime() time.Duration {
+	return max(0, sh.sinceStart()-sh.ev.InstallTime()-sh.ev.StaticUnchargedTime())
+}
 
 func (sh *shaping) elapsed() int64 { return sh.sinceStart().Milliseconds() / 1000 }
 
@@ -976,7 +978,7 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 	var lastAnswer string
 	for {
 		if budgetSpent(sh.chargedTime()) {
-			return budgetStop(last, lastAnswer, turns.noTool, sh.chargedTime(), sh.requests, sh.budgetAttempts(), sh.ev.InstallTime()), usage, nil
+			return budgetStop(last, lastAnswer, turns.noTool, sh.chargedTime(), sh.requests, sh.budgetAttempts(), sh.ev.InstallTime(), sh.ev.StaticUnchargedTime()), usage, nil
 		}
 		sh.s.Progress(fmt.Sprintf("kogen: shaping (request %d, %d s)", sh.requests+1, sh.elapsed()))
 		t0 := time.Now()
@@ -1189,7 +1191,7 @@ func (sh *shaping) converseExternal(ctx context.Context, blocks []any) (outcome,
 	repeats := readinessRepeats{}
 	for {
 		if feedback != "" && budgetSpent(sh.chargedTime()) {
-			return budgetStop(last, "", 0, sh.chargedTime(), x.rounds, sh.budgetAttempts(), sh.ev.InstallTime()), x, nil
+			return budgetStop(last, "", 0, sh.chargedTime(), x.rounds, sh.budgetAttempts(), sh.ev.InstallTime(), sh.ev.StaticUnchargedTime()), x, nil
 		}
 		sh.s.Progress(fmt.Sprintf("kogen: shaping (external round %d, %d s)", x.rounds+1, sh.elapsed()))
 		clear(sh.externalReads)

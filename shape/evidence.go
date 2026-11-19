@@ -42,6 +42,7 @@ type Evidence struct {
 
 	account     bool       // Shape's run: Finish ends the record with a shape_time event
 	installMS   int64      // cold managed runtime preparation, excluded from the shaping budget
+	unchargedMS int64      // wall time of timed-out static checks, excluded from the shaping budget
 	shaperTotal int64      // the shaper's spans: external rounds, or native model and tool spans
 	shaperModel int64      // the part of them with a reported model time
 	modelKnown  bool       // false once a shaper span has no model time
@@ -191,6 +192,20 @@ func (e *Evidence) InstallTime() time.Duration {
 	return time.Duration(e.installMS) * time.Millisecond
 }
 
+// StaticUncharged adds the wall time of a timed-out static check, which the budget does not charge.
+func (e *Evidence) StaticUncharged(d time.Duration) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.unchargedMS += max(0, d.Milliseconds())
+}
+
+// StaticUnchargedTime is the static check time excluded from charged shaping time.
+func (e *Evidence) StaticUnchargedTime() time.Duration {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return time.Duration(e.unchargedMS) * time.Millisecond
+}
+
 // ShaperRound adds one external main round's span a to b (Millis values). model is the
 // round's model time, nil when unknown.
 func (e *Evidence) ShaperRound(a, b int64, model *int64) {
@@ -240,6 +255,7 @@ type TimeAccount struct {
 	Elapsed, Shaper int64
 	Model, Tools    *int64
 	Install         int64
+	StaticUncharged int64
 	Checks          int64
 	Static          int64
 	ModelChecks     int64
@@ -548,7 +564,7 @@ func (e *Evidence) Finish() error {
 	account := e.account
 	checks := append(slices.Clone(e.checkSpans), intervals["setup"]...)
 	checks = append(checks, intervals["preparation"]...)
-	acct := &TimeAccount{Elapsed: elapsed, Install: e.installMS, Shaper: e.shaperTotal, Readiness: Union(intervals["readiness"]),
+	acct := &TimeAccount{Elapsed: elapsed, Install: e.installMS, StaticUncharged: e.unchargedMS, Shaper: e.shaperTotal, Readiness: Union(intervals["readiness"]),
 		Static: Union(intervals["static"]), ModelChecks: Union(intervals["model_checks"]), Contract: Union(intervals["contract"])}
 	if e.modelKnown {
 		model, tools := e.shaperModel, e.shaperTotal-e.shaperModel
@@ -562,7 +578,7 @@ func (e *Evidence) Finish() error {
 			"event": "shape_time", "elapsed_ms": acct.Elapsed, "shaper_ms": acct.Shaper,
 			"shaper_model_ms": nullable(acct.Model), "shaper_tools_ms": nullable(acct.Tools),
 			"install_ms": acct.Install, "checks_ms": acct.Checks,
-			"static_ms": acct.Static, "model_checks_ms": acct.ModelChecks, "contract_ms": acct.Contract, "readiness_ms": acct.Readiness, "gap_ms": acct.Gap,
+			"static_ms": acct.Static, "static_uncharged_ms": acct.StaticUncharged, "model_checks_ms": acct.ModelChecks, "contract_ms": acct.Contract, "readiness_ms": acct.Readiness, "gap_ms": acct.Gap,
 		})
 		e.mu.Lock()
 		e.spent = acct

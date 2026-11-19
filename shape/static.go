@@ -282,6 +282,10 @@ type staticGateRunner struct {
 	// timeouts is the session's memory of timed-out checks; nil (Approve) remembers nothing.
 	timeouts *staticTimeoutMemo
 	round    int // the Shape submission this run belongs to
+	// now is the shaping clock and uncharged receives the wall time of a timed-out check on it;
+	// both nil (Approve) measure and record nothing.
+	now       func() time.Time
+	uncharged func(time.Duration)
 }
 
 // staticTimeoutMemo remembers, for one Shape session only, the checks whose run timed out: by check
@@ -338,6 +342,14 @@ func lockDigest(dir string, paths []string) string {
 		fmt.Fprintf(h, "%s\x00%x\x00", p, sum)
 	}
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// shapingNow is the shaping clock's time, the real clock's when the runner has none.
+func (g *staticGateRunner) shapingNow() time.Time {
+	if g.now != nil {
+		return g.now()
+	}
+	return time.Now()
 }
 
 func newStaticGateRunner(s *sys.Session, repo *git.Repo, rd *verify.Readiness, cfg *project.Config, root, slug string, progress func(string)) *staticGateRunner {
@@ -613,11 +625,15 @@ func (g *staticGateRunner) run(ctx context.Context, head, tree, sha string) (*st
 			continue
 		}
 		checkStart := time.Now()
+		shapingStart := g.shapingNow()
 		res, err := staticRunCommand(ctx, g.s, c.Run, dir, opts)
 		if err != nil {
 			return nil, err
 		}
 		c.WallMS = time.Since(checkStart).Milliseconds()
+		if res.TimedOut && g.uncharged != nil {
+			g.uncharged(min(g.shapingNow().Sub(shapingStart), verify.StepTimeout))
+		}
 		exit := res.Status
 		c.Exit = &exit
 		c.Output = g.bounded(res.Output)
@@ -757,6 +773,7 @@ func (sh *shaping) staticChecks(ctx context.Context, hash string) (string, outco
 			sh.staticTimeouts = &staticTimeoutMemo{}
 		}
 		g.timeouts, g.round = sh.staticTimeouts, sh.submissions
+		g.now, g.uncharged = sh.ev.clock, sh.ev.StaticUncharged
 		if run, err = g.run(ctx, head, tree, hash); err != nil {
 			return "", outcome{}, err
 		}

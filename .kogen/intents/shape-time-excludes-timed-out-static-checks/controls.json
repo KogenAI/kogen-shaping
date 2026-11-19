@@ -1,0 +1,1 @@
+{"deferred":"The correct implementation spans shape/shape.go, shape/static.go, shape/evidence.go and shape/budget.go (a clock-measured timeout span, the chargedTime subtraction, the shape_time field and the refusal suffix); it could not be written and checked honestly within the shaping budget, so the Build writes it."}
