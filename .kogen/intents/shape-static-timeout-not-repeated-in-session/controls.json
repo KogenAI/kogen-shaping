@@ -1,0 +1,1 @@
+{"deferred":"The correct implementation threads a session-scoped memory through shape/static.go and the shaping struct in shape/shape.go; a faithful overlay and per-scenario wrong overlays could not be written and verified within the shaping budget, so the Build writes the implementation and the acceptance scenarios are the proof."}

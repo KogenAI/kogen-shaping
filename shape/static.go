@@ -279,6 +279,65 @@ type staticGateRunner struct {
 	judged func(string)
 	redact *verify.Redactor
 	base   *staticBaseMemo
+	// timeouts is the session's memory of timed-out checks; nil (Approve) remembers nothing.
+	timeouts *staticTimeoutMemo
+	round    int // the Shape submission this run belongs to
+}
+
+// staticTimeoutMemo remembers, for one Shape session only, the checks whose run timed out: by check
+// name, command line and the digest of the candidate's lockfiles and manifests, with the round whose
+// run timed out. It is never written to a file.
+type staticTimeoutMemo struct {
+	rounds map[string]int
+}
+
+func staticTimeoutKey(name, run, digest string) string {
+	return name + "\x00" + run + "\x00" + digest
+}
+
+func (m *staticTimeoutMemo) lookup(name, run, digest string) (int, bool) {
+	if m == nil {
+		return 0, false
+	}
+	r, ok := m.rounds[staticTimeoutKey(name, run, digest)]
+	return r, ok
+}
+
+func (m *staticTimeoutMemo) store(name, run, digest string, round int) {
+	if m == nil {
+		return
+	}
+	if m.rounds == nil {
+		m.rounds = map[string]int{}
+	}
+	m.rounds[staticTimeoutKey(name, run, digest)] = round
+}
+
+// staticLockNames are the lockfiles and manifests the build cache of verify keys on.
+var staticLockNames = []string{"mix.lock", "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "go.sum", "Cargo.lock",
+	"mix.exs", "package.json", "go.mod", "Cargo.toml", ".tool-versions", ".mise.toml", ".nvmrc", ".node-version", ".go-version"}
+
+// lockDigest is a digest of the contents of the lockfiles and manifests (at every depth) of the
+// materialized candidate in dir; it does not depend on any toolchain version.
+func lockDigest(dir string, paths []string) string {
+	var files []string
+	for _, p := range paths {
+		if slices.Contains(staticLockNames, filepath.Base(p)) {
+			files = append(files, p)
+		}
+	}
+	sort.Strings(files)
+	h := sha256.New()
+	for _, p := range files {
+		b, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(p)))
+		if err != nil {
+			fmt.Fprintf(h, "%s\x00unreadable\x00", p)
+			continue
+		}
+		sum := sha256.Sum256(b)
+		fmt.Fprintf(h, "%s\x00%x\x00", p, sum)
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 func newStaticGateRunner(s *sys.Session, repo *git.Repo, rd *verify.Readiness, cfg *project.Config, root, slug string, progress func(string)) *staticGateRunner {
@@ -539,11 +598,18 @@ func (g *staticGateRunner) run(ctx context.Context, head, tree, sha string) (*st
 	}
 	opts := sys.Options{Timeout: verify.StepTimeout, KillGroupOnExit: true}
 	baseTree := ""
+	digest := lockDigest(dir, mat.Paths)
 
 	for i := range run.Checks {
 		c := &run.Checks[i]
 		if c.Status == staticNotRun {
 			g.progress(fmt.Sprintf("kogen: static check %s not run: it runs the test suite", c.Name))
+			continue
+		}
+		if timedOutRound, skip := g.timeouts.lookup(c.Name, c.Run, digest); skip {
+			reason := fmt.Sprintf("timed out after %d s in round %d; not run again in this session", int(verify.StepTimeout.Seconds()), timedOutRound)
+			c.Status, c.Reason = staticUnavailable, reason
+			g.progress(fmt.Sprintf("kogen: static check %s unavailable: %s", c.Name, reason))
 			continue
 		}
 		checkStart := time.Now()
@@ -557,6 +623,9 @@ func (g *staticGateRunner) run(ctx context.Context, head, tree, sha string) (*st
 		c.Output = g.bounded(res.Output)
 		if reason, unavailable := staticUnavailableReason(res); unavailable {
 			c.Status, c.Reason = staticUnavailable, reason
+			if res.TimedOut {
+				g.timeouts.store(c.Name, c.Run, digest, g.round)
+			}
 			g.progress(fmt.Sprintf("kogen: static check %s unavailable: %s; the shaped files are not established by this check", c.Name, reason))
 			continue
 		}
@@ -684,6 +753,10 @@ func (sh *shaping) staticChecks(ctx context.Context, hash string) (string, outco
 	} else {
 		g := newStaticGateRunner(sh.s, sh.repo, sh.rd, sh.cfg, sh.root, sh.slug, sh.progress)
 		g.judged = sh.bareProgress
+		if sh.staticTimeouts == nil {
+			sh.staticTimeouts = &staticTimeoutMemo{}
+		}
+		g.timeouts, g.round = sh.staticTimeouts, sh.submissions
 		if run, err = g.run(ctx, head, tree, hash); err != nil {
 			return "", outcome{}, err
 		}

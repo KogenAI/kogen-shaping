@@ -682,10 +682,11 @@ type shaping struct {
 	pending           *shapeRefusal
 	// lastObservationsPath is the observations file of the last readiness check, relative to the root.
 	lastObservationsPath string
-	lastFresh            bool             // the last certify ran readiness
-	staticLast           *staticRun       // the last run of the static gate, reused for the identical candidate
-	lastObservations     string           // the readiness observations of that check; "" when green
-	readinessReview      *readinessReview // same-invocation proof awaiting acknowledgment
+	lastFresh            bool               // the last certify ran readiness
+	staticLast           *staticRun         // the last run of the static gate, reused for the identical candidate
+	staticTimeouts       *staticTimeoutMemo // timed-out static checks of this session only; never persisted
+	lastObservations     string             // the readiness observations of that check; "" when green
+	readinessReview      *readinessReview   // same-invocation proof awaiting acknowledgment
 
 	// providerErr, when set, ends a check that a provider error stopped (Refine's checks, which
 	// run through a shaping bound to its scratch checkout); nil: the shaping's own ending.

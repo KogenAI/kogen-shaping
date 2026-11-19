@@ -1,0 +1,208 @@
+package shape
+
+// Acceptance harness of shape-static-timeout-not-repeated-in-session. The steps file copies it into the
+// shape package's tests through a Go overlay as shape/stm_acceptance_test.go (a path that never exists
+// in the repository). Every test shapes a request through the real Shape entry point with a scripted
+// shaper; a configured check is a fake whose result the test chooses, and every test writes its
+// observation as JSON to STM_OUT.
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/KogenAI/kogen-loop/sys"
+)
+
+type stmCalls struct {
+	mu sync.Mutex
+	n  map[string]int
+}
+
+func (c *stmCalls) hit(name string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.n == nil {
+		c.n = map[string]int{}
+	}
+	c.n[name]++
+	return c.n[name]
+}
+
+func (c *stmCalls) snapshot() map[string]int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := map[string]int{}
+	for k, v := range c.n {
+		out[k] = v
+	}
+	return out
+}
+
+type stmCheck struct {
+	name string
+	fn   func(f *shpFx, n int) sys.Result
+}
+
+func stmTimedOut(f *shpFx, n int) sys.Result {
+	time.Sleep(20 * time.Millisecond)
+	return sys.Result{Status: 137, TimedOut: true}
+}
+
+func stmSetup(t *testing.T, calls *stmCalls, checks []stmCheck, steps ...shpStep) *shpFx {
+	t.Helper()
+	f := newShpFx(t, steps...)
+	var y strings.Builder
+	y.WriteString("version: 1\ncommands:\n  checks:\n")
+	for _, c := range checks {
+		c := c
+		command := "true kogen-stm-" + c.name
+		fakeStaticChecks.Store(command, func(ctx context.Context) (sys.Result, error) {
+			return c.fn(f, calls.hit(c.name)), nil
+		})
+		t.Cleanup(func() { fakeStaticChecks.Delete(command) })
+		y.WriteString("    - name: " + c.name + "\n      run: '" + command + "'\n")
+	}
+	y.WriteString("  acceptance: {run: sh accept.sh, steps_dir: features/steps}\n")
+	f.write(".kogen/project.yaml", y.String())
+	f.write("mix.lock", "%{}\n")
+	f.git("add", "-A")
+	f.git("commit", "-qm", "stm checks")
+	return f
+}
+
+// stmPackages are different packages of one session, one per id (they differ in the step file),
+// followed by an acknowledgment of the unchanged last package.
+func stmPackages(ids ...string) []shpStep {
+	var steps []shpStep
+	for i, id := range ids {
+		files := shpFiles()
+		if i > 0 {
+			files["files"].([]any)[2] = map[string]any{"path": "features/steps/is-even__steps.js", "content": shpSteps + "// round " + id + "\n"}
+		}
+		steps = append(steps, shpSubmit(id, files))
+	}
+	return append(steps, shpAck(ids[len(ids)-1]+"-ack"))
+}
+
+type stmSessions struct {
+	sessions  [][]any
+	published []bool
+	calls     []map[string]int
+	prev      int
+}
+
+func (s *stmSessions) shape(t *testing.T, f *shpFx, calls *stmCalls) {
+	t.Helper()
+	exit, err := f.shape("Add calc.is_even(n).")
+	all := shpNamed(f.events(), "static_checks")
+	if len(all) < s.prev {
+		s.prev = 0
+	}
+	events := []any{}
+	for _, e := range all[s.prev:] {
+		events = append(events, e)
+	}
+	s.prev = len(all)
+	s.sessions = append(s.sessions, events)
+	s.published = append(s.published, exit == 0 && err == nil && strings.Contains(f.Stdout.String(), "Next: kogen intent approve "+shpSlug))
+	s.calls = append(s.calls, calls.snapshot())
+}
+
+func (s *stmSessions) write(t *testing.T, f *shpFx) {
+	t.Helper()
+	out := os.Getenv("STM_OUT")
+	if out == "" {
+		t.Fatal("shape-static-timeout-not-repeated-in-session: STM_OUT must be set")
+	}
+	var record any
+	if b, err := os.ReadFile(filepath.Join(f.Root, ".kogen/local/static-checks/"+shpSlug+".json")); err == nil {
+		_ = json.Unmarshal(b, &record)
+	}
+	b, err := json.MarshalIndent(map[string]any{"sessions": s.sessions, "published": s.published, "calls": s.calls, "record": record, "stderr": f.Stderr.String()}, "", "  ")
+	if err == nil {
+		err = os.WriteFile(out, b, 0o644)
+	}
+	if err != nil {
+		t.Fatalf("shape-static-timeout-not-repeated-in-session: writing the observation: %v", err)
+	}
+}
+
+// TestSTMNotRepeated: the check slow times out in round 1; round 2 submits another package.
+func TestSTMNotRepeated(t *testing.T) {
+	calls := &stmCalls{}
+	f := stmSetup(t, calls, []stmCheck{{"slow", stmTimedOut}}, stmPackages("c1", "c2")...)
+	var s stmSessions
+	s.shape(t, f, calls)
+	s.write(t, f)
+}
+
+// TestSTMOnlyTimeouts: the check tool is not found in round 1 and passes in round 2.
+func TestSTMOnlyTimeouts(t *testing.T) {
+	calls := &stmCalls{}
+	tool := stmCheck{"tool", func(f *shpFx, n int) sys.Result {
+		time.Sleep(20 * time.Millisecond)
+		if n == 1 {
+			return sys.Result{Status: 127, Output: "/bin/sh: gofmt: command not found\n"}
+		}
+		return sys.Result{}
+	}}
+	f := stmSetup(t, calls, []stmCheck{tool}, stmPackages("c1", "c2")...)
+	var s stmSessions
+	s.shape(t, f, calls)
+	s.write(t, f)
+}
+
+// TestSTMKeepsFailed: bad fails in round 1 (its plain run and its base run, calls 1 and 2, both
+// fail without naming a file) and passes in round 2; slow times out in round 1.
+func TestSTMKeepsFailed(t *testing.T) {
+	calls := &stmCalls{}
+	bad := stmCheck{"bad", func(f *shpFx, n int) sys.Result {
+		time.Sleep(20 * time.Millisecond)
+		if n <= 2 {
+			return sys.Result{Status: 1, Output: "boom\n"}
+		}
+		return sys.Result{}
+	}}
+	f := stmSetup(t, calls, []stmCheck{bad, {"slow", stmTimedOut}}, stmPackages("c1", "c2")...)
+	var s stmSessions
+	s.shape(t, f, calls)
+	s.write(t, f)
+}
+
+// TestSTMLockChange: slow times out in round 1 and is skipped in round 2 (lock unchanged). The check
+// writer, which passes, rewrites mix.lock in the checkout during round 2, after round 2's candidate
+// was taken, so round 3 has a changed lock and must run slow again.
+func TestSTMLockChange(t *testing.T) {
+	calls := &stmCalls{}
+	writer := stmCheck{"writer", func(f *shpFx, n int) sys.Result {
+		if n == 2 {
+			if err := os.WriteFile(filepath.Join(f.Root, "mix.lock"), []byte("%{\"dep\" => 2}\n"), 0o644); err != nil {
+				t.Error(err)
+			}
+		}
+		return sys.Result{}
+	}}
+	f := stmSetup(t, calls, []stmCheck{{"slow", stmTimedOut}, writer}, stmPackages("c1", "c2", "c3")...)
+	var s stmSessions
+	s.shape(t, f, calls)
+	s.write(t, f)
+}
+
+// TestSTMNewSession: two sessions on the same tree, the published files of the first removed
+// between them. Each session runs the check once in its round 1 and skips it in its round 2.
+func TestSTMNewSession(t *testing.T) {
+	calls := &stmCalls{}
+	steps := append(stmPackages("c1", "c2"), stmPackages("d1", "d2")...)
+	f := stmSetup(t, calls, []stmCheck{{"slow", stmTimedOut}}, steps...)
+	var s stmSessions
+	s.shape(t, f, calls)
+	f.git("clean", "-fdq")
+	s.shape(t, f, calls)
+	s.write(t, f)
+}
