@@ -55,6 +55,8 @@ var contractReviewInstructions = strings.Join([]string{
 	"Properties describe requested PRODUCT behaviour. Instructions for the shaper's engineering procedure (inspect files, use probes or proposal tools, keep acceptance offline or bounded, submit a complete package) are not product properties and need no product scenario or wrong-implementation witness. Those instructions still govern shaping. When the requested product itself must provide offline operation, a bound, a test runner or a tool parameter, that is a product property and still needs its own evidence.",
 	"Configured Build checks below are actual effective repository commands, enforced independently before and after implementation. A routine delivery condition that the existing test suite remains green is covered by a configured command only when that command runs the same requested suite and selection. Do not turn that already-covered delivery condition into a product property requiring another acceptance scenario or controls witness, or require a whole-suite acceptance step that exceeds the step limit. A check's name alone is not evidence: true, compilation, a different suite, or a narrowed package/name filter does not cover a requested whole suite. Product behaviour, including changes to a test runner itself, is never covered merely because a test command is configured.",
 	"For each property give property (a short name), request (the exact text copied from the Request or the Questions and answers that asks for it), kind (kept for a behaviour that must be kept, new otherwise), observable (false only when no automatic step can observe it, such as a subjective quality), scenarios (the names, exactly as in acceptance.feature, of the scenarios that exercise it; for a property that is not observable, the scenarios that claim it holds, also through a figure, log line or document sentence standing in for it), decision (for a property that is not observable, the exact text of the candidate intent.md Decisions line that records it as needing human evaluation; otherwise empty) and issues. For every property give kept_steps: the line numbers in acceptance.feature of the steps that assert only that kept behaviour and nothing new; an empty list when no step does (always empty for a new property).",
+	"Also audit the invented contract. In the array invented report, as {scenario, literal, why}, each literal that a scenario step or a step file under Acceptance drives or asserts and that is a route path, element id, parameter name, class or constant name, identifier key or numeric bound; the scenario is its scenario name exactly as in acceptance.feature and the literal exactly as written there. Kogen keeps a report only when no source states the literal: not the Request, the Questions and answers or a file tracked in the unchanged repository. A sentence of the candidate intent.md that fixes a mechanism the Request does not require and rules out another correct reading is reported the same way, with the sentence as the literal and scenario empty. Answer invented [] when there is none.",
+	"Also, only when the candidate's controls.json is a deferral ({\"deferred\":...}), audit failure modes. In the array guarantees report, as {property, request, needs_interrupted}, each observable property of the Request with a guarantee word (exactly once, in a row, never, at least), with request copied exactly from the Request and needs_interrupted true when the property concerns delivery, ordering or persistence. In the array failure_modes report, as {property, direction, wrong_implementation, scenario, assertion}, the wrong implementations that the acceptance rejects: direction is too_much, too_little or interrupted, scenario is the scenario name exactly as in acceptance.feature, and assertion is the exact text of a Then step of that scenario that rejects the wrong implementation. Each such property needs at least one too_much and one too_little entry, and an interrupted entry when needs_interrupted is true. Answer guarantees [] and failure_modes [] when there is none.",
 	"An issue is a scenario of the property whose evidence does not establish it, with problem, scenario, quote and why. Its problem is missing when a new property's scenario is red on the unchanged tree only because a file, module, function, command or test it needs does not exist yet (quote: that failure, copied exactly from the readiness observations), or test_count when the step's only evidence is that tests the Build writes exist or pass in some number and the step does not itself assert the property (quote: that code, copied exactly from the step file). A step that first gives the missing piece a do-nothing form and then fails on the property's behaviour has no issue.",
 }, "\n")
 
@@ -99,10 +101,14 @@ func contractReviewSchema() map[string]any {
 		"required":             []any{"scenario", "output", "why"},
 		"additionalProperties": false,
 	}
+	invented, guarantee, mode := auditSchemas()
 	return map[string]any{
-		"type":                 "object",
-		"properties":           map[string]any{"findings": map[string]any{"type": "array", "items": item}, "environment": map[string]any{"type": "array", "items": env}, "properties": map[string]any{"type": "array", "items": propertySchema()}},
-		"required":             []any{"findings", "environment", "properties"},
+		"type": "object",
+		"properties": map[string]any{
+			"findings": map[string]any{"type": "array", "items": item}, "environment": map[string]any{"type": "array", "items": env}, "properties": map[string]any{"type": "array", "items": propertySchema()},
+			"invented": map[string]any{"type": "array", "items": invented}, "guarantees": map[string]any{"type": "array", "items": guarantee}, "failure_modes": map[string]any{"type": "array", "items": mode},
+		},
+		"required":             []any{"findings", "environment", "properties", "invented", "guarantees", "failure_modes"},
 		"additionalProperties": false,
 	}
 }
@@ -683,10 +689,12 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 	reviewInput := contractReviewInput(sh.slug, append(sections, [2]string{"Readiness observations", observations},
 		[2]string{"Request", sh.request}, [2]string{"Questions and answers", answers}, [2]string{"Configured Build checks", string(checks)}))
 
+	// audited are the lines of the invented contract and failure mode audit, once the review is parsed.
+	var audited contractConfirmed
 	incomplete := func(reason string, findings, evidenced int, items []contractItem, envItems []contractEnvItem) (contractConfirmed, error) {
 		sh.progress("kogen: contract check incomplete (" + reason + "); the candidate goes on")
 		sh.ev.Record(contractEvent(hash, "incomplete", reason, findings, evidenced, 0, items, envItems))
-		return contractConfirmed{}, nil
+		return audited, nil
 	}
 
 	args, why, err := sh.contractCall(ctx, "review", reviewInput)
@@ -696,9 +704,14 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 	var findings []contractFinding
 	var envFindings []contractEnvFinding
 	var props []propertyReport
+	var audit auditReport
 	sh.reviewProps = nil
 	if why == "" {
-		if findings, envFindings, props, why = parseContractReviewProperties(args); why != "" {
+		var rest map[string]any
+		if rest, audit, why = auditPayload(args); why == "" {
+			findings, envFindings, props, why = parseContractReviewProperties(rest)
+		}
+		if why != "" {
 			why = "invalid " + SubmitContractReviewTool + " payload: " + why
 		}
 	}
@@ -706,6 +719,7 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 		return incomplete(why, 0, 0, nil, nil)
 	}
 	sh.reviewProps = props
+	audited = sh.auditConfirmed(ev, scenarios, audit, questions)
 	// Kept assertions must agree with the unchanged tree. Repeat the entire existing
 	// readiness observation once when a counted kept scenario is assertion-red or
 	// an explicitly named kept step is assertion-red or blocked by an earlier failure.
@@ -824,12 +838,13 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 	}
 	// A kept step the unchanged tree disproves is refused whatever the reviewer says.
 	proven := contractConfirmed{properties: baselineRefusals}
+	proven.addAudit(audited)
 	if len(evidenced) == 0 {
 		result := "clean"
 		if !proven.empty() {
 			result = "refused"
 		}
-		sh.ev.Record(contractEvent(hash, result, "", total, 0, len(baselineRefusals), items, envItems))
+		sh.ev.Record(contractEvent(hash, result, "", total, 0, len(baselineRefusals)+len(audited.contradictions), items, envItems))
 		recordProperties()
 		return proven, nil
 	}
@@ -849,6 +864,7 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 		return out, err
 	}
 	lines := applyVerdicts(items, envItems, verdicts)
+	lines.addAudit(audited)
 	lines.properties = append(applyPropertyVerdicts(props, problems, sent+1, verdicts), baselineRefusals...)
 	result := "clean"
 	confirmed := len(lines.contradictions) + len(lines.environment)
