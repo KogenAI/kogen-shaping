@@ -1022,24 +1022,65 @@ func controlsFinishedRejected(props []controlsProp, cf *controlsFile, scenarios 
 	return lines
 }
 
-// controlsCheck is controlsLines with the time cap and the planned runs it applied.
-func (sh *shaping) controlsCheck(ctx context.Context, intent *project.Intent, scenarios []project.Scenario, feature, stepFiles []string, props []controlsProp, base time.Duration, started *int) ([]string, []controlsEvidence, controlsPlan, error) {
-	var plan controlsPlan
+// controlsFile reads the candidate's controls.json. The problem lines are those that need no
+// run: the file does not exist, or it violates the schema parseControls enforces.
+func (sh *shaping) controlsFile(intent *project.Intent, scenarios []project.Scenario, feature []string) (*controlsFile, []string, error) {
 	rel := project.IntentDir(sh.slug) + "/controls.json"
 	raw, err := os.ReadFile(filepath.Join(sh.root, rel))
 	if errors.Is(err, fs.ErrNotExist) {
-		return []string{fmt.Sprintf(`- controls.json: %s does not exist; write it as {"correct":{"files":{"<path>":"<content>","<large path>":{"patch":"<unified diff>"}}},"wrong":[{"name":"<name>","scenario":"<scenario>","step":"<step line>","files":{"<path>":"<content>"}}]}, or, only when the correct implementation is too large to write within the shaping budget, {"deferred":"<reason>"}`, rel)}, []controlsEvidence{}, plan, nil
+		return nil, []string{fmt.Sprintf(`- controls.json: %s does not exist; write it as {"correct":{"files":{"<path>":"<content>","<large path>":{"patch":"<unified diff>"}}},"wrong":[{"name":"<name>","scenario":"<scenario>","step":"<step line>","files":{"<path>":"<content>"}}]}, or, only when the correct implementation is too large to write within the shaping budget, {"deferred":"<reason>"}`, rel)}, nil
 	}
 	if err != nil {
-		return nil, nil, plan, err
+		return nil, nil, err
 	}
 	rules := controlsRules{acceptance: intent.Acceptance, protect: sh.cfg.Protect}
 	if sh.cfg.Acceptance != nil {
 		rules.steps = sh.cfg.Acceptance.StepsDir
 	}
 	cf, problems := parseControls(raw, scenarios, feature, rules)
-	if len(problems) > 0 {
-		return problems, []controlsEvidence{}, plan, nil
+	return cf, problems, nil
+}
+
+// withControlsProblems adds to the refusal of a contract review with confirmed findings the
+// controls.json problems that need no run, when the review has a counted observable property: they
+// follow the findings under the wrong-implementation headline. It starts no run.
+func (sh *shaping) withControlsProblems(confirmed contractConfirmed) (contractConfirmed, error) {
+	if sh.ready == nil || len(sh.reviewProps) == 0 || confirmed.empty() || len(confirmed.wrong) > 0 {
+		return confirmed, nil
+	}
+	featureBytes, err := os.ReadFile(filepath.Join(sh.root, project.FeaturePath(sh.slug)))
+	if err != nil {
+		return confirmed, err
+	}
+	scenarios, err := project.ParseGherkin(string(featureBytes))
+	if err != nil {
+		return confirmed, err
+	}
+	if len(sh.checkedControlProps(scenarios)) == 0 {
+		return confirmed, nil
+	}
+	intent, err := project.ReadIntent(sh.root, sh.slug, nil)
+	if err != nil {
+		return confirmed, err
+	}
+	_, lines, err := sh.controlsFile(intent, scenarios, strings.Split(string(featureBytes), "\n"))
+	if err != nil || len(lines) == 0 {
+		return confirmed, err
+	}
+	confirmed.wrong = lines
+	confirmed.wrongHeadline = wrongHeadline(len(lines), sh.slug, int(controlsTimeCap/time.Second))
+	return confirmed, nil
+}
+
+// controlsCheck is controlsLines with the time cap and the planned runs it applied.
+func (sh *shaping) controlsCheck(ctx context.Context, intent *project.Intent, scenarios []project.Scenario, feature, stepFiles []string, props []controlsProp, base time.Duration, started *int) ([]string, []controlsEvidence, controlsPlan, error) {
+	var plan controlsPlan
+	cf, lines, err := sh.controlsFile(intent, scenarios, feature)
+	if err != nil {
+		return nil, nil, plan, err
+	}
+	if len(lines) > 0 {
+		return lines, []controlsEvidence{}, plan, nil
 	}
 	if cf.deferred != "" {
 		return nil, []controlsEvidence{}, plan, nil

@@ -953,3 +953,57 @@ func TestControlsPatchOverlaysForLargeFiles(t *testing.T) {
 		}
 	})
 }
+
+func TestControlsProblemsJoinARefusalWithFindings(t *testing.T) {
+	exact := "Then is-even: add of 2 and 3 is 5"
+	candidate := controlsCandidate{feature: controlsCalcFeature(exact), steps: controlsExactDef, correct: map[string]string{"calc.js": controlsCalc("add", "sub")}, wrong: controlsWrongs(exact, controlsCalc("sub"))}
+	finding := contractConfirmed{contradictions: []string{"- finding"}, fixes: []string{"- fix"}}
+	controls := func(f *shpFx) string { return filepath.Join(f.Root, project.IntentDir(shpSlug), "controls.json") }
+	t.Run("a missing controls.json follows the findings under the wrong-implementation headline", func(t *testing.T) {
+		f, sh := controlsReal(t, candidate)
+		os.Remove(controls(f))
+		got, err := sh.withControlsProblems(finding)
+		if err != nil || len(got.wrong) != 1 || !strings.HasPrefix(got.wrong[0], "- controls.json: .kogen/intents/is-even/controls.json does not exist; write it as {") {
+			t.Fatalf("got = %+v, err %v", got, err)
+		}
+		if lines := got.all(); len(lines) != 3 || lines[0] != "- finding" || lines[1] != "- fix" || lines[2] != got.wrong[0] {
+			t.Errorf("all = %q", lines)
+		}
+		if !strings.HasPrefix(got.wrongHeadline, "Wrong-implementation check: 1 problem(s)") {
+			t.Errorf("headline = %s", got.wrongHeadline)
+		}
+		if runs := controlsExecuted(t, f); len(runs) != 0 {
+			t.Errorf("runs = %v", runs)
+		}
+	})
+	t.Run("a controls.json that violates the schema is listed", func(t *testing.T) {
+		f, sh := controlsReal(t, candidate)
+		if err := os.WriteFile(controls(f), controlsJSON(`{"files":{"calc.js":"x"}}`, `[{"name":"w","scenario":"No such scenario","step":"Then x","files":{"calc.js":"y"}}]`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		got, err := sh.withControlsProblems(finding)
+		if err != nil || len(got.wrong) == 0 || !strings.HasPrefix(got.wrong[0], "- controls.json: ") {
+			t.Fatalf("got = %+v, err %v", got, err)
+		}
+	})
+	t.Run("a valid or deferred controls.json, no counted property and a clean review add nothing", func(t *testing.T) {
+		f, sh := controlsReal(t, candidate)
+		if got, err := sh.withControlsProblems(finding); err != nil || len(got.wrong) != 0 {
+			t.Errorf("valid: got = %+v, err %v", got, err)
+		}
+		if err := os.WriteFile(controls(f), []byte(`{"deferred":"too large"}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := sh.withControlsProblems(finding); err != nil || len(got.wrong) != 0 {
+			t.Errorf("deferred: got = %+v, err %v", got, err)
+		}
+		os.Remove(controls(f))
+		if got, err := sh.withControlsProblems(contractConfirmed{}); err != nil || !got.empty() {
+			t.Errorf("clean: got = %+v, err %v", got, err)
+		}
+		sh.reviewProps = nil
+		if got, err := sh.withControlsProblems(finding); err != nil || len(got.wrong) != 0 {
+			t.Errorf("no property: got = %+v, err %v", got, err)
+		}
+	})
+}

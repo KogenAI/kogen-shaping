@@ -2033,6 +2033,8 @@ func (sh *shaping) checkSubmission(ctx context.Context, files []string) (string,
 			}
 			if confirmed.empty() {
 				confirmed, err = sh.wrongImplementationCheck(ctx, hash)
+			} else {
+				confirmed, err = sh.withControlsProblems(confirmed)
 			}
 			return err
 		}); err != nil {

@@ -1,0 +1,1 @@
+{"deferred":"The acceptance compiles the shape package's test binary through a Go overlay and drives the full scripted Shape flow; each of the up to 5 control runs would rebuild it, which cannot fit the 300-second check cap, and the correct change is a refactor of wrongImplementationCheck plus a call in checkSubmission whose proof is that harness, so the Build writes it."}
