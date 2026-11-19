@@ -44,8 +44,10 @@ const (
 )
 
 // testSuiteCheck matches a configured check that runs a test suite or a whole-repository validator
-// script (validate_repo.py, validate_release.py, validate_all.py), which the gate never runs.
-var testSuiteCheck = regexp.MustCompile(`(?:^|[\s;&|(\x60])(?:(?:go|cargo|dotnet|mix|deno|bun)\s+test|(?:npm|pnpm|yarn)\s+(?:run\s+)?test|pytest|jest|vitest|mocha|rspec|(?:\./)?(?:bin/)?(?:rails|rake)\s+test(?::[\w:.-]+)?|(?:[^\s;&|()\x60]*/)?validate_(?:repo|release|all)\.py)(?:$|[\s;&|)\x60])`)
+// script (validate_repo.py, validate_release.py, validate_all.py), which the gate never runs. A make or
+// gmake line with the target test, tests, spec, specs, check, ci or verify counts too; a bare -C takes
+// the next word as its directory, so that word is never read as the target.
+var testSuiteCheck = regexp.MustCompile(`(?:^|[\s;&|(\x60])(?:(?:go|cargo|dotnet|mix|deno|bun)\s+test|(?:npm|pnpm|yarn)\s+(?:run\s+)?test|g?make(?:\s+(?:-C\s+[^\s;&|()\x60]+|-(?:[^\sC;&|()\x60][^\s;&|()\x60]*|C[^\s;&|()\x60]+)?|[^\s;&|()\x60-][^\s;&|()\x60]*))*\s+(?:tests?|specs?|check|ci|verify)|pytest|jest|vitest|mocha|rspec|(?:\./)?(?:bin/)?(?:rails|rake)\s+test(?::[\w:.-]+)?|(?:[^\s;&|()\x60]*/)?validate_(?:repo|release|all)\.py)(?:$|[\s;&|)\x60])`)
 
 // missingProgram matches the line a shell prints for a program it cannot find.
 var missingProgram = regexp.MustCompile(`(?m)^(?:\S*/)?(?:sh|bash|dash|zsh|ksh): (?:line [0-9]+: |[0-9]+: )?([^\s:]+): (?:command )?not found\s*$`)
