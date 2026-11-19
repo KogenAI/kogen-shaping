@@ -32,15 +32,22 @@ func assertNoReadyOnRetry(t *testing.T, f *shpFx) {
 	}
 }
 
+// probeHang is the command the fake probe runner reports as stopped at its deadline, as a
+// command that never ends would be, without the test waiting for the deadline.
+const probeHang = "kogen-fake-probe-hang"
+
 // disableProbeRaceExitDelay keeps the Linux reaper's race runtime exit pause
 // outside the test's contracted probe deadline. The reaper remains race-instrumented.
+// A probe of probeHang is not run: the runner reports it timed out at the deadline.
 func disableProbeRaceExitDelay(t *testing.T) {
 	t.Helper()
-	if runtime.GOOS != "linux" {
-		return
-	}
 	restore := verify.ContractProbeRun(func(s *sys.Session, command, dir string, options sys.Options) (sys.Result, error) {
-		options.Env["GORACE"] = "atexit_sleep_ms=0"
+		if strings.Contains(command, probeHang) {
+			return sys.Result{Status: -1, TimedOut: true}, nil
+		}
+		if runtime.GOOS == "linux" {
+			options.Env["GORACE"] = "atexit_sleep_ms=0"
+		}
 		return s.RunContext(options.Context, command, dir, options)
 	})
 	t.Cleanup(restore)
@@ -60,9 +67,9 @@ func TestShapeFeasibilityFitsLimit(t *testing.T) {
 		t.Run(which, func(t *testing.T) {
 			good, bad := "true", "exit 143"
 			if which == "good" {
-				good = "sleep 60"
+				good = probeHang
 			} else {
-				bad = "sleep 60"
+				bad = probeHang
 			}
 			f := newShpFx(t, shpSubmit("slow", budgetFiles(good, bad)), shpAck("waive"), shpSubmit("fixed", budgetFiles("true", "exit 143")), shpAck("ack"))
 			assertNoReadyOnRetry(t, f)
@@ -90,7 +97,7 @@ func TestShapeTimelyEvidenceFitsLimit(t *testing.T) {
 	disableProbeRaceExitDelay(t)
 	_, restore := verify.ContractProbeDeadline(2*time.Second, nil)
 	defer restore()
-	f := newShpFx(t, shpSubmit("timely", budgetFiles("sleep 1.2", "sleep 1.2; exit 143")), shpAck("ack"))
+	f := newShpFx(t, shpSubmit("timely", budgetFiles("sleep 0.2", "sleep 0.2; exit 143")), shpAck("ack"))
 	exit, err := f.shape("Add calc.is_even(n).")
 	if err != nil || exit != 0 {
 		t.Fatalf("exit %d err %v stderr %s req %v", exit, err, f.Stderr, []any{shpOutputs(f.Prov.requests()[1]), shpOutputs(f.Prov.requests()[2])})
@@ -104,16 +111,27 @@ func TestShapeAcceptanceFitsLimit(t *testing.T) {
 	if !isolatedTmp(t) {
 		return
 	}
-	production, restore := verify.ContractShapeAcceptanceDeadline(10 * time.Second)
+	// The first run of the acceptance command never ends and is stopped at a deadline of half a
+	// second; the deadline is lifted before the corrected run, which is not meant to race it.
+	production, restore := verify.ContractShapeAcceptanceDeadline(500 * time.Millisecond)
 	defer restore()
 	if production != 120*time.Second {
 		t.Fatalf("acceptance limit %v", production)
 	}
 	f := newShpFx(t, shpSubmit("slow", shpFiles()), shpAck("retry"), shpAck("ack"))
 	script := f.read("accept.sh")
-	script = strings.Replace(script, "if [ -f '", fmt.Sprintf("if [ ! -f '%s/blocked' ]; then touch '%s/blocked'; sleep 60; fi\nif [ -f '", f.Aux, f.Aux), 1)
+	script = strings.Replace(script, "if [ -f '", fmt.Sprintf("if [ ! -f '%s/blocked' ]; then touch '%s/blocked'; while :; do sleep 0.1; done; fi\nif [ -f '", f.Aux, f.Aux), 1)
 	f.write("accept.sh", script)
-	assertNoReadyOnRetry(t, f)
+	var calls atomic.Int32
+	f.Prov.route = func(_ map[string]any) *shpStep {
+		if calls.Add(1) == 2 {
+			if f.exists(".kogen/local/readiness/is-even.json") {
+				t.Error("timed-out submission recorded reusable readiness")
+			}
+			verify.ContractShapeAcceptanceDeadline(time.Minute)
+		}
+		return nil
+	}
 	exit, err := f.shape("Add calc.is_even(n).")
 	if err != nil || exit != 0 {
 		t.Fatalf("exit %d err %v stderr %s req %v", exit, err, f.Stderr, []any{shpOutputs(f.Prov.requests()[1]), shpOutputs(f.Prov.requests()[2])})

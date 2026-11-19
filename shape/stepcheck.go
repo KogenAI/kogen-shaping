@@ -90,7 +90,7 @@ func (sh *shaping) stepSelfcheck(ctx context.Context) (string, error) {
 	specialHint := false
 	if len(own) > 0 {
 		node, cucumber := sh.stepTool(sh.rd.Tools.Node, "KOGEN_NODE"), sh.stepTool(sh.rd.Tools.Cucumber, "KOGEN_CUCUMBER")
-		raw, _, err := verify.RunStepScript(ctx, node, cucumber, sh.root, sh.s.Env, files, texts)
+		raw, _, err := runStepScript(ctx, node, cucumber, sh.root, sh.s.Env, files, texts)
 		if err != nil {
 			return "", err
 		}
@@ -116,7 +116,7 @@ func (sh *shaping) stepSelfcheck(ctx context.Context) (string, error) {
 			if it.Check != "steps" || it.OK || !strings.HasPrefix(it.Detail, "ambiguous step") {
 				continue
 			}
-			one, _, err := verify.RunStepScript(ctx, node, cucumber, sh.root, sh.s.Env, files, []string{it.Target})
+			one, _, err := runStepScript(ctx, node, cucumber, sh.root, sh.s.Env, files, []string{it.Target})
 			if err != nil {
 				return "", err
 			}
@@ -263,6 +263,10 @@ func unescapedStringArgument(text string, defs []verify.StepDef) bool {
 	}
 	return false
 }
+
+// runStepScript loads the step files with Node and Cucumber. It is a seam for tests, which stand
+// a recorded load in for the real process; production always runs the script.
+var runStepScript = verify.RunStepScript
 
 func (sh *shaping) stepsDir() string {
 	if sh.cfg != nil && sh.cfg.Acceptance != nil && sh.cfg.Acceptance.StepsDir != "" {

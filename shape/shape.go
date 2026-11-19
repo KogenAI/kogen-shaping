@@ -560,6 +560,10 @@ type original struct {
 // shaping is one run of the shaper conversation.
 type shaping struct {
 	unpassableResult *completedUnpassable
+	// controlRun and controlBound are seams for tests: the runner of the unpassable control command
+	// and the bound it runs under. Nil and zero are the session's run and unpassableBound.
+	controlRun   func(ctx context.Context, command, dir string, opts sys.Options) (sys.Result, error)
+	controlBound time.Duration
 
 	retry        retryBudget
 	retryStopped bool

@@ -138,11 +138,15 @@ func runBindingScript(ctx context.Context, node, cucumber, root string, env, fil
 	return res[0].matches, res[0].loaded, nil
 }
 
-// runBindingJobs evaluates every job, normally in one Node process (loading Cucumber once
+// runBindingJobs runs the jobs in Node. It is a seam for tests, which stand a recorded run in for
+// the real process; production always runs them (runBindingProcesses).
+var runBindingJobs = runBindingProcesses
+
+// runBindingProcesses evaluates every job, normally in one Node process (loading Cucumber once
 // instead of once per job). A job whose result is missing counts as not loaded, exactly as a
 // process of its own that printed nothing would; when it took the process down, the jobs after
 // it run in a new process.
-func runBindingJobs(ctx context.Context, node, cucumber, root string, env []string, jobs []bindingJob) ([]bindingResult, error) {
+func runBindingProcesses(ctx context.Context, node, cucumber, root string, env []string, jobs []bindingJob) ([]bindingResult, error) {
 	results := make([]bindingResult, len(jobs))
 	for start := 0; start < len(jobs); {
 		if err := ctx.Err(); err != nil {

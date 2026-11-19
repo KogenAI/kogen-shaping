@@ -180,12 +180,18 @@ func refWait(t *testing.T, done <-chan refResult) refResult {
 
 func refWaitFile(t *testing.T, path string) {
 	t.Helper()
-	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+	poll, give := time.NewTicker(10*time.Millisecond), time.After(30*time.Second)
+	defer poll.Stop()
+	for {
 		if _, err := os.Stat(path); err == nil {
 			return
 		}
+		select {
+		case <-poll.C:
+		case <-give:
+			t.Fatalf("%s never appeared", path)
+		}
 	}
-	t.Fatalf("%s never appeared", path)
 }
 
 // refHeldProbe holds the real probe until the test releases it, instead of a fixed pad after
@@ -1429,7 +1435,7 @@ func TestRefineFailedAndCancelledApprovedCorrectionsPreservePackageRawApprovalAn
 			case "not ready":
 				steps = []shpStep{refSubmit("c1", refFeaturePath, undefined), refSubmit("c2", refFeaturePath, undefined), refSubmit("c3", refFeaturePath, undefined)}
 			case "cancel":
-				steps = []shpStep{refProbe("c1", "touch '"+marker+"' && sleep 10")}
+				steps = []shpStep{refProbe("c1", refHeldProbe(marker))}
 			}
 			f := newRefFx(t, refOpts{approved: true, source: true}, steps...)
 			before := f.pkg()
@@ -1586,7 +1592,7 @@ func TestRefineInterruptionDuringAProbePreservesThePackageAndRetainsEvidence(t *
 				return
 			}
 			marker := filepath.Join(t.TempDir(), "probe-started")
-			f := newRefFx(t, refOpts{approved: true}, refProbe("c1", "touch '"+marker+"' && sleep 10"))
+			f := newRefFx(t, refOpts{approved: true}, refProbe("c1", refHeldProbe(marker)))
 			before := f.pkg()
 			done := f.refineAsync(f.hash0)
 			finished := false
@@ -1912,7 +1918,7 @@ func TestRefineProbeReportsTimeoutObservationFailure(t *testing.T) {
 		return sys.Result{}, fmt.Errorf("%w: group query failed", sys.ErrTimeoutObservation)
 	})
 	defer restore()
-	f := newRefFx(t, refOpts{approved: true}, refProbe("c1", "sleep 600"))
+	f := newRefFx(t, refOpts{approved: true}, refProbe("c1", "true"))
 	before := f.pkg()
 	exit, err := f.refine(f.hash0)
 	if !errors.Is(err, sys.ErrTimeoutObservation) || exit == 0 {

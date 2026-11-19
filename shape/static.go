@@ -49,6 +49,12 @@ var testSuiteCheck = regexp.MustCompile(`(?:^|[\s;&|(\x60])(?:(?:go|cargo|dotnet
 // missingProgram matches the line a shell prints for a program it cannot find.
 var missingProgram = regexp.MustCompile(`(?m)^(?:\S*/)?(?:sh|bash|dash|zsh|ksh): (?:line [0-9]+: |[0-9]+: )?([^\s:]+): (?:command )?not found\s*$`)
 
+// staticRunCommand runs one configured check in the fresh copy. It is a seam for tests, which
+// stand a fake command in for the real process; production always runs the command in the session.
+var staticRunCommand = func(ctx context.Context, s *sys.Session, command, dir string, opts sys.Options) (sys.Result, error) {
+	return s.RunContext(ctx, command, dir, opts)
+}
+
 // staticCheck is the result of one configured check.
 type staticCheck struct {
 	Name   string   `json:"name"`
@@ -541,7 +547,7 @@ func (g *staticGateRunner) run(ctx context.Context, head, tree, sha string) (*st
 			continue
 		}
 		checkStart := time.Now()
-		res, err := g.s.RunContext(ctx, c.Run, dir, opts)
+		res, err := staticRunCommand(ctx, g.s, c.Run, dir, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -568,7 +574,7 @@ func (g *staticGateRunner) run(ctx context.Context, head, tree, sha string) (*st
 		if !baseReused {
 			baseStart := time.Now()
 			if err := without(dir, shaped, func() (err error) {
-				baseline, err = g.s.RunContext(ctx, c.Run, dir, opts)
+				baseline, err = staticRunCommand(ctx, g.s, c.Run, dir, opts)
 				return err
 			}); err != nil {
 				return nil, err
@@ -597,7 +603,7 @@ func (g *staticGateRunner) run(ctx context.Context, head, tree, sha string) (*st
 			continue
 		}
 		tracedStart := time.Now()
-		traced, err := g.s.RunContext(ctx, "set -x\n"+c.Run, dir, opts)
+		traced, err := staticRunCommand(ctx, g.s, "set -x\n"+c.Run, dir, opts)
 		if err != nil {
 			return nil, err
 		}

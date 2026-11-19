@@ -1004,7 +1004,7 @@ func TestShapeProbeReportsTimeoutObservationFailure(t *testing.T) {
 		return sys.Result{}, fmt.Errorf("%w: group query failed", sys.ErrTimeoutObservation)
 	})
 	defer restore()
-	f := newShpFx(t, shpAnswer(shpCall("p1", "probe", map[string]any{"command": "sleep 600"})))
+	f := newShpFx(t, shpAnswer(shpCall("p1", "probe", map[string]any{"command": "true"})))
 	exit, err := f.shape("Add calc.is_even(n).")
 	if !errors.Is(err, sys.ErrTimeoutObservation) || exit == 0 {
 		t.Fatalf("exit %d, err %v, want a failure wrapping sys.ErrTimeoutObservation", exit, err)

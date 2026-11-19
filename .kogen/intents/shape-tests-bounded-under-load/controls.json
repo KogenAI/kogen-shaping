@@ -1,0 +1,1 @@
+{"deferred":"The correct implementation rewrites the timing of many existing shape package tests (about 750 s of summed test time across 121 test files) onto injected clocks and fake commands; it cannot honestly be written as a bounded overlay within the shaping budget, so the Build writes it."}

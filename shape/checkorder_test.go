@@ -76,26 +76,34 @@ func TestStaticRefusalDiscardsTheModelChecks(t *testing.T) {
 	}
 }
 
-// The three model checks run together, not one after another.
+// The three model checks run together, not one after another: each holds until all three have
+// started, which only happens when they run at once.
 func TestModelChecksRunConcurrently(t *testing.T) {
 	parallel(t)
 	var running, peak atomic.Int32
+	together := make(chan struct{})
 	slow := func(context.Context) ([]string, error) {
 		n := running.Add(1)
 		for p := peak.Load(); n > p && !peak.CompareAndSwap(p, n); p = peak.Load() {
 		}
-		time.Sleep(100 * time.Millisecond)
+		if n == 3 {
+			close(together)
+		}
+		select {
+		case <-together:
+		case <-time.After(30 * time.Second):
+			running.Add(-1)
+			return nil, errors.New("the other model checks never started")
+		}
 		running.Add(-1)
 		return nil, nil
 	}
-	start := time.Now()
 	got, err := runModelChecks(context.Background(), slow, slow, slow)
-	took := time.Since(start)
 	if err != nil || len(got) != 0 {
 		t.Fatalf("refusals %v, err %v", got, err)
 	}
-	if took >= 250*time.Millisecond || peak.Load() != 3 {
-		t.Fatalf("three 100 ms checks took %v with %d at once", took, peak.Load())
+	if peak.Load() != 3 {
+		t.Fatalf("%d model checks ran at once, want 3", peak.Load())
 	}
 }
 

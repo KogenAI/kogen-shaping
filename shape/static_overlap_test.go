@@ -13,15 +13,17 @@ import (
 	"github.com/KogenAI/kogen-verification/verify"
 )
 
-// Exercise the configured process and scripted provider through one real submission.
-// The upper bound leaves a clear margin below sequential two-second waits.
+// Exercise the configured process and scripted provider through one real submission. The static
+// check and the decision check each wait for the other to have started, so the test passes only
+// when the two run together; how long the host takes does not enter into it.
 func TestStaticChecksOverlapModelChecks(t *testing.T) {
 	for _, refused := range []bool{false, true} {
 		t.Run(fmt.Sprintf("static_refused_%t", refused), func(t *testing.T) {
 			parallel(t)
 			f := newShpFx(t)
 			marker := filepath.Join(f.Aux, "static-completed")
-			command := "sleep 2; echo done >> " + marker
+			static, decision := filepath.Join(f.Aux, "static-started"), filepath.Join(f.Aux, "decision-started")
+			command := "touch " + static + "; n=0; while ! test -f " + decision + " && test $n -lt 600; do sleep 0.05; n=$((n+1)); done; test -f " + decision + " && echo done >> " + marker
 			if refused {
 				command += "; ! grep -q BAD features/steps/is-even__steps.js"
 			}
@@ -39,11 +41,27 @@ func TestStaticChecksOverlapModelChecks(t *testing.T) {
 				}
 				f.write(m["path"].(string), text)
 			}
-			decision, literal := orderDecisionRefusal(), orderLiteralRefusal()
+			decisionAnswer, literal := orderDecisionRefusal(), orderLiteralRefusal()
 			f.Prov.route = func(req map[string]any) *shpStep {
 				if decisionRequest(req) {
-					time.Sleep(2 * time.Second)
-					return &decision
+					if err := os.WriteFile(decision, nil, 0o644); err != nil {
+						t.Error(err)
+					}
+					// The answer waits until the static check has started.
+					poll, give := time.NewTicker(5*time.Millisecond), time.After(30*time.Second)
+					defer poll.Stop()
+					for {
+						if _, err := os.Stat(static); err == nil {
+							break
+						}
+						select {
+						case <-poll.C:
+						case <-give:
+							t.Error("the static check never started while the decision check ran")
+							return &decisionAnswer
+						}
+					}
+					return &decisionAnswer
 				}
 				if literalRequest(req) {
 					return &literal
@@ -51,11 +69,9 @@ func TestStaticChecksOverlapModelChecks(t *testing.T) {
 				return nil
 			}
 			sh.startBatch()
-			start := time.Now()
 			if err := sh.postSubmitChecks(context.Background(), shpScopedIntentMD, "", "overlap-package"); err != nil {
 				t.Fatal(err)
 			}
-			took := time.Since(start)
 			text, _, invalid := sh.settleHeld(sh.collectBatch())
 			if !invalid {
 				t.Fatal("expected refusal")
@@ -76,9 +92,6 @@ func TestStaticChecksOverlapModelChecks(t *testing.T) {
 					t.Fatalf("discarded decision effects survived: %v %v %v", sh.refusedStatements, sh.pendingMarks, sh.notes)
 				}
 			} else {
-				if took < 1900*time.Millisecond || took >= 3500*time.Millisecond {
-					t.Fatalf("independent two-second waits took %v", took)
-				}
 				if !strings.HasPrefix(text, "Decision check:") || !strings.Contains(text, "\n\nLiteral check:") {
 					t.Fatalf("combined feedback: %s", text)
 				}

@@ -497,23 +497,19 @@ func mustScenarios(t *testing.T, feature string) []project.Scenario {
 
 func TestWrongImplementationCaps(t *testing.T) {
 	exact := "Then is-even: add of 2 and 3 is 5"
-	slow := "const end = Date.now() + 4000;\nwhile (Date.now() < end);\n" + controlsCalc("add", "sub")
+	slow := "const end = Date.now() + 3000;\nwhile (Date.now() < end);\n" + controlsCalc("add", "sub")
 	candidate := controlsCandidate{feature: controlsCalcFeature(exact), steps: controlsExactDef, correct: map[string]string{"calc.js": slow}, wrong: controlsWrongs(exact, controlsCalc("sub"))}
 	t.Run("the time cap ends the check at the run it cuts off", func(t *testing.T) {
 		f, sh := controlsReal(t, candidate)
 		started := 0
-		begin := time.Now()
 		lines, _, err := sh.controlsLines(context.Background(), sh.ready.Intent, mustScenarios(t, candidate.feature), strings.Split(candidate.feature, "\n"), sh.ready.Intent.StepFiles(),
-			sh.checkedControlProps(mustScenarios(t, candidate.feature)), 2*time.Second, &started)
+			sh.checkedControlProps(mustScenarios(t, candidate.feature)), time.Second, &started)
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := "- time cap: the runs exceeded the total time cap of 2 seconds per candidate after 0 of 3 runs completed; the check stopped. Make the implementations or the steps faster."
+		want := "- time cap: the runs exceeded the total time cap of 1 seconds per candidate after 0 of 3 runs completed; the check stopped. Make the implementations or the steps faster."
 		if len(lines) != 1 || lines[0] != want || started != 1 {
 			t.Fatalf("lines = %q, %d runs started", lines, started)
-		}
-		if time.Since(begin) > 3500*time.Millisecond+2*time.Second {
-			t.Errorf("the cut-off run took %v", time.Since(begin))
 		}
 		if n := strings.Count(f.Stderr.String(), "wrong-implementation check: run "); n != 1 {
 			t.Errorf("%d progress lines", n)

@@ -1,6 +1,7 @@
 package shape
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -344,9 +345,12 @@ func TestShapeTimeLine(t *testing.T) {
 	shpEq(t, "unknown", a.Line(), "kogen: shape time 6.1 s: shaper 1.9 s (model unknown, tools unknown), Kogen checks 3.0 s (static 0.4 s, model checks 0.7 s, contract review 1.1 s, readiness 2.1 s), gaps 1.2 s")
 }
 
-func sleepingRound(d time.Duration, v any) func(int, string) (executor.RoundResult, error) {
+// sleepingRound is a round that takes d on the injected clock and then answers v.
+func sleepingRound(fc *fakeClock, d time.Duration, v any) func(int, string) (executor.RoundResult, error) {
 	return func(n int, root string) (executor.RoundResult, error) {
-		time.Sleep(d)
+		if err := fc.Sleep(context.Background(), d); err != nil {
+			return executor.RoundResult{}, err
+		}
 		return result(v)(n, root)
 	}
 }
@@ -356,19 +360,46 @@ func sleepingRound(d time.Duration, v any) func(int, string) (executor.RoundResu
 // progress line.
 func TestShapeTimeSplitsChecksByGate(t *testing.T) {
 	f := newShpFx(t)
-	f.writeLineup("version: 1\ncommands:\n  checks: [{name: slow, run: 'sleep 0.3'}]\n  acceptance: {run: sh accept.sh, steps_dir: features/steps}\n", "shape: {executor: claude-code, model: claude-opus-5-5, effort: xhigh}\n")
+	fc := newFakeClock()
+	f.Now = fc.Now
+	check := fakeStaticCheck(t, func(ctx context.Context) (sys.Result, error) {
+		return sys.Result{}, fc.Sleep(ctx, 300*time.Millisecond)
+	})
+	f.writeLineup("version: 1\ncommands:\n  checks: [{name: slow, run: '"+check+"'}]\n  acceptance: {run: sh accept.sh, steps_dir: features/steps}\n", "shape: {executor: claude-code, model: claude-opus-5-5, effort: xhigh}\n")
 	f.git("commit", "-qm", "claude-code shaper")
 	x := &shapeExec{t: t,
 		rounds: []func(int, string) (executor.RoundResult, error){
 			result(shpFiles()),
 			result(map[string]any{"files": []any{map[string]any{"path": ".kogen/intents/is-even/acceptance.feature", "content": shpFeature}}}),
 		},
-		decision: []func(int, string) (executor.RoundResult, error){sleepingRound(300*time.Millisecond, map[string]any{"items": []any{}})},
-		literal:  []func(int, string) (executor.RoundResult, error){sleepingRound(300*time.Millisecond, map[string]any{"items": []any{}})},
-		contract: []func(int, string) (executor.RoundResult, error){sleepingRound(150*time.Millisecond, map[string]any{"findings": []any{}, "environment": []any{}})},
+		decision: []func(int, string) (executor.RoundResult, error){sleepingRound(fc, 300*time.Millisecond, map[string]any{"items": []any{}})},
+		literal:  []func(int, string) (executor.RoundResult, error){sleepingRound(fc, 300*time.Millisecond, map[string]any{"items": []any{}})},
+		contract: []func(int, string) (executor.RoundResult, error){sleepingRound(fc, 150*time.Millisecond, map[string]any{"findings": []any{}, "environment": []any{}})},
 	}
-	if exit, err := f.shapeWith(x, "Add calc.is_even(n). Non-integers raise TypeError."); err != nil || exit != 0 {
+	t.Cleanup(func() { fc.Advance(time.Hour) })
+	// The clock moves only when everything that waits on it has come to wait: the static check and
+	// the decision and literal checks of the submission wait together (three sleepers), then the
+	// contract review waits alone. Were the decision and literal checks run one after the other,
+	// the three would never wait together and the test would end without a result.
+	moved := make(chan bool, 1)
+	go func() {
+		for _, together := range []int{3, 1} {
+			if !fc.awaitSleepers(together) {
+				moved <- false
+				return
+			}
+			fc.AdvanceToNext()
+		}
+		moved <- true
+	}()
+	f.newSession()
+	exit, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Request: "Add calc.is_even(n). Non-integers raise TypeError.",
+		Client: f.Client, External: x.external(), Now: fc.Now})
+	if err != nil || exit != 0 {
 		t.Fatalf("exit %d: %v", exit, err)
+	}
+	if !<-moved {
+		t.Fatal("the checks did not wait on the clock together")
 	}
 	accounts := shpNamed(f.events(), "shape_time")
 	shpEq(t, "accounts", len(accounts), 1)
@@ -386,12 +417,12 @@ func TestShapeTimeSplitsChecksByGate(t *testing.T) {
 			t.Fatalf("%s %d exceeds checks_ms %d", k, num(k), checks)
 		}
 	}
-	if num("static_ms") < 250 || num("contract_ms") < 120 {
-		t.Fatalf("static_ms %d, contract_ms %d", num("static_ms"), num("contract_ms"))
-	}
-	if m := num("model_checks_ms"); m < 300 || m >= 600 {
-		t.Fatalf("model_checks_ms %d, want [300,600): the overlapping decision and literal checks count once", m)
-	}
+	// Injected durations: the decision and literal checks of 300 ms each ran together and count
+	// once, beside the static check of 300 ms, and the contract review of 150 ms followed.
+	shpEq(t, "static_ms", num("static_ms"), int64(300))
+	shpEq(t, "model_checks_ms (the overlapping decision and literal checks count once)", num("model_checks_ms"), int64(300))
+	shpEq(t, "contract_ms", num("contract_ms"), int64(150))
+	shpEq(t, "checks_ms", checks, int64(450))
 	ms := func(k string) *int64 { v := num(k); return &v }
 	want := "Kogen checks " + seconds(ms("checks_ms")) + " (static " + seconds(ms("static_ms")) + ", model checks " + seconds(ms("model_checks_ms")) +
 		", contract review " + seconds(ms("contract_ms")) + ", readiness " + seconds(ms("readiness_ms")) + ")"

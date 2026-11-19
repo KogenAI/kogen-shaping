@@ -31,6 +31,12 @@ var unpassableSupport string
 // unpassableBound bounds the control run.
 var unpassableBound = verify.StepTimeout
 
+// unpassableRunCommand runs the control command in the session. It is a seam for tests, which
+// stand a recorded run in for the real process; production always runs the command.
+var unpassableRunCommand = func(ctx context.Context, s *sys.Session, command, dir string, opts sys.Options) (sys.Result, error) {
+	return s.RunContext(ctx, command, dir, opts)
+}
+
 // The verdicts of one judged step definition.
 const (
 	verdictTimeout     = "timeout"
@@ -559,9 +565,19 @@ func (sh *shaping) unpassableControl(ctx context.Context, ready *verify.Ready) (
 		command = append(command, "--require", ShellQuote(f))
 	}
 	command = append(command, "--format", ShellQuote("message:"+report), ShellQuote(project.FeaturePath(sh.slug)))
-	res, err := sh.s.RunContext(ctx, strings.Join(command, " "), tree, sys.Options{
+	bound := unpassableBound
+	runControl := func(ctx context.Context, command, dir string, opts sys.Options) (sys.Result, error) {
+		return unpassableRunCommand(ctx, sh.s, command, dir, opts)
+	}
+	if sh.controlBound != 0 {
+		bound = sh.controlBound
+	}
+	if sh.controlRun != nil {
+		runControl = sh.controlRun
+	}
+	res, err := runControl(ctx, strings.Join(command, " "), tree, sys.Options{
 		Env:             map[string]string{"NODE_PATH": cucumber, "KOGEN_UNPASSABLE_LOG": log, "KOGEN_UNPASSABLE_STEPS_DIR": stepsDir},
-		Timeout:         unpassableBound,
+		Timeout:         bound,
 		Context:         ctx,
 		KillGroupOnExit: true,
 	})
@@ -569,7 +585,7 @@ func (sh *shaping) unpassableControl(ctx context.Context, ready *verify.Ready) (
 		return nil, "", err
 	}
 	if res.TimedOut {
-		return nil, fmt.Sprintf("the control run exceeded the %d-second bound", int(unpassableBound.Seconds())), nil
+		return nil, fmt.Sprintf("the control run exceeded the %d-second bound", int(bound.Seconds())), nil
 	}
 	text, err := os.ReadFile(report)
 	if err != nil {

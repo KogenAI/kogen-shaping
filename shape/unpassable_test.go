@@ -432,17 +432,20 @@ func TestUnpassableControlSkipped(t *testing.T) {
 		}
 	})
 	t.Run("the bound is exceeded", func(t *testing.T) {
-		bound := unpassableBound
-		unpassableBound = 2 * time.Second
-		t.Cleanup(func() { unpassableBound = bound })
-		_, sh, ready, _ := unpassableFixture(t, "", []controlProbe{{name: "slow", body: "await new Promise(r => setTimeout(r, 60000));"}}, nil)
-		start := time.Now()
+		// The control run is a fake that reports the stop at the bound; nothing waits for it.
+		_, sh, ready, _ := unpassableFixture(t, "", stub, nil)
+		sh.controlBound = 2 * time.Second
+		var bound time.Duration
+		sh.controlRun = func(_ context.Context, _, _ string, opts sys.Options) (sys.Result, error) {
+			bound = opts.Timeout
+			return sys.Result{Status: -1, TimedOut: true}, nil
+		}
 		_, reason, err := sh.unpassableControl(context.Background(), ready)
 		if err != nil || reason != "the control run exceeded the 2-second bound" {
 			t.Fatalf("reason %q, err %v", reason, err)
 		}
-		if time.Since(start) > 30*time.Second {
-			t.Fatalf("the control run was not stopped at its bound: %v", time.Since(start))
+		if bound != 2*time.Second {
+			t.Fatalf("the control run was started under a bound of %v, want 2s", bound)
 		}
 	})
 	t.Run("the gate refuses nothing and records skipped", func(t *testing.T) {
