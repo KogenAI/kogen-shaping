@@ -1,0 +1,44 @@
+{
+ "correct": {
+  "files": {
+   "shape/static.go": {
+    "patch": "--- a/shape/static.go\n+++ b/shape/static.go\n@@ -44,7 +44,7 @@\n )\n \n // testSuiteCheck matches a configured check that runs a test suite, which the gate never runs.\n-var testSuiteCheck = regexp.MustCompile(`(?:^|[\\s;&|(\\x60])(?:(?:go|cargo|dotnet|mix|deno|bun)\\s+test|(?:npm|pnpm|yarn)\\s+(?:run\\s+)?test|pytest|jest|vitest|mocha|rspec)(?:$|[\\s;&|)\\x60])`)\n+var testSuiteCheck = regexp.MustCompile(`(?:^|[\\s;&|(\\x60])(?:(?:go|cargo|dotnet|mix|deno|bun)\\s+test|(?:npm|pnpm|yarn)\\s+(?:run\\s+)?test|pytest|jest|vitest|mocha|rspec|(?:\\./)?(?:bin/)?(?:rails|rake)\\s+test(?::[\\w:-]+)?)(?:$|[\\s;&|)\\x60])`)\n \n // missingProgram matches the line a shell prints for a program it cannot find.\n var missingProgram = regexp.MustCompile(`(?m)^(?:\\S*/)?(?:sh|bash|dash|zsh|ksh): (?:line [0-9]+: |[0-9]+: )?([^\\s:]+): (?:command )?not found\\s*$`)\n"
+   },
+   "shape/static_test.go": {
+    "patch": "--- a/shape/static_test.go\n+++ b/shape/static_test.go\n@@ -17,19 +17,28 @@\n func TestStaticCheckSelection(t *testing.T) {\n \tparallel(t)\n \tfor run, want := range map[string]bool{\n-\t\t\"GOFLAGS=-trimpath go test ./...\": true,\n-\t\t\"cd app && npm test\":              true,\n-\t\t\"npm run test\":                    true,\n-\t\t\"yarn test --ci\":                  true,\n-\t\t\"pytest -q\":                       true,\n-\t\t\"make && (cargo test)\":            true,\n-\t\t\"echo `jest`\":                     true,\n-\t\t`test -z \"$(gofmt -l .)\"`:         false,\n-\t\t\"go build ./...\":                  false,\n-\t\t\"go vet ./...\":                    false,\n-\t\t\"npm run lint\":                    false,\n-\t\t\"echo pytester\":                   false,\n-\t\t\"go testdata\":                     false,\n+\t\t\"GOFLAGS=-trimpath go test ./...\":     true,\n+\t\t\"cd app && npm test\":                  true,\n+\t\t\"npm run test\":                        true,\n+\t\t\"yarn test --ci\":                      true,\n+\t\t\"pytest -q\":                           true,\n+\t\t\"make && (cargo test)\":                true,\n+\t\t\"echo `jest`\":                         true,\n+\t\t\"bin/rails test\":                      true,\n+\t\t\"rails test test/models\":              true,\n+\t\t\"bundle exec rake test\":               true,\n+\t\t\"RAILS_ENV=test bin/rake test:system\": true,\n+\t\t\"cd app && bin/rails test\":            true,\n+\t\t\"bin/rails routes\":                    false,\n+\t\t\"bin/rubocop\":                         false,\n+\t\t\"rake testdata\":                       false,\n+\t\t\"echo rails testing\":                  false,\n+\t\t`test -z \"$(gofmt -l .)\"`:             false,\n+\t\t\"go build ./...\":                      false,\n+\t\t\"go vet ./...\":                        false,\n+\t\t\"npm run lint\":                        false,\n+\t\t\"echo pytester\":                       false,\n+\t\t\"go testdata\":                         false,\n \t} {\n \t\tif got := isTestSuiteCheck(run); got != want {\n \t\t\tt.Errorf(\"%q: test suite %v, want %v\", run, got, want)\n"
+   }
+  }
+ },
+ "wrong": [
+  {
+   "name": "only the plain rails test word",
+   "scenario": "Rails suite commands are test suite checks",
+   "step": "Then shape-static-gate-skips-rails-suite: each of these commands is a test suite check:",
+   "files": {
+    "shape/static.go": {
+     "patch": "--- a/shape/static.go\n+++ b/shape/static.go\n@@ -44,7 +44,7 @@\n )\n \n // testSuiteCheck matches a configured check that runs a test suite, which the gate never runs.\n-var testSuiteCheck = regexp.MustCompile(`(?:^|[\\s;&|(\\x60])(?:(?:go|cargo|dotnet|mix|deno|bun)\\s+test|(?:npm|pnpm|yarn)\\s+(?:run\\s+)?test|pytest|jest|vitest|mocha|rspec|(?:\\./)?(?:bin/)?(?:rails|rake)\\s+test(?::[\\w:-]+)?)(?:$|[\\s;&|)\\x60])`)\n+var testSuiteCheck = regexp.MustCompile(`(?:^|[\\s;&|(\\x60])(?:(?:go|cargo|dotnet|mix|deno|bun)\\s+test|(?:npm|pnpm|yarn)\\s+(?:run\\s+)?test|pytest|jest|vitest|mocha|rspec|rails\\s+test)(?:$|[\\s;&|)\\x60])`)\n \n // missingProgram matches the line a shell prints for a program it cannot find.\n var missingProgram = regexp.MustCompile(`(?m)^(?:\\S*/)?(?:sh|bash|dash|zsh|ksh): (?:line [0-9]+: |[0-9]+: )?([^\\s:]+): (?:command )?not found\\s*$`)\n"
+    }
+   }
+  },
+  {
+   "name": "any rails or rake word",
+   "scenario": "Other Rails and rake commands are not test suite checks",
+   "step": "Then shape-static-gate-skips-rails-suite: none of these commands is a test suite check:",
+   "files": {
+    "shape/static.go": {
+     "patch": "--- a/shape/static.go\n+++ b/shape/static.go\n@@ -44,7 +44,7 @@\n )\n \n // testSuiteCheck matches a configured check that runs a test suite, which the gate never runs.\n-var testSuiteCheck = regexp.MustCompile(`(?:^|[\\s;&|(\\x60])(?:(?:go|cargo|dotnet|mix|deno|bun)\\s+test|(?:npm|pnpm|yarn)\\s+(?:run\\s+)?test|pytest|jest|vitest|mocha|rspec|(?:\\./)?(?:bin/)?(?:rails|rake)\\s+test(?::[\\w:-]+)?)(?:$|[\\s;&|)\\x60])`)\n+var testSuiteCheck = regexp.MustCompile(`(?:^|[\\s;&|(\\x60])(?:(?:go|cargo|dotnet|mix|deno|bun)\\s+test|(?:npm|pnpm|yarn)\\s+(?:run\\s+)?test|pytest|jest|vitest|mocha|rspec|(?:rails|rake)\\s+\\w+)(?:$|[\\s;&|)\\x60])`)\n \n // missingProgram matches the line a shell prints for a program it cannot find.\n var missingProgram = regexp.MustCompile(`(?m)^(?:\\S*/)?(?:sh|bash|dash|zsh|ksh): (?:line [0-9]+: |[0-9]+: )?([^\\s:]+): (?:command )?not found\\s*$`)\n"
+    }
+   }
+  },
+  {
+   "name": "pattern replaced not extended",
+   "scenario": "Previously recognised commands keep their answers",
+   "step": "Then shape-static-gate-skips-rails-suite: each of these commands is a test suite check:",
+   "files": {
+    "shape/static.go": {
+     "patch": "--- a/shape/static.go\n+++ b/shape/static.go\n@@ -44,7 +44,7 @@\n )\n \n // testSuiteCheck matches a configured check that runs a test suite, which the gate never runs.\n-var testSuiteCheck = regexp.MustCompile(`(?:^|[\\s;&|(\\x60])(?:(?:go|cargo|dotnet|mix|deno|bun)\\s+test|(?:npm|pnpm|yarn)\\s+(?:run\\s+)?test|pytest|jest|vitest|mocha|rspec|(?:\\./)?(?:bin/)?(?:rails|rake)\\s+test(?::[\\w:-]+)?)(?:$|[\\s;&|)\\x60])`)\n+var testSuiteCheck = regexp.MustCompile(`(?:^|[\\s;&|(\\x60])(?:(?:\\./)?(?:bin/)?(?:rails|rake)\\s+test(?::[\\w:-]+)?)(?:$|[\\s;&|)\\x60])`)\n \n // missingProgram matches the line a shell prints for a program it cannot find.\n var missingProgram = regexp.MustCompile(`(?m)^(?:\\S*/)?(?:sh|bash|dash|zsh|ksh): (?:line [0-9]+: |[0-9]+: )?([^\\s:]+): (?:command )?not found\\s*$`)\n"
+    }
+   }
+  }
+ ]
+}

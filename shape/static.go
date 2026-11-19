@@ -44,7 +44,7 @@ const (
 )
 
 // testSuiteCheck matches a configured check that runs a test suite, which the gate never runs.
-var testSuiteCheck = regexp.MustCompile(`(?:^|[\s;&|(\x60])(?:(?:go|cargo|dotnet|mix|deno|bun)\s+test|(?:npm|pnpm|yarn)\s+(?:run\s+)?test|pytest|jest|vitest|mocha|rspec)(?:$|[\s;&|)\x60])`)
+var testSuiteCheck = regexp.MustCompile(`(?:^|[\s;&|(\x60])(?:(?:go|cargo|dotnet|mix|deno|bun)\s+test|(?:npm|pnpm|yarn)\s+(?:run\s+)?test|pytest|jest|vitest|mocha|rspec|(?:\./)?(?:bin/)?(?:rails|rake)\s+test(?::[\w:.-]+)?)(?:$|[\s;&|)\x60])`)
 
 // missingProgram matches the line a shell prints for a program it cannot find.
 var missingProgram = regexp.MustCompile(`(?m)^(?:\S*/)?(?:sh|bash|dash|zsh|ksh): (?:line [0-9]+: |[0-9]+: )?([^\s:]+): (?:command )?not found\s*$`)
