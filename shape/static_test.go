@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/KogenAI/kogen-coordinator/project"
@@ -39,10 +40,82 @@ func TestStaticCheckSelection(t *testing.T) {
 		"npm run lint":                        false,
 		"echo pytester":                       false,
 		"go testdata":                         false,
+
+		"python3 reproduce/validate_repo.py":             true,
+		"python3 reproduce/validate_release.py --strict": true,
+		"cd reproduce && python validate_all.py":         true,
+		"CI=1 bash ./validate_repo.py":                   true,
+		"python3 reproduce/validate_round.py":            false,
+		"python3 reproduce/validate_spec_snapshot.py":    false,
+		"python3 reproduce/check_shaped_files.py":        false,
+		"python3 reproduce/validate_repo.py.bak":         false,
+		"python3 reproduce/validate_repo_helpers.py":     false,
 	} {
 		if got := isTestSuiteCheck(run); got != want {
 			t.Errorf("%q: test suite %v, want %v", run, got, want)
 		}
+	}
+}
+
+// TestStaticChecksSkipFullValidator: the gate does not run a whole-repository validator script,
+// reports it not_run, and still attributes and refuses on the other check.
+func TestStaticChecksSkipFullValidator(t *testing.T) {
+	parallel(t)
+	const step = "features/steps/fixture_steps.js"
+	var mu sync.Mutex
+	var ran []string
+	var validator string
+	record := func(command string, res sys.Result) string {
+		fakeStaticChecks.Store(command, func(context.Context) (sys.Result, error) {
+			mu.Lock()
+			ran = append(ran, command)
+			first := len(ran) == 1 || command == validator
+			mu.Unlock()
+			if first {
+				return res, nil
+			}
+			return sys.Result{}, nil
+		})
+		t.Cleanup(func() { fakeStaticChecks.Delete(command) })
+		return command
+	}
+	tag := nonWord.ReplaceAllString(t.Name(), "-")
+	validator = record("KOGEN_FAKE="+tag+" python3 reproduce/validate_repo.py", sys.Result{})
+	privacy := record("true kogen-fake-check-"+tag, sys.Result{Status: 1, Output: step + ":2:1: private\n"})
+	f := staticFx(t, "    - name: validate-repo\n      run: '"+validator+"'\n    - name: privacy\n      run: '"+privacy+"'\n")
+	f.write(step, "// BAD\n")
+	cfg, err := project.LoadConfig(f.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, _, _ := f.session()
+	var progress []string
+	head := f.Repo.Head()
+	tree, err := f.Repo.Tree(head, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := newStaticGateRunner(s, f.Repo, &verify.Readiness{Root: f.Root, Repo: f.Repo, Config: cfg}, cfg, f.Root, approveSlug, func(l string) { progress = append(progress, l) })
+	run, err := g.run(context.Background(), head, tree, "package")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(ran) == 0 || slices.ContainsFunc(ran, func(c string) bool { return c != privacy }) {
+		t.Errorf("commands given to the seam %q, want only %q", ran, privacy)
+	}
+	if len(run.Checks) != 2 || run.Checks[0].Status != staticNotRun || run.Checks[0].Exit != nil {
+		t.Fatalf("checks %+v", run.Checks)
+	}
+	if c := run.Checks[1]; c.Status != staticAttributable || !slices.Contains(c.Paths, step+":2:1") {
+		t.Errorf("privacy check %+v", c)
+	}
+	if run.Outcome != staticRefused {
+		t.Errorf("outcome %s", run.Outcome)
+	}
+	if !slices.Contains(progress, "kogen: static check validate-repo not run: it runs the test suite") {
+		t.Errorf("progress %q", progress)
 	}
 }
 
