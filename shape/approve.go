@@ -228,7 +228,7 @@ func approveLocked(ctx context.Context, s *sys.Session, in ApproveInput, repo *g
 		s.Puts(fmt.Sprintf("Scenarios: %d (%d fail now, %d pass now)", len(ready.Scenarios), failing, passing))
 	}
 	if moved && ready.AcceptanceExit == 0 {
-		approveCard(s, slug, sha, approver, ready, baseline, assumptionLines(ready.Intent.Text), unresolvedLines(root, slug)...)
+		approveCard(s, slug, sha, approver, ready, baseline, assumptionLines(ready.Intent.Text), inventedDroppedLines(root, slug), unresolvedLines(root, slug)...)
 		return 0, sys.Fail("intent", "not_ready", "scenarios already pass on the new base; correct the obsolete contract with kogen intent refine "+slug+" "+sha+" <correction-file>", 1)
 	}
 	if prefix == "" {
@@ -246,7 +246,7 @@ func approveLocked(ctx context.Context, s *sys.Session, in ApproveInput, repo *g
 			return 0, err
 		}
 		s.Puts(card)
-		approveCard(s, slug, sha, approver, ready, baseline, assumptionLines(ready.Intent.Text), unresolvedLines(root, slug)...)
+		approveCard(s, slug, sha, approver, ready, baseline, assumptionLines(ready.Intent.Text), inventedDroppedLines(root, slug), unresolvedLines(root, slug)...)
 		return 5, nil
 	}
 
@@ -476,7 +476,7 @@ func approveQuestionsPending(root, slug string) error {
 
 // approveCard prints the review card (AUT-1): each Scenario Outline once with its number of
 // examples and `fails now` if any row fails, each ordinary Scenario once.
-func approveCard(s *sys.Session, slug, sha, approver string, ready *verify.Ready, baseline []string, assumptions []string, unresolved ...string) {
+func approveCard(s *sys.Session, slug, sha, approver string, ready *verify.Ready, baseline []string, assumptions []string, dropped []string, unresolved ...string) {
 	s.Puts("Intent: " + slug + " — " + ready.Intent.Title)
 	s.Puts("SHA-256: " + sha)
 	s.Puts("Approver: " + approver)
@@ -521,6 +521,12 @@ func approveCard(s *sys.Session, slug, sha, approver string, ready *verify.Ready
 		s.Puts("Assumptions to confirm")
 		for _, a := range assumptions {
 			s.Puts("  - " + a)
+		}
+	}
+	if len(dropped) > 0 {
+		s.Puts(inventedHeading)
+		for _, d := range dropped {
+			s.Puts(d)
 		}
 	}
 	if len(unresolved) > 0 {

@@ -170,8 +170,20 @@ func (sh *shaping) auditTrackedHas(literal string, skip func(path string) bool) 
 	return false
 }
 
-// auditInventedLines are the refusal lines and fix lines of the invented literals Kogen keeps.
-func (sh *shaping) auditInventedLines(ev contractEvidence, reports []auditInventedReport, questions string) (lines, fixes []string) {
+// inventedFinding is one invented literal Kogen keeps, with the scenario and literal normalized as the
+// run records them, and the refusal line and fix line it is refused with.
+type inventedFinding struct{ scenario, literal, line, fix string }
+
+// inventedDroppedFile is the per-run record of the literals the run dropped, replaced by each ready
+// run like unresolvedFile; the approval card lists them.
+const inventedDroppedFile = "invented_dropped.json"
+
+// inventedHeading is the heading of the card section that lists the dropped literals.
+const inventedHeading = "Literals chosen by the Shaper"
+
+// auditInventedKept are the invented literals Kogen keeps from the review's reports: the request,
+// the answers and the tracked files do not state them and the candidate drives or asserts them.
+func (sh *shaping) auditInventedKept(ev contractEvidence, reports []auditInventedReport, questions string) (kept []inventedFinding) {
 	skip := func(path string) bool {
 		if path == ev.intentPath || path == ev.featurePath || path == project.ModelPath(sh.slug) {
 			return true
@@ -214,10 +226,127 @@ func (sh *shaping) auditInventedLines(ev contractEvidence, reports []auditInvent
 		if normalizeWhitespace(r.scenario) == "" {
 			where = "scenario: (none, a sentence of intent.md)"
 		}
-		lines = append(lines, fmt.Sprintf("- %s | %s | literal: \"%s\" | why: %s | no source states it: not the request, the answers or a tracked file", auditInvented, where, auditOneLine(literal), normalizeWhitespace(r.why)))
-		fixes = append(fixes, auditInventedFix(literal))
+		kept = append(kept, inventedFinding{
+			scenario: normalizeWhitespace(r.scenario), literal: auditOneLine(literal),
+			line: fmt.Sprintf("- %s | %s | literal: \"%s\" | why: %s | no source states it: not the request, the answers or a tracked file", auditInvented, where, auditOneLine(literal), normalizeWhitespace(r.why)),
+			fix:  auditInventedFix(literal),
+		})
 	}
-	return lines, fixes
+	return kept
+}
+
+// auditInventedLines are the refusal lines and fix lines of the invented literals of a review. The
+// first review of a Shape run that keeps any refuses them and records each kept literal and
+// scenario and that its one rewrite was offered; every later review of the run drops them: one
+// invented_literal_dropped event each, no refusal line.
+func (sh *shaping) auditInventedLines(ev contractEvidence, reports []auditInventedReport, questions string) (lines, fixes []string) {
+	kept := sh.auditInventedKept(ev, reports, questions)
+	if len(kept) == 0 {
+		return nil, nil
+	}
+	if !sh.dropInvented || !sh.inventedOffered {
+		for _, k := range kept {
+			lines, fixes = append(lines, k.line), append(fixes, k.fix)
+		}
+		if sh.dropInvented {
+			sh.inventedOffered = true
+			for _, k := range kept {
+				sh.inventedKept = append(sh.inventedKept, inventedRecord{Scenario: k.scenario, Literal: k.literal})
+			}
+		}
+		return lines, fixes
+	}
+	for _, k := range kept {
+		rec := inventedRecord{Scenario: k.scenario, Literal: k.literal, Submission: sh.submissions}
+		sh.inventedDropped = append(sh.inventedDropped, rec)
+		sh.ev.Record(map[string]any{"event": "invented_literal_dropped", "literal": rec.Literal, "scenario": rec.Scenario, "submission": rec.Submission})
+	}
+	return nil, nil
+}
+
+// inventedRecord is a literal of a kept or dropped invented_contract finding.
+type inventedRecord struct {
+	Scenario   string `json:"scenario"`
+	Literal    string `json:"literal"`
+	Submission int    `json:"submission,omitempty"`
+}
+
+// inventedFinal are the dropped literals the ready package still drives or asserts: a literal the
+// Shaper rewrote away in a later submission is not chosen by the Shaper any more.
+func (sh *shaping) inventedFinal() []inventedRecord {
+	if len(sh.inventedDropped) == 0 || sh.ready == nil || sh.ready.Intent == nil {
+		return nil
+	}
+	intent := sh.ready.Intent.Text
+	texts := []string{}
+	for _, p := range append(sh.ready.Intent.StepFiles(), project.FeaturePath(sh.slug)) {
+		if b, err := os.ReadFile(filepath.Join(sh.root, p)); err == nil {
+			texts = append(texts, string(b))
+		}
+	}
+	var out []inventedRecord
+	for _, r := range sh.inventedDropped {
+		driven := false
+		if r.Scenario == "" {
+			driven = containsNormalized(intent, r.Literal)
+		} else {
+			for _, t := range texts {
+				driven = driven || containsNormalized(t, r.Literal)
+			}
+		}
+		if driven {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// writeInventedDropped replaces the run's record of dropped literals; the approval card reads it.
+func (sh *shaping) writeInventedDropped() error {
+	list := sh.inventedFinal()
+	if list == nil {
+		list = []inventedRecord{}
+	}
+	b, err := json.Marshal(list)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(sh.ev.Dir, inventedDroppedFile), b, 0o600)
+}
+
+// inventedDroppedLines are the card lines of the literals the run that produced the current Intent
+// dropped; nil when it dropped none.
+func inventedDroppedLines(root, slug string) []string {
+	b, err := os.ReadFile(filepath.Join(root, ".kogen/local/shaping", slug, inventedDroppedFile))
+	if err != nil {
+		return nil
+	}
+	var list []inventedRecord
+	if json.Unmarshal(b, &list) != nil {
+		return nil
+	}
+	return inventedCardLines(list)
+}
+
+// inventedCardLines are the lines under the card heading, one per distinct literal and scenario.
+func inventedCardLines(list []inventedRecord) []string {
+	var out, seen []string
+	for _, r := range list {
+		key := r.Scenario + "\x00" + r.Literal
+		if slices.Contains(seen, key) {
+			continue
+		}
+		seen = append(seen, key)
+		where := "scenario: " + r.Scenario
+		if r.Scenario == "" {
+			where = "scenario: (none, a sentence of intent.md)"
+		}
+		out = append(out, fmt.Sprintf("  - %s | literal: \"%s\"", where, r.Literal))
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return append([]string{"  The Request does not state them; check that each is acceptable:"}, out...)
 }
 
 // auditDeferred reports whether the candidate's controls.json is a deferral.
@@ -372,6 +501,7 @@ func (sh *shaping) auditConfirmed(ev contractEvidence, scenarios []project.Scena
 	var out contractConfirmed
 	lines, fixes := sh.auditInventedLines(ev, audit.invented, questions)
 	out.contradictions, out.fixes = append(out.contradictions, lines...), append(out.fixes, fixes...)
+	out.invented = len(lines) > 0
 	if sh.auditDeferred() {
 		lines, fixes = sh.auditFailureLines(ev, scenarios, audit, questions)
 		out.contradictions, out.fixes = append(out.contradictions, lines...), append(out.fixes, fixes...)
@@ -381,6 +511,7 @@ func (sh *shaping) auditConfirmed(ev contractEvidence, scenarios []project.Scena
 
 // addAudit appends the audit's lines to the contradictions of c.
 func (c *contractConfirmed) addAudit(a contractConfirmed) {
+	c.invented = c.invented || a.invented
 	c.contradictions = append(c.contradictions, a.contradictions...)
 	c.fixes = append(c.fixes, a.fixes...)
 }

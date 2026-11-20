@@ -223,7 +223,8 @@ func shapeRun(ctx context.Context, s *sys.Session, in ShapeInput) (exit int, err
 	sh := &shaping{s: s, in: in, repo: repo, root: root, slug: slug, cfg: cfg, role: cfg.Models["shape"], ev: ev, ext: ext, extMax: extMax,
 		rd: rd, client: client, stateDir: stateDir, originals: map[string]original{}, proposed: map[string]string{},
 		ledger: ledger, round: len(st.Rounds) + 1, rules: studio,
-		contractSessions: map[string]int{}, contractChecked: map[string]bool{}, contractRefused: map[string]contractConfirmed{}}
+		contractSessions: map[string]int{}, contractChecked: map[string]bool{}, contractRefused: map[string]contractConfirmed{},
+		dropInvented: true}
 	return sh.shape(ctx, st)
 }
 
@@ -653,13 +654,18 @@ type shaping struct {
 	contractChecked  map[string]bool              // package hashes checked without a refusal
 	contractRefused  map[string]contractConfirmed // package hash to the item lines of its refusal
 	contractLines    []string                     // the item lines of the last contract refusal
-	reviewProps      []propertyReport             // the properties of the last contract review that was complete; nil otherwise
-	lastGate         string                       // the gate of the last refused submission
-	modelTime        time.Duration                // the time of the model request that produced the current submissions
-	timedAttempts    []timedAttempt               // every refused submission with its timings, oldest first
-	lastChecked      *timedAttempt                // the last submission when it was checked without a gate refusal, nil otherwise
-	contractRan      bool                         // the contract review or confirmation ran in the current submission
-	lastRefusal      []string                     // its problem lines as recorded in submission_refused
+
+	dropInvented    bool             // Shape drops an invented literal after its one rewrite was offered; Refine never does
+	inventedOffered bool             // the one rewrite of an invented_contract finding was offered in this run
+	inventedKept    []inventedRecord // the normalized literal and scenario of each kept invented_contract finding
+	inventedDropped []inventedRecord // the literals dropped in this run, with their submission numbers
+	reviewProps     []propertyReport // the properties of the last contract review that was complete; nil otherwise
+	lastGate        string           // the gate of the last refused submission
+	modelTime       time.Duration    // the time of the model request that produced the current submissions
+	timedAttempts   []timedAttempt   // every refused submission with its timings, oldest first
+	lastChecked     *timedAttempt    // the last submission when it was checked without a gate refusal, nil otherwise
+	contractRan     bool             // the contract review or confirmation ran in the current submission
+	lastRefusal     []string         // its problem lines as recorded in submission_refused
 	// unresolved are the refusals since the last submission answered with readiness failures.
 	unresolved []shapeRefusal
 	// refusedPackages maps the package of every refused files submission to the attempt that
@@ -1837,6 +1843,9 @@ func (sh *shaping) submitOne(ctx context.Context, args map[string]any) (string, 
 		if werr := os.WriteFile(filepath.Join(sh.ev.Dir, unresolvedFile), []byte("[]"), 0o600); werr != nil {
 			return "", outcome{}, werr
 		}
+		if werr := sh.writeInventedDropped(); werr != nil {
+			return "", outcome{}, werr
+		}
 	}
 	if err == nil && out.kind == outInvalid && sh.packageKey != "" {
 		if sh.unchangedOf > 0 {
@@ -2803,6 +2812,12 @@ func (sh *shaping) printReady(added []string, usageLine string) int {
 	sh.s.Puts(fmt.Sprintf("Scenarios: %d (%d fail now, %d pass now)", len(sh.ready.Scenarios), failing, passing))
 	for _, w := range sh.ready.StepWarnings {
 		sh.s.Puts(w.Line())
+	}
+	if card := inventedCardLines(sh.inventedFinal()); len(card) > 0 {
+		sh.s.Puts(inventedHeading)
+		for _, line := range card {
+			sh.s.Puts(line)
+		}
 	}
 	sh.s.Puts(usageLine)
 	sh.s.Puts("Next: kogen intent approve " + sh.slug)

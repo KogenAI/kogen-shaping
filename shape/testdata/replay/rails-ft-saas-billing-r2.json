@@ -1,0 +1,40 @@
+{
+  "cell": "rails-ft-saas-billing r2",
+  "first": [
+    {
+      "kind": "step",
+      "literal": "account_subscription_path"
+    },
+    {
+      "kind": "step",
+      "literal": "plan: \"unlimited_plus\""
+    },
+    {
+      "kind": "step",
+      "literal": "STRIPE_UNLIMITED_PRICE_ID"
+    }
+  ],
+  "second": [
+    {
+      "kind": "step",
+      "literal": "account_subscription_path"
+    },
+    {
+      "kind": "step",
+      "literal": "account_billing_portal_path"
+    },
+    {
+      "kind": "step",
+      "literal": "plan: \"unlimited_plus\""
+    },
+    {
+      "kind": "step",
+      "literal": "STRIPE_UNLIMITED_PRICE_ID"
+    },
+    {
+      "kind": "step",
+      "literal": "STRIPE_UNLIMITED_PLUS_PRICE_ID"
+    }
+  ],
+  "request": "Show whether a number is even."
+}

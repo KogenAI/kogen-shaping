@@ -1,0 +1,24 @@
+{
+  "cell": "rails-ft-saas-billing r1",
+  "first": [
+    {
+      "kind": "step",
+      "literal": "assert_operator counts.last, :<=, counts.first + 2"
+    },
+    {
+      "kind": "intent",
+      "literal": "at most 25 SQL queries for 10 or for 100 accounts"
+    }
+  ],
+  "second": [
+    {
+      "kind": "step",
+      "literal": "assert_operator counts.last, :<=, counts.first + 2"
+    },
+    {
+      "kind": "intent",
+      "literal": "at most 25 SQL queries for 10 or for 100 accounts"
+    }
+  ],
+  "request": "Show whether a number is even."
+}

@@ -238,6 +238,9 @@ func decisionResolve(items []decisionItem, request, intent string, locked map[st
 	return event, lines, marks
 }
 
+// decisionGuaranteeRe matches the words of a guarantee of the Request that a Decision must not weaken.
+var decisionGuaranteeRe = regexp.MustCompile(`(?i)\b(exactly[- ]once|never|always|at[- ]most[- ]once|at[- ]least[- ]once|every|no)\b`)
+
 // decisionResolveNotes is decisionResolve that also returns the advisory notes: an unsupported
 // statement that carries (evidence: ...) is recorded and passed to the shaper, not refused.
 // Only a contradiction, or an unsupported statement with neither evidence nor an assumption,
@@ -371,6 +374,8 @@ func decisionResolveRepeated(items []decisionItem, request, intent string, locke
 			}
 			if uncertifiedConflict {
 				problems = append(problems, fmt.Sprintf("fix for %s: Preserve the request's requirement %q in the quoted line and its acceptance expectations. If the draft already follows the requirement, cite the exact matching text. The check reported a conflict but paraphrased the draft value.", where, it.requestValue))
+			} else if decisionGuaranteeRe.MatchString(it.requestValue) {
+				problems = append(problems, fmt.Sprintf("fix for %s: restate the guarantee in the Request's own words, %q, in place of %q, and align the acceptance expectations with it. Put any limit of the repository or the receiver as a separate open limit beside the guarantee, never in place of it.", where, it.requestValue, it.intentValue))
 			} else {
 				problems = append(problems, fmt.Sprintf("fix for %s: Replace %q with the request's requirement %q. Align the acceptance expectations with that requirement.", where, it.intentValue, it.requestValue))
 			}

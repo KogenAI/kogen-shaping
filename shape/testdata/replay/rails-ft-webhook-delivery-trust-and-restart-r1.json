@@ -1,0 +1,7 @@
+{
+  "cell": "rails-ft-webhook-delivery-trust-and-restart r1",
+  "request": "Deliver exactly once.",
+  "weak": "- at-most-once is accepted for a crash mid-send (assumption: crash handling) (source: request)",
+  "weak_value": "at-most-once",
+  "full": "- exactly once, including across a crash and a restart; the receiver limit is a separate open limit (assumption: receiver dedupe) (source: request)"
+}

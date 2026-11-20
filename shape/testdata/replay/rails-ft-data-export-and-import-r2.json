@@ -1,0 +1,24 @@
+{
+  "cell": "rails-ft-data-export-and-import r2",
+  "first": [
+    {
+      "kind": "step",
+      "literal": "assert_operator n, :<=, 500"
+    },
+    {
+      "kind": "intent",
+      "literal": "The whole import runs in one database transaction so failure leaves no rows behind"
+    }
+  ],
+  "second": [
+    {
+      "kind": "step",
+      "literal": "assert_operator n, :<=, 500"
+    },
+    {
+      "kind": "intent",
+      "literal": "The whole import runs in one database transaction so failure leaves no rows behind"
+    }
+  ],
+  "request": "Show whether a number is even."
+}

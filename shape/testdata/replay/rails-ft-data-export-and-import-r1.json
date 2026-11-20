@@ -1,0 +1,20 @@
+{
+  "cell": "rails-ft-data-export-and-import r1",
+  "first": [
+    {
+      "kind": "step",
+      "literal": "#{@slug}/account/exports"
+    }
+  ],
+  "second": [
+    {
+      "kind": "step",
+      "literal": "#{@slug}/account/exports"
+    },
+    {
+      "kind": "step",
+      "literal": "#{@slug}/users/#{@member.id}/data_exports"
+    }
+  ],
+  "request": "Show whether a number is even."
+}

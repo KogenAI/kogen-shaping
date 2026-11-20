@@ -378,6 +378,8 @@ type contractConfirmed struct {
 	// wrong are the lines of the wrong-implementation check, with their headline.
 	wrong         []string
 	wrongHeadline string
+	// invented is true when the contradictions hold an invented_contract refusal of this review.
+	invented bool
 }
 
 func (c contractConfirmed) empty() bool {
@@ -598,6 +600,12 @@ func (sh *shaping) packageHash() (string, error) {
 func (sh *shaping) contractRefusal(hash string) (string, outcome, bool) {
 	confirmed, ok := sh.contractRefused[hash]
 	if !ok {
+		return "", outcome{}, false
+	}
+	if confirmed.invented && sh.dropInvented {
+		// The one rewrite of an invented literal was offered with this refusal. The same package
+		// is reviewed again so that the literal is dropped now, not refused again.
+		delete(sh.contractRefused, hash)
 		return "", outcome{}, false
 	}
 	lines := confirmed.all()
