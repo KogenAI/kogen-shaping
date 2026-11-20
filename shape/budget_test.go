@@ -196,3 +196,109 @@ func TestBudgetStopListsTheLastSubmissionChecks(t *testing.T) {
 
 // budgetFigureLine is the refusal line that states the shaping budget and names the other budget.
 const budgetFigureLine = "shaping budget: 900 s (15 min, wall-clock for the whole shaping, all rounds; the response_budget event is the separate limit on one provider response wait)"
+
+// withBudgetEnv sets KOGEN_SHAPE_BUDGET_MINUTES in the fixture's session environment; nil unsets it.
+func withBudgetEnv(f *shpFx, value *string) {
+	var env []string
+	for _, kv := range f.Env {
+		if !strings.HasPrefix(kv, budgetEnv+"=") {
+			env = append(env, kv)
+		}
+	}
+	if value != nil {
+		env = append(env, budgetEnv+"="+*value)
+	}
+	f.Env = env
+}
+
+func budgetValue(s string) *string { return &s }
+
+// budgetRun is a passing shaping whose clock moves 10 s per request.
+func budgetRun(t *testing.T, value *string) (f *shpFx, exit int, err error) {
+	t.Helper()
+	w := responsesWire
+	f = budgetFx(t, 10*time.Second, w.readReadme("r1"), w.readReadme("r2"), w.shapeSubmit("ok", shpFiles()))
+	f.setReport("PASSED", 0)
+	withBudgetEnv(f, value)
+	exit, err = f.shape("Add calc.is_even(n).")
+	return f, exit, err
+}
+
+func budgetSecondLine(f *shpFx) string {
+	line := ""
+	for _, l := range strings.Split(shpBody(f.Prov.requests()[1]), "\n") {
+		if strings.HasPrefix(l, "Time: ") {
+			line = l
+		}
+	}
+	return line
+}
+
+func TestBudgetEnvSetsTimeLineAndEvent(t *testing.T) {
+	parallel(t)
+	for _, c := range []struct {
+		name    string
+		value   *string
+		minutes int
+	}{{"unset", nil, 15}, {"empty", budgetValue(""), 15}, {"25", budgetValue("25"), 25}, {"5", budgetValue("5"), 5}, {"45", budgetValue("45"), 45}} {
+		t.Run(c.name, func(t *testing.T) {
+			f, exit, err := budgetRun(t, c.value)
+			if err != nil || exit != 0 {
+				t.Fatalf("exit %d: %v", exit, err)
+			}
+			want := fmt.Sprintf("Time: 0 min 10 s elapsed, %d min 50 s remaining of the %d-minute shaping budget.", c.minutes-1, c.minutes)
+			shpEq(t, "time line", budgetSecondLine(f), want)
+			counts := shpNamed(f.events(), "shaping_turn_counts")
+			shpEq(t, "events", len(counts), 1)
+			shpEq[any](t, "budget_seconds", counts[0]["budget_seconds"], float64(c.minutes*60))
+		})
+	}
+}
+
+func TestBudgetEnvSpentBoundary(t *testing.T) {
+	parallel(t)
+	requests := func(value *string, seconds int) int {
+		steps := make([]shpStep, 10)
+		for i := range steps {
+			steps[i] = responsesWire.readReadme(fmt.Sprint("r", i))
+		}
+		f := budgetFx(t, time.Duration(seconds)*time.Second, steps...)
+		withBudgetEnv(f, value)
+		f.shape("Bound shaping.")
+		return len(f.Prov.requests())
+	}
+	for _, c := range []struct {
+		value *string
+		secs  int
+		spent bool
+	}{{nil, 899, false}, {nil, 900, true}, {budgetValue("25"), 900, false}, {budgetValue("25"), 1499, false}, {budgetValue("25"), 1500, true}} {
+		shpEq(t, fmt.Sprintf("spent at %d s", c.secs), requests(c.value, c.secs) == 1, c.spent)
+	}
+}
+
+func TestBudgetEnvRefusesBadValuesBeforeAnyRequest(t *testing.T) {
+	parallel(t)
+	for _, v := range []string{"46", "4", "0", "-5", "abc", "25.5", " 25", "25 ", "+25", "1000000000000000000000"} {
+		t.Run(v, func(t *testing.T) {
+			f, exit, err := budgetRun(t, budgetValue(v))
+			e := shpWantError(t, err, "environment", "shape_budget", "shape budget must be a whole number of minutes from 5 to 45", 3)
+			shpEq(t, "exit", exit, 3)
+			shpEq(t, "class", e.Class, "environment")
+			shpEq(t, "requests", len(f.Prov.requests()), 0)
+		})
+	}
+}
+
+func TestBudgetEnvIsNotSharedBetweenShapings(t *testing.T) {
+	parallel(t)
+	f, _, err := budgetRun(t, budgetValue("25"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	shpContains(t, "25", budgetSecondLine(f), "of the 25-minute shaping budget.")
+	g, _, err := budgetRun(t, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shpContains(t, "unset", budgetSecondLine(g), "of the 15-minute shaping budget.")
+}

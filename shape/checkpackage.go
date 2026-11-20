@@ -103,7 +103,7 @@ func (sh *shaping) lintShadow(merged map[string]string) (c *shaping, dir string,
 	}
 	c = &shaping{
 		s: sh.s, in: sh.in, repo: sh.repo, root: sh.root, slug: sh.slug, cfg: sh.cfg, role: sh.role, ev: ev, rd: sh.rd,
-		client: sh.client, stateDir: dir, ext: sh.ext, extMax: sh.extMax, started: sh.started, originals: sh.originals,
+		client: sh.client, stateDir: dir, ext: sh.ext, extMax: sh.extMax, started: sh.started, budget: sh.budget, originals: sh.originals,
 		proposed: merged, declaredSteps: slices.Clone(sh.declaredSteps), ready: sh.ready, inspected: sh.inspected,
 		externalReads: sh.externalReads, docs: sh.docs, window: sh.window, round: sh.round, tracked: sh.tracked,
 		request: sh.request, rounds: sh.rounds, earlier: sh.earlier, probed: sh.probed, probeTexts: sh.probeTexts,

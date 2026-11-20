@@ -72,6 +72,11 @@ func Shape(ctx context.Context, s *sys.Session, in ShapeInput) (exit int, err er
 }
 
 func shapeRun(ctx context.Context, s *sys.Session, in ShapeInput) (exit int, err error) {
+	// The budget of this shaping is read once, before anything else, and held by the shaping.
+	budget, err := budgetFromEnv(s.Getenv)
+	if err != nil {
+		return 0, err
+	}
 	dir := in.Project
 	if dir == "" {
 		dir = s.Cwd
@@ -222,7 +227,7 @@ func shapeRun(ctx context.Context, s *sys.Session, in ShapeInput) (exit int, err
 	}
 	sh := &shaping{s: s, in: in, repo: repo, root: root, slug: slug, cfg: cfg, role: cfg.Models["shape"], ev: ev, ext: ext, extMax: extMax,
 		rd: rd, client: client, stateDir: stateDir, originals: map[string]original{}, proposed: map[string]string{},
-		ledger: ledger, round: len(st.Rounds) + 1, rules: studio,
+		ledger: ledger, round: len(st.Rounds) + 1, rules: studio, budget: budget,
 		contractSessions: map[string]int{}, contractChecked: map[string]bool{}, contractRefused: map[string]contractConfirmed{},
 		dropInvented: true}
 	return sh.shape(ctx, st)
@@ -592,6 +597,8 @@ type shaping struct {
 	// rules is the Studio rule snapshot this run loaded; nil without Studio configuration.
 	rules *studioRules
 
+	// budget is the charged time this shaping has; zero is the default budget.
+	budget        time.Duration
 	started       time.Time
 	toolDefs      []any
 	measure       ContextMeasure
@@ -967,11 +974,14 @@ func (sh *shaping) providerFailed(e *sys.Error) error {
 	return sys.Fail("shape", "provider_failed", sentence, 4)
 }
 
+// budgetValue is the budget of this shaping.
+func (sh *shaping) budgetValue() time.Duration { return budgetOr(sh.budget) }
+
 // converse runs until a valid submission or the invalid-submission budget ends (SHP-4, SHP-8).
 func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider.Usage, error) {
 	var usage provider.Usage
 	turns := newTurns("shape")
-	defer func() { shapeTurnCounts(turns, sh.ev, &sh.requests, sh.sinceStart) }()
+	defer func() { shapeTurnCounts(turns, sh.ev, &sh.requests, sh.budgetValue(), sh.sinceStart) }()
 	home := sh.s.Getenv("HOME")
 	if home == "" {
 		home, _ = os.UserHomeDir()
@@ -986,8 +996,8 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 	var last lastSubmission
 	var lastAnswer string
 	for {
-		if budgetSpent(sh.chargedTime()) {
-			return budgetStop(last, lastAnswer, turns.noTool, sh.chargedTime(), sh.requests, sh.budgetAttempts(), sh.ev.InstallTime(), sh.ev.StaticUnchargedTime()), usage, nil
+		if budgetSpent(sh.budgetValue(), sh.chargedTime()) {
+			return budgetStop(sh.budgetValue(), last, lastAnswer, turns.noTool, sh.chargedTime(), sh.requests, sh.budgetAttempts(), sh.ev.InstallTime(), sh.ev.StaticUnchargedTime()), usage, nil
 		}
 		sh.s.Progress(fmt.Sprintf("kogen: shaping (request %d, %d s)", sh.requests+1, sh.elapsed()))
 		t0 := time.Now()
@@ -1005,7 +1015,7 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 			return outcome{}, usage, err
 		}
 		input = append(input, map[string]any{"role": "user", "content": "Cumulative proposal manifest: " + string(enc)},
-			map[string]any{"role": "user", "content": budgetLine(sh.chargedTime())})
+			map[string]any{"role": "user", "content": budgetLineFor(sh.budgetValue(), sh.chargedTime())})
 		event, err := selectionEvent(input, manifest, sh.measure)
 		if err != nil {
 			return outcome{}, usage, err
@@ -1176,9 +1186,9 @@ func (sh *shaping) converse(ctx context.Context, input []any) (outcome, provider
 // a row end it like the native shaper.
 func (sh *shaping) converseExternal(ctx context.Context, blocks []any) (outcome, *extSession, error) {
 	sh.externalReads = make(map[string]bool)
-	stable := sh.withRules(ShaperInstructions()) + "\n\n" + externalBrief() + "\n\n" + blocksText(blocks)
+	stable := sh.withRules(ShaperInstructions()) + "\n\n" + externalBriefFor(sh.budgetValue()) + "\n\n" + blocksText(blocks)
 	x, err := startExternal(ctx, sh.ext, sh.extMax, sh.repo, sh.root, sh.s.Getenv("HOME"),
-		filepath.Join(sh.ev.Dir, "executor-shape"), sh.slug, sh.role, stable, budgetLine(sh.chargedTime()), shaperSubmitSchema(), sh.ev,
+		filepath.Join(sh.ev.Dir, "executor-shape"), sh.slug, sh.role, stable, budgetLineFor(sh.budgetValue(), sh.chargedTime()), shaperSubmitSchema(), sh.ev,
 		func(e map[string]any) {
 			if p := externalReadPath(sh.root, e); p != "" {
 				sh.externalReads[p] = true
@@ -1199,13 +1209,13 @@ func (sh *shaping) converseExternal(ctx context.Context, blocks []any) (outcome,
 	var last lastSubmission
 	repeats := readinessRepeats{}
 	for {
-		if feedback != "" && budgetSpent(sh.chargedTime()) {
-			return budgetStop(last, "", 0, sh.chargedTime(), x.rounds, sh.budgetAttempts(), sh.ev.InstallTime(), sh.ev.StaticUnchargedTime()), x, nil
+		if feedback != "" && budgetSpent(sh.budgetValue(), sh.chargedTime()) {
+			return budgetStop(sh.budgetValue(), last, "", 0, sh.chargedTime(), x.rounds, sh.budgetAttempts(), sh.ev.InstallTime(), sh.ev.StaticUnchargedTime()), x, nil
 		}
 		sh.s.Progress(fmt.Sprintf("kogen: shaping (external round %d, %d s)", x.rounds+1, sh.elapsed()))
 		clear(sh.externalReads)
 		if feedback != "" {
-			feedback = budgetLine(sh.chargedTime()) + "\n\n" + feedback
+			feedback = budgetLineFor(sh.budgetValue(), sh.chargedTime()) + "\n\n" + feedback
 		}
 		roundStart := sh.ev.clock()
 		res, err := x.round(ctx, feedback)
@@ -1562,7 +1572,7 @@ func (sh *shaping) submit(ctx context.Context, args map[string]any) (string, out
 	if sh.lastCounted != nil {
 		sh.timedAttempts = append(sh.timedAttempts, timedAttempt{
 			attempt: sh.submissions, gate: sh.lastCounted.gate, model: sh.modelTime,
-			check: sh.ev.clock().Sub(checkStart), remaining: shapingBudget - sh.chargedTime(),
+			check: sh.ev.clock().Sub(checkStart), remaining: sh.budgetValue() - sh.chargedTime(),
 		})
 	} else if err == nil && out.kind == outObservations {
 		gate := "readiness"
@@ -1572,7 +1582,7 @@ func (sh *shaping) submit(ctx context.Context, args map[string]any) (string, out
 		charged := sh.chargedTime()
 		sh.lastChecked = &timedAttempt{
 			attempt: sh.submissions, gate: gate, model: sh.modelTime,
-			check: sh.ev.clock().Sub(checkStart), remaining: shapingBudget - charged, over: charged - shapingBudget,
+			check: sh.ev.clock().Sub(checkStart), remaining: sh.budgetValue() - charged, over: charged - sh.budgetValue(),
 		}
 	}
 	return text, out, err

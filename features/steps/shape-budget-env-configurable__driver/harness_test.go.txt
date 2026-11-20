@@ -1,0 +1,168 @@
+package shape
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/KogenAI/kogen-executor/executor"
+	"github.com/KogenAI/kogen-loop/sys"
+)
+
+// TestShapeBudgetEnvHarness runs real shapings (fake clock, fake provider, no network) with
+// KOGEN_SHAPE_BUDGET_MINUTES set to different values in the session environment and writes what a
+// user or a log reader sees to the file named by SBEC_OUT.
+func TestShapeBudgetEnvHarness(t *testing.T) {
+	const name = "KOGEN_SHAPE_BUDGET_MINUTES"
+	w := responsesWire
+	withEnv := func(f *shpFx, value *string) {
+		var env []string
+		for _, kv := range f.Env {
+			if !strings.HasPrefix(kv, name+"=") {
+				env = append(env, kv)
+			}
+		}
+		if value != nil {
+			env = append(env, name+"="+*value)
+		}
+		f.Env = env
+	}
+	str := func(s string) *string { return &s }
+	timeLine := func(f *shpFx) string {
+		reqs := f.Prov.requests()
+		if len(reqs) < 2 {
+			return ""
+		}
+		line := ""
+		for _, l := range strings.Split(shpBody(reqs[1]), "\n") {
+			if strings.HasPrefix(l, "Time: ") {
+				line = l
+			}
+		}
+		return line
+	}
+	errText := func(err error) string {
+		if err == nil {
+			return ""
+		}
+		if e, ok := sys.AsError(err); ok {
+			return e.Render()
+		}
+		return err.Error()
+	}
+	errExit := func(err error) int {
+		if e, ok := sys.AsError(err); ok {
+			return e.Exit
+		}
+		return 0
+	}
+	errClass := func(err error) string {
+		if e, ok := sys.AsError(err); ok {
+			return e.Class
+		}
+		return ""
+	}
+	// shaping: a passing shaping whose clock moves 10 s per request.
+	shaping := func(value *string) map[string]any {
+		f := budgetFx(t, 10*time.Second, w.readReadme("r1"), w.readReadme("r2"), w.shapeSubmit("ok", shpFiles()))
+		f.setReport("PASSED", 0)
+		withEnv(f, value)
+		exit, err := f.shape("Add calc.is_even(n).")
+		obs := map[string]any{"requests": len(f.Prov.requests()), "exit": exit, "error": errText(err),
+			"error_exit": errExit(err), "error_class": errClass(err), "time_line": timeLine(f), "budget_seconds": nil}
+		if err == nil {
+			if counts := shpNamed(f.events(), "shaping_turn_counts"); len(counts) == 1 {
+				obs["budget_seconds"] = counts[0]["budget_seconds"]
+			}
+		}
+		return obs
+	}
+	// requestsAfterJump: how many provider requests a shaping makes when its first request moves the clock by seconds.
+	requestsAfterJump := func(value *string, seconds int) int {
+		steps := make([]shpStep, 10)
+		for i := range steps {
+			steps[i] = w.readReadme(fmt.Sprint("r", i))
+		}
+		f := budgetFx(t, time.Duration(seconds)*time.Second, steps...)
+		withEnv(f, value)
+		f.shape("Bound shaping.")
+		return len(f.Prov.requests())
+	}
+	out := map[string]any{}
+	// The 25-minute shaping runs before the unset ones, in this one process.
+	out["set_25"] = shaping(str("25"))
+	out["unset"] = shaping(nil)
+	out["empty"] = shaping(str(""))
+	for _, v := range []string{"46", "4", "0", "-5", "abc", "25.5", "5", "45"} {
+		out["value_"+v] = shaping(str(v))
+	}
+	jumps := map[string]int{}
+	for _, c := range []struct {
+		value *string
+		label string
+		secs  int
+	}{{nil, "unset", 899}, {nil, "unset", 900}, {str("25"), "25", 900}, {str("25"), "25", 1499}, {str("25"), "25", 1500}} {
+		jumps[fmt.Sprintf("%s/%d", c.label, c.secs)] = requestsAfterJump(c.value, c.secs)
+	}
+	out["requests_after_jump"] = jumps
+
+	// A shaping that runs out of budget, set to 25 minutes: external rounds of 20 and 4 minutes, and a contract check of 2 minutes.
+	f := newShpFx(t)
+	f.useExternalShape()
+	withEnv(f, str("25"))
+	clock := &shpClock{t: time.Unix(1_800_000_000, 0)}
+	bad := map[string]any{"questions": []any{shpQuestion("Q?")}, "files": shpFiles()["files"]}
+	advance := func(d time.Duration, next func(int, string) (executor.RoundResult, error)) func(int, string) (executor.RoundResult, error) {
+		return func(n int, root string) (executor.RoundResult, error) {
+			clock.t = clock.t.Add(d)
+			return next(n, root)
+		}
+	}
+	contractCalls := 0
+	review := result(map[string]any{"findings": []any{}, "environment": []any{}})
+	x := &shapeExec{t: t,
+		rounds: []func(int, string) (executor.RoundResult, error){
+			advance(20*time.Minute, result(bad)),
+			advance(4*time.Minute, result(shpFiles())),
+		},
+		contract: []func(int, string) (executor.RoundResult, error){
+			func(n int, root string) (executor.RoundResult, error) {
+				contractCalls++
+				if contractCalls == 1 {
+					clock.t = clock.t.Add(2 * time.Minute)
+				}
+				return review(n, root)
+			},
+		},
+	}
+	f.newSession()
+	_, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug,
+		Request: "Add calc.is_even(n).", Client: f.Client, External: x.external(), Now: clock.now})
+	stop := map[string]any{"detail": "", "budget_line": "", "attempts": []string{}}
+	if e, ok := sys.AsError(err); ok {
+		stop["detail"] = e.Detail
+		attempts := []string{}
+		for _, l := range e.Lines {
+			if strings.HasPrefix(l, "shaping budget: ") && stop["budget_line"] == "" {
+				stop["budget_line"] = l
+			}
+			if strings.HasPrefix(l, "attempt ") {
+				attempts = append(attempts, strings.ReplaceAll(l, "\n", " "))
+			}
+		}
+		stop["attempts"] = attempts
+	}
+	out["stop_25"] = stop
+
+	b, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(os.Getenv("SBEC_OUT"), b, 0o666); err != nil {
+		t.Fatal(err)
+	}
+}
