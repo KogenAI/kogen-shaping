@@ -1,0 +1,138 @@
+package shape
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	"io/fs"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+const rcSlug = "rc-demo"
+
+const rcAccept = `NODE_PATH="$KOGEN_CUCUMBER" "$KOGEN_NODE" "$KOGEN_CUCUMBER/@cucumber/cucumber/bin/cucumber.js" --strict --require 'features/steps/*.js' --format "message:$KOGEN_ACCEPTANCE_REPORT" "$KOGEN_ACCEPTANCE_FEATURES"`
+
+const rcSteps = `const fs = require('node:fs');
+const assert = require('node:assert/strict');
+const {Then} = require('@cucumber/cucumber');
+Then('fx: the value is {string}', function (v) { assert.equal(fs.readFileSync('value.txt', 'utf8').trim(), v); });
+`
+
+func rcWrite(t *testing.T, root, rel, content string) {
+	t.Helper()
+	p := filepath.Join(root, rel)
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func rcDigest(t *testing.T, root string) string {
+	h := sha256.New()
+	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			b, _ := os.ReadFile(p)
+			fmt.Fprintf(h, "%s\x00%x\n", p, b)
+		}
+		return nil
+	})
+	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
+type rcCase struct {
+	setup, accept, referenceValue, scenarioValue, kind string
+	timeout                                            time.Duration
+	noProps, badHash                                   bool
+}
+
+// rcRun builds a pinned checkout and a runner checkout holding the retained draft, runs the diagnostic once and observes it.
+func rcRun(t *testing.T, c rcCase) map[string]any {
+	pinned, runner := t.TempDir(), t.TempDir()
+	count := filepath.Join(t.TempDir(), "count")
+	accept := rcAccept
+	if c.accept != "" {
+		accept = "echo x >> " + count + "; " + c.accept
+	}
+	setup := "[]"
+	if c.setup != "" {
+		setup = "['" + c.setup + "']"
+	}
+	yaml := "version: 1\ncommands:\n  setup: " + setup + "\n  checks: [{name: unit, run: 'true'}]\n  acceptance:\n    run: '" + strings.ReplaceAll(accept, "'", "''") + "'\n    steps_dir: features/steps\n"
+	for _, root := range []string{pinned, runner} {
+		rcWrite(t, root, ".kogen/project.yaml", yaml)
+		rcWrite(t, root, "value.txt", "old\n")
+	}
+	feature := "Feature: demo\n\n  Scenario: S\n    Then fx: the value is \"" + c.scenarioValue + "\"\n"
+	rcWrite(t, runner, ".kogen/intents/"+rcSlug+"/acceptance.feature", feature)
+	rcWrite(t, runner, ".kogen/intents/"+rcSlug+"/intent.md", "# Demo\n\nSlug: "+rcSlug+"\nModel: not applicable — fixture\nAcceptance:\n- .kogen/intents/"+rcSlug+"/acceptance.feature\n- features/steps/fx__steps.js\n\nFixture.\n")
+	rcWrite(t, runner, "features/steps/fx__steps.js", rcSteps)
+	controls, _ := json.Marshal(map[string]any{"correct": map[string]any{"files": map[string]string{"value.txt": c.referenceValue + "\n"}}, "wrong": []any{}})
+	rcWrite(t, runner, ".kogen/intents/"+rcSlug+"/controls.json", string(controls))
+	rcWrite(t, runner, ".kogen/local/shaping/"+rcSlug+"/not_ready", "latched\n")
+	rcWrite(t, runner, ".kogen/approvals/"+rcSlug+".json", "{\"approved\":true}\n")
+	hash, err := RecheckDraftHash(runner, rcSlug)
+	if err != nil {
+		t.Fatalf("RecheckDraftHash: %v", err)
+	}
+	if c.badHash {
+		hash = "0000"
+	}
+	in := RecheckInput{Project: runner, Pinned: pinned, Slug: rcSlug, DraftHash: hash, Timeout: c.timeout}
+	if !c.noProps {
+		in.Properties = []RecheckProperty{{Name: "p", Kind: c.kind, Scenarios: []string{"S"}}}
+	}
+	if in.Timeout == 0 {
+		in.Timeout = 40 * time.Second
+	}
+	beforeRunner, beforePinned := rcDigest(t, runner), rcDigest(t, pinned)
+	rep, err := Recheck(context.Background(), in)
+	if err != nil {
+		t.Fatalf("Recheck: %v", err)
+	}
+	runs := 0
+	if b, err := os.ReadFile(count); err == nil {
+		runs = len(strings.Fields(string(b)))
+	}
+	return map[string]any{
+		"verdict": rep.Verdict, "scenario": rep.Scenario, "class": rep.Class, "runner_kind": rep.RunnerKind,
+		"attribution_open": rep.AttributionOpen, "unavailable": rep.Unavailable, "names_gate": rep.Gate != "",
+		"names_command":  rep.Command != "" && strings.Contains(rep.Command, "cucumber"),
+		"reference_text": strings.Contains(rep.Text, "Reference failure: the acceptance command") && strings.Contains(rep.Text, "at fault"),
+		"has_evidence":   len(rep.Evidence) > 0, "acceptance_runs": runs,
+		"state_unchanged": beforeRunner == rcDigest(t, runner) && beforePinned == rcDigest(t, pinned),
+	}
+}
+
+func TestShapeRecheckObservation(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no sh")
+	}
+	out := map[string]any{
+		// the reference writes a wrong value: it fails with the reference in place and fails differently on the unchanged tree
+		"reference": rcRun(t, rcCase{referenceValue: "wrong", scenarioValue: "new", kind: "new"}),
+		// a kept scenario fails on the unchanged tree
+		"kept": rcRun(t, rcCase{referenceValue: "old", scenarioValue: "kept", kind: "kept"}),
+		// the same failure on both trees, not a kept scenario
+		"ambiguous": rcRun(t, rcCase{referenceValue: "old", scenarioValue: "new", kind: "new"}),
+		// the reference passes: red on the unchanged tree is expected
+		"passing":     rcRun(t, rcCase{referenceValue: "new", scenarioValue: "new", kind: "new"}),
+		"timeout":     rcRun(t, rcCase{accept: "sleep 30", referenceValue: "new", scenarioValue: "new", kind: "new", timeout: 3 * time.Second}),
+		"missingtool": rcRun(t, rcCase{accept: "kogen-recheck-no-such-tool", referenceValue: "new", scenarioValue: "new", kind: "new"}),
+		"killed":      rcRun(t, rcCase{accept: "kill -9 $$", referenceValue: "new", scenarioValue: "new", kind: "new"}),
+		"setup":       rcRun(t, rcCase{setup: "echo setup-broke; exit 3", referenceValue: "new", scenarioValue: "new", kind: "new"}),
+		"mismatch":    rcRun(t, rcCase{badHash: true, referenceValue: "wrong", scenarioValue: "new", kind: "new"}),
+		"nomodel":     rcRun(t, rcCase{noProps: true, referenceValue: "wrong", scenarioValue: "new", kind: "new"}),
+	}
+	b, _ := json.Marshal(out)
+	if err := os.WriteFile(os.Getenv("SRC_OUT"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}

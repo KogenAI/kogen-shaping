@@ -605,11 +605,51 @@ func controlsFeatureSelector(featurePath string, witness []project.Scenario, nar
 	return featurePath
 }
 
+// controlsSetupError is a setup command of a run that exited with a status other than 0.
+type controlsSetupError struct {
+	command string
+	status  int
+	output  string
+}
+
+func (e *controlsSetupError) Error() string {
+	return fmt.Sprintf("setup command %q exited with status %d", e.command, e.status)
+}
+
+// controlsExec is what runs the acceptance of a tree: the copy it runs in, the project's
+// commands, and the clock the time cap is read from.
+type controlsExec struct {
+	s     *sys.Session
+	cfg   *project.Config
+	slug  string
+	clock func() time.Time
+	// tools are the KOGEN_NODE, KOGEN_QUINT and KOGEN_CUCUMBER values the commands get; empty
+	// ones are left to the session's environment.
+	tools map[string]string
+	// materialize writes the tree the run starts from into the empty directory tree.
+	materialize func(tree string) error
+	// seedFrom is the checkout whose git-ignored paths seed the copy; empty seeds nothing.
+	seedFrom string
+	// acceptBound, when positive, is the longest the acceptance command may run, whatever time
+	// the deadline leaves; with a zero deadline it is the only limit on that command.
+	acceptBound time.Duration
+}
+
 // controlsRun runs the candidate's acceptance once in a fresh copy of the candidate tree with
 // the files of each overlay written over it, in order, before the time cap deadline. The run
 // executes only the scenarios of expected when narrow is set, else the whole feature, and must
 // report each of expected exactly once.
 func (sh *shaping) controlsRun(ctx context.Context, expected []project.Scenario, narrow bool, deadline time.Time, overlays ...controlsOverlay) (controlsRunResult, error) {
+	tools := map[string]string{"KOGEN_NODE": sh.rd.Tools.Node, "KOGEN_QUINT": sh.rd.Tools.Quint, "KOGEN_CUCUMBER": sh.rd.Tools.Cucumber}
+	x := controlsExec{s: sh.s, cfg: sh.cfg, slug: sh.slug, clock: sh.ev.clock, tools: tools, seedFrom: sh.root,
+		materialize: func(tree string) error {
+			_, err := sh.repo.Materialize(sh.ready.CandidateTree, tree)
+			return err
+		}}
+	return x.run(ctx, expected, narrow, deadline, overlays...)
+}
+
+func (x controlsExec) run(ctx context.Context, expected []project.Scenario, narrow bool, deadline time.Time, overlays ...controlsOverlay) (controlsRunResult, error) {
 	var res controlsRunResult
 	base := sys.TmpPath("kogen-wrong-implementation")
 	defer os.RemoveAll(base)
@@ -621,10 +661,12 @@ func (sh *shaping) controlsRun(ctx context.Context, expected []project.Scenario,
 	if err := os.WriteFile(preload, []byte(controlsPreload), 0o644); err != nil {
 		return res, err
 	}
-	if _, err := sh.repo.Materialize(sh.ready.CandidateTree, tree); err != nil {
+	if err := x.materialize(tree); err != nil {
 		return res, err
 	}
-	_ = verify.SeedIgnored(sh.root, tree)
+	if x.seedFrom != "" {
+		_ = verify.SeedIgnored(x.seedFrom, tree)
+	}
 	res.roots = []string{tree}
 	if resolved := resolvedPath(tree); resolved != tree {
 		res.roots = append(res.roots, resolved)
@@ -636,7 +678,7 @@ func (sh *shaping) controlsRun(ctx context.Context, expected []project.Scenario,
 		}
 	}
 	env := map[string]string{}
-	for k, v := range map[string]string{"KOGEN_NODE": sh.rd.Tools.Node, "KOGEN_QUINT": sh.rd.Tools.Quint, "KOGEN_CUCUMBER": sh.rd.Tools.Cucumber} {
+	for k, v := range x.tools {
 		if v != "" {
 			env[k] = v
 		}
@@ -644,11 +686,16 @@ func (sh *shaping) controlsRun(ctx context.Context, expected []project.Scenario,
 	// command runs one command in the copy within the time that remains; ran is false when the
 	// time cap ended it or left no time to start it.
 	var lastOutput string
-	command := func(cmd string, extra map[string]string) (status int, ran bool, err error) {
-		remaining := deadline.Sub(sh.ev.clock())
-		if remaining <= 0 {
-			res.cutOff = true
-			return 0, false, nil
+	command := func(cmd string, extra map[string]string, bound time.Duration) (status int, ran bool, err error) {
+		var remaining time.Duration
+		if !deadline.IsZero() {
+			if remaining = deadline.Sub(x.clock()); remaining <= 0 {
+				res.cutOff = true
+				return 0, false, nil
+			}
+		}
+		if bound > 0 && (remaining == 0 || bound < remaining) {
+			remaining = bound
 		}
 		opts := sys.Options{Env: map[string]string{}, Timeout: remaining, Context: ctx, KillGroupOnExit: true}
 		for k, v := range env {
@@ -657,7 +704,7 @@ func (sh *shaping) controlsRun(ctx context.Context, expected []project.Scenario,
 		for k, v := range extra {
 			opts.Env[k] = v
 		}
-		r, err := sh.s.RunContext(ctx, cmd, tree, opts)
+		r, err := x.s.RunContext(ctx, cmd, tree, opts)
 		if err != nil {
 			return 0, false, err
 		}
@@ -668,31 +715,31 @@ func (sh *shaping) controlsRun(ctx context.Context, expected []project.Scenario,
 		lastOutput = r.Output
 		return r.Status, true, nil
 	}
-	for _, cmd := range sh.cfg.Setup {
-		status, ran, err := command(cmd, nil)
+	for _, cmd := range x.cfg.Setup {
+		status, ran, err := command(cmd, nil, 0)
 		if err != nil || !ran {
 			return res, err
 		}
 		if status != 0 {
-			return res, fmt.Errorf("setup command %q exited with status %d", cmd, status)
+			return res, &controlsSetupError{command: cmd, status: status, output: lastOutput}
 		}
 	}
-	if sh.cfg.Acceptance == nil || sh.cfg.Acceptance.Run == "" {
+	if x.cfg.Acceptance == nil || x.cfg.Acceptance.Run == "" {
 		return res, nil
 	}
 	nodeOptions := "--require " + controlsEnvPath(preload)
-	if existing := sh.s.Getenv("NODE_OPTIONS"); existing != "" {
+	if existing := x.s.Getenv("NODE_OPTIONS"); existing != "" {
 		nodeOptions += " " + existing
 	}
-	status, ran, err := command(sh.cfg.Acceptance.Run, map[string]string{
-		"KOGEN_ACCEPTANCE_FEATURES": controlsFeatureSelector(project.FeaturePath(sh.slug), expected, narrow),
+	status, ran, err := command(x.cfg.Acceptance.Run, map[string]string{
+		"KOGEN_ACCEPTANCE_FEATURES": controlsFeatureSelector(project.FeaturePath(x.slug), expected, narrow),
 		"KOGEN_ACCEPTANCE_REPORT":   report,
 		"NODE_OPTIONS":              nodeOptions,
-	})
+	}, x.acceptBound)
 	if err != nil || !ran {
 		return res, err
 	}
-	res.accept, res.acceptStatus, res.acceptOutput = sh.cfg.Acceptance.Run, status, lastOutput
+	res.accept, res.acceptStatus, res.acceptOutput = x.cfg.Acceptance.Run, status, lastOutput
 	text, err := os.ReadFile(report)
 	if err != nil {
 		return res, nil
