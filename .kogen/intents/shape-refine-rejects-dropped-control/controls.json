@@ -1,0 +1,1 @@
+{"deferred":"the acceptance is a Go harness over Refine's own test fixtures; the correct implementation is parsing the stored and replacement controls in shape/refine.go, and its wrong-implementation overlays would patch that large file, which the shaping budget does not allow honestly"}

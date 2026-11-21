@@ -1599,6 +1599,9 @@ func (r *refine) controlsEditCheck(ctx context.Context, hash string) (contractCo
 	if err != nil {
 		return contractConfirmed{}, err
 	}
+	if lines := droppedControlLines(r.originals[project.IntentDir(r.slug)+"/controls.json"], raw, r.slug); len(lines) > 0 {
+		return contractConfirmed{wrong: lines, wrongHeadline: droppedControlsHeadline(len(lines), r.slug)}, nil
+	}
 	var props []propertyReport
 	var requests []string
 	var top map[string]any
@@ -1634,4 +1637,102 @@ func (r *refine) controlsEditCheck(ctx context.Context, hash string) (contractCo
 	defer func() { checks.ready, checks.reviewProps, checks.request = ready, reviewProps, request }()
 	checks.reviewProps, checks.request = props, strings.Join(requests, "\n")
 	return checks.wrongImplementationCheck(ctx, hash)
+}
+
+// controlRef identifies a wrong implementation of a controls file by its normalised name and scenario.
+type controlRef struct{ name, scenario string }
+
+// controlsSupersede is the statement a replacement control's name makes to supersede an original.
+var controlsSupersede = regexp.MustCompile(`supersedes "([^"]*)" of "([^"]*)" because(?: (.*))?$`)
+
+// readControlRefs reads the wrong implementations a controls file lists, whatever else is wrong with
+// it, in order. object is false when the file is not a JSON object; listed is true when it is a
+// deferral or has a "wrong" list.
+func readControlRefs(raw []byte) (refs []controlRef, object, listed bool) {
+	var top map[string]any
+	if json.Unmarshal(raw, &top) != nil || top == nil {
+		return nil, false, false
+	}
+	if _, deferred := top["deferred"]; deferred {
+		return nil, true, true
+	}
+	list, ok := top["wrong"].([]any)
+	if !ok {
+		return nil, true, false
+	}
+	for _, item := range list {
+		m, _ := item.(map[string]any)
+		name, n := m["name"].(string)
+		scenario, s := m["scenario"].(string)
+		if n && s {
+			refs = append(refs, controlRef{normalizeWhitespace(name), normalizeWhitespace(scenario)})
+		}
+	}
+	return refs, true, true
+}
+
+func supersedeText(c controlRef) string {
+	return fmt.Sprintf(`supersedes "%s" of "%s" because <reason>`, c.name, c.scenario)
+}
+
+// droppedControlLines are the problem lines of a replacement controls file that loses a control of
+// the stored original: each original must be in the replacement or be superseded in it, in the name of
+// a replacement control, with a reason that is not blank. Nothing is compared when the original
+// holds no readable wrong implementation or the replacement is not a controls object the parser can
+// start to read; those are judged as before.
+func droppedControlLines(original, replacement []byte, slug string) []string {
+	origs, _, _ := readControlRefs(original)
+	if len(origs) == 0 {
+		return nil
+	}
+	repl, object, listed := readControlRefs(replacement)
+	if !object || !listed {
+		return nil
+	}
+	file := project.IntentDir(slug) + "/controls.json"
+	known := map[controlRef]bool{}
+	for _, o := range origs {
+		known[o] = true
+	}
+	present := map[controlRef]bool{}
+	superseded := map[controlRef]bool{}
+	var bad []string
+	for _, c := range repl {
+		present[c] = true
+		m := controlsSupersede.FindStringSubmatch(c.name)
+		if m == nil {
+			continue
+		}
+		target := controlRef{normalizeWhitespace(m[1]), normalizeWhitespace(m[2])}
+		switch {
+		case !known[target]:
+			bad = append(bad, fmt.Sprintf(`- %s: replacement control "%s" supersedes "%s" of "%s", which is not a control of the stored %s; name a control the stored file has, as %s`,
+				file, c.name, target.name, target.scenario, file, supersedeText(target)))
+		case strings.TrimSpace(m[3]) == "":
+			bad = append(bad, fmt.Sprintf(`- %s: replacement control "%s" supersedes "%s" of "%s" with a blank reason, which does not supersede it; state a reason that is not blank, as %s`,
+				file, c.name, target.name, target.scenario, supersedeText(target)))
+		default:
+			superseded[target] = true
+		}
+	}
+	var lines []string
+	seen := map[controlRef]bool{}
+	for _, o := range origs {
+		if present[o] || superseded[o] || seen[o] {
+			continue
+		}
+		seen[o] = true
+		lines = append(lines, fmt.Sprintf(`- %s: control "%s" of scenario "%s" is missing from the replacement; keep it, or supersede it by writing in the name of a replacement control: %s`,
+			file, o.name, o.scenario, supersedeText(o)))
+	}
+	return append(lines, bad...)
+}
+
+// droppedControlsHeadline is the first line of a refusal of n dropped or wrongly superseded controls.
+func droppedControlsHeadline(n int, slug string) string {
+	return fmt.Sprintf("Controls check: %d problem(s) with the replacement %s/controls.json losing a control of the stored one; nothing was published. "+
+		"Every wrong implementation of the stored controls.json, by its name and scenario, must be present in the replacement, or be superseded in it: "+
+		`write in the name of a replacement control the text supersedes "<original name>" of "<original scenario>" because <reason>, naming the original and giving a reason that is not blank. `+
+		"Deferring the controls does not supersede them.",
+		n, project.IntentDir(slug))
 }
