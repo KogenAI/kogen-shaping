@@ -902,9 +902,13 @@ func TestRefineAMixedUnsafePayloadContributesNoProposals(t *testing.T) {
 	refEqual(t, "package", f.pkg(), refWith(before, refFeaturePath, refFeatured))
 	refText(t, "app.txt", f.read("app.txt"), "red\n")
 	feedback := shpOutputs(f.Prov.requests()[1])["c1"]
-	refText(t, "feedback", feedback, refineInvalidFiles)
+	shpContains(t, "feedback", feedback, refineInvalidFilesBase)
+	shpContains(t, "feedback", feedback, "Refused: app.txt.")
+	for _, owned := range []string{refIntentPath, refFeaturePath} {
+		shpContains(t, "feedback", feedback, owned)
+	}
 	rel := strings.TrimPrefix(f.evidence(), f.Root+"/")
-	refText(t, "diagnostic file", f.read(rel+"/diagnostic-1.txt"), refineInvalidFiles)
+	refText(t, "diagnostic file", f.read(rel+"/diagnostic-1.txt"), feedback)
 	if f.exists(rel + "/candidate-1") {
 		t.Fatal("an invalid submission has no candidate")
 	}
@@ -976,7 +980,7 @@ func TestRefineThreeInvalidSubmissionsStopIt(t *testing.T) {
 	exit, err := f.refine(f.hash0)
 	e := shpWantError(t, err, "shape", "refinement_invalid", "no valid ready correction after 3 submissions; the original draft is preserved", 1)
 	shpEq(t, "exit", exit, 1)
-	shpEq(t, "lines", strings.Join(e.Lines, "|"), strings.Join(strings.Split(refineInvalidFiles, "\n"), "|"))
+	shpContains(t, "lines", strings.Join(e.Lines, "\n"), refineInvalidFilesBase)
 	shpEq(t, "requests", len(f.Prov.requests()), 4)
 	refText(t, "empty files", shpOutputs(f.Prov.requests()[2])["c1"], refineInvalidShape)
 	refEqual(t, "package", f.pkg(), before)
@@ -1996,4 +2000,62 @@ func TestChecktimeClockReadiness(t *testing.T) {
 			}
 		})
 	}
+}
+
+const refControlsPath = ".kogen/intents/is-even/controls.json"
+
+const refWeakControls = "{\"correct\":{\"files\":{\"calc.js\":\"x\"}},\"wrong\":[{\"name\":\"same\",\"scenario\":\"Even numbers\",\"step\":\"Then is-even: four is even\",\"files\":{\"calc.js\":\"x\"}}]}\n"
+
+func refControlsFx(t *testing.T, replacement string) *refFx {
+	t.Helper()
+	steps := []shpStep{}
+	for i := 1; i <= 3; i++ {
+		steps = append(steps, refSubmit(fmt.Sprintf("c%d", i), refControlsPath, replacement))
+	}
+	f := newRefFx(t, refOpts{}, steps...)
+	f.write(refControlsPath, "{\"deferred\":\"too large; checked at /home/someone/work\"}\n")
+	f.git("add", "-A")
+	f.git("commit", "-qm", "controls with a home path")
+	return f
+}
+
+func TestRefineAcceptsADeferredControlsReplacement(t *testing.T) {
+	parallel(t)
+	replacement := "{\"deferred\":\"too large; checked at /work\"}\n"
+	f := refControlsFx(t, replacement)
+	if _, err := f.refine(f.hash()); err != nil {
+		t.Fatalf("err %v\n%s", err, f.Stderr)
+	}
+	refText(t, "controls", f.read(refControlsPath), replacement)
+}
+
+func TestRefineRefusesAControlsReplacementWhoseWrongImplementationPasses(t *testing.T) {
+	parallel(t)
+	f := refControlsFx(t, refWeakControls)
+	before := f.read(refControlsPath)
+	_, err := f.refine(f.hash())
+	if err == nil {
+		t.Fatal("the weaker controls were accepted")
+	}
+	refText(t, "controls", f.read(refControlsPath), before)
+	shpContains(t, "feedback", shpOutputs(f.Prov.requests()[1])["c1"], "Wrong-implementation check")
+}
+
+func TestRefineRefusalNamesTheRefusedPathAndTheOwnedFiles(t *testing.T) {
+	parallel(t)
+	text := refineInvalidFiles([]string{"go.sum"}, []string{refIntentPath, refControlsPath})
+	for _, want := range []string{refineInvalidFilesBase, "go.sum", refIntentPath, refControlsPath} {
+		shpContains(t, "refusal", text, want)
+	}
+}
+
+func TestRefineRefusesAnInvalidControlsReplacement(t *testing.T) {
+	parallel(t)
+	f := refControlsFx(t, "{\"wrong\":[]}\n")
+	before := f.read(refControlsPath)
+	if _, err := f.refine(f.hash()); err == nil {
+		t.Fatal("an invalid controls file was accepted")
+	}
+	refText(t, "controls", f.read(refControlsPath), before)
+	shpContains(t, "feedback", shpOutputs(f.Prov.requests()[1])["c1"], "controls.json")
 }

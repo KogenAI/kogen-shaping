@@ -462,7 +462,7 @@ func refineRegularPath(root, path string) bool {
 }
 
 // refineEditable are the files of the package a correction may replace: the Intent's own
-// `intent.md`, `acceptance.feature` and `model.qnt`, and its step files under `steps_dir`
+// `intent.md`, `acceptance.feature`, `model.qnt` and `controls.json`, and its step files under `steps_dir`
 // that HEAD does not have and no other Intent lists. Protected and non-regular paths are
 // never editable.
 func refineEditable(repo *git.Repo, root, slug string, cfg *project.Config, files []string) ([]string, error) {
@@ -481,7 +481,7 @@ func refineEditable(repo *git.Repo, root, slug string, cfg *project.Config, file
 	if err != nil {
 		return nil, err
 	}
-	owned := []string{project.IntentMDPath(slug), project.FeaturePath(slug), project.ModelPath(slug)}
+	owned := []string{project.IntentMDPath(slug), project.FeaturePath(slug), project.ModelPath(slug), project.IntentDir(slug) + "/controls.json"}
 	stepsDir := ""
 	if cfg.Acceptance != nil {
 		stepsDir = cfg.Acceptance.StepsDir
@@ -1102,7 +1102,17 @@ func (r *refine) probe(ctx context.Context, command string, files any) (string, 
 
 const refineInvalidShape = "invalid: submit exactly a nonempty files array of complete existing owned artifact contents (edits or readiness acknowledgment), or constraint (why this correction needs unsupported work). No proposals from this submission were retained; earlier proposals are unchanged."
 
-const refineInvalidFiles = "invalid: a path is not an exclusively owned editable draft file, or a change has invalid content/duplicate paths; no new/shared/protected paths. No proposals from this submission were retained; earlier proposals are unchanged."
+const refineInvalidFilesBase = "invalid: a path is not an exclusively owned editable draft file, or a change has invalid content/duplicate paths; no new/shared/protected paths. No proposals from this submission were retained; earlier proposals are unchanged."
+
+// refineInvalidFiles is the refusal of a submission: the existing text, the refused paths and
+// the owned files that may be submitted.
+func refineInvalidFiles(refused, owned []string) string {
+	text := refineInvalidFilesBase
+	if len(refused) > 0 {
+		text += " Refused: " + strings.Join(refused, ", ") + "."
+	}
+	return text + " Owned editable files: " + strings.Join(owned, ", ") + "."
+}
 
 // submit takes one submit_refinement call: a constraint, or files merged into the
 // accumulated proposals and checked as a complete candidate. The text goes back to the model.
@@ -1131,6 +1141,7 @@ func (r *refine) submit(ctx context.Context, args map[string]any) (string, refin
 
 	proposals := map[string]string{}
 	valid, seen := true, map[string]bool{}
+	var refused []string
 	for _, f := range list {
 		m, isMap := f.(map[string]any)
 		if !isMap {
@@ -1148,6 +1159,9 @@ func (r *refine) submit(ctx context.Context, args map[string]any) (string, refin
 		}
 		p, pok := path.(string)
 		content, cok := m["content"].(string)
+		if pok && !slices.Contains(r.allowed, p) && !slices.Contains(refused, p) {
+			refused = append(refused, p)
+		}
 		if !hasPath || len(m) != 2 || !pok || !cok || !slices.Contains(r.allowed, p) {
 			valid = false
 			continue
@@ -1155,10 +1169,11 @@ func (r *refine) submit(ctx context.Context, args map[string]any) (string, refin
 		proposals[p] = content
 	}
 	if !valid {
-		if err := r.save("", map[string][]byte{fmt.Sprintf("diagnostic-%d.txt", attempt): []byte(refineInvalidFiles)}, 0o666); err != nil {
+		invalid := refineInvalidFiles(refused, r.allowed)
+		if err := r.save("", map[string][]byte{fmt.Sprintf("diagnostic-%d.txt", attempt): []byte(invalid)}, 0o666); err != nil {
 			return "", refineOutcome{}, err
 		}
-		return refineInvalidFiles, refineOutcome{kind: refineInvalid, diagnostic: refineInvalidFiles}, nil
+		return invalid, refineOutcome{kind: refineInvalid, diagnostic: invalid}, nil
 	}
 	for p, c := range proposals {
 		r.proposed[p] = c
@@ -1358,6 +1373,10 @@ func (r *refine) check(ctx context.Context, attempt int, paths []string) (string
 	if !acknowledged && !checks.contractChecked[hash] {
 		checks.ready = ready
 		confirmed, err := checks.contractCheck(ctx, hash, observations)
+		if _, edited := r.proposed[project.IntentDir(r.slug)+"/controls.json"]; err == nil && confirmed.empty() && edited {
+			// A controls.json edit is judged by the wrong-implementation run of Shape's checks.
+			confirmed, err = r.controlsEditCheck(ctx, hash)
+		}
 		if err != nil {
 			return "", refineOutcome{}, err
 		}
@@ -1568,4 +1587,51 @@ func (r *refine) restorePublished(changes map[string]string) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// controlsEditCheck is Shape's wrong-implementation check for a candidate whose controls.json a
+// refinement edited. Refine has no contract review of properties, so every wrong implementation
+// of the stored controls stands for one observable property that a run must reject at the step it
+// names. Deferred controls and invalid controls are judged as Shape judges them.
+func (r *refine) controlsEditCheck(ctx context.Context, hash string) (contractConfirmed, error) {
+	checks := r.acceptanceChecks()
+	raw, err := os.ReadFile(filepath.Join(r.scratch, project.IntentDir(r.slug), "controls.json"))
+	if err != nil {
+		return contractConfirmed{}, err
+	}
+	var props []propertyReport
+	var requests []string
+	var top map[string]any
+	if json.Unmarshal(raw, &top) == nil {
+		var wrong []struct {
+			Name     string `json:"name"`
+			Scenario string `json:"scenario"`
+		}
+		if b, ok := top["wrong"]; ok {
+			enc, _ := json.Marshal(b)
+			_ = json.Unmarshal(enc, &wrong)
+		}
+		for _, w := range wrong {
+			request := "wrong implementation " + w.Name + " of " + w.Scenario
+			requests = append(requests, request)
+			props = append(props, propertyReport{property: request, request: request, kind: "controls", observable: true, scenarios: []string{w.Scenario}})
+		}
+	}
+	if len(props) == 0 {
+		// No wrong implementation to judge: the deferral or the problems of the file itself.
+		feature, err := os.ReadFile(filepath.Join(r.scratch, project.FeaturePath(r.slug)))
+		if err != nil {
+			return contractConfirmed{}, err
+		}
+		scenarios, err := project.ParseGherkin(string(feature))
+		if err != nil || len(scenarios) == 0 {
+			return contractConfirmed{}, err
+		}
+		props = []propertyReport{{property: "controls.json", request: "controls.json", kind: "controls", observable: true, scenarios: []string{scenarios[0].Name}}}
+		requests = []string{"controls.json"}
+	}
+	ready, reviewProps, request := checks.ready, checks.reviewProps, checks.request
+	defer func() { checks.ready, checks.reviewProps, checks.request = ready, reviewProps, request }()
+	checks.reviewProps, checks.request = props, strings.Join(requests, "\n")
+	return checks.wrongImplementationCheck(ctx, hash)
 }
