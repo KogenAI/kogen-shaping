@@ -599,7 +599,7 @@ func checkOverlayPath(tree, p string) error {
 }
 
 // writeOverlay writes each file of an implementation over the copy, creating missing
-// directories, then applies each patch to its file with git apply; no component of a path may
+// directories, then applies each patch to its file with git apply --recount; no component of a path may
 // be a symlink, and a patch may change only the file it is given for.
 func writeOverlay(tree string, o controlsOverlay) error {
 	paths := make([]string, 0, len(o.files))
@@ -634,7 +634,7 @@ func writeOverlay(tree string, o controlsOverlay) error {
 		}
 		include := "--include=" + strings.NewReplacer(`\`, `\\`, "*", `\*`, "?", `\?`, "[", `\[`).Replace(p)
 		git := func(args ...string) (string, error) {
-			cmd := exec.Command("git", append([]string{"apply", include}, args...)...)
+			cmd := exec.Command("git", append([]string{"apply", "--recount", include}, args...)...)
 			cmd.Dir = tree
 			cmd.Env = append(os.Environ(), "GIT_CEILING_DIRECTORIES="+filepath.Dir(tree))
 			cmd.Stdin = strings.NewReader(patch)

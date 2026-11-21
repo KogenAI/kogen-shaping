@@ -1073,3 +1073,37 @@ func TestControlsInapplicablePatchShowsFailedHunk(t *testing.T) {
 		}
 	})
 }
+
+// A patch whose hunk header counts are one too small applies with git apply --recount; a patch
+// whose context line does not match the tree is still refused with the failed-hunk display.
+func TestControlsPatchWithWrongHunkCountsApplies(t *testing.T) {
+	patch := func(p string) map[string]any { return map[string]any{"patch": p} }
+	twenty := ""
+	for _, w := range strings.Fields("apple birch cedar dune elm fern grove heath iris juniper kelp larch maple nettle oak pine quince reed spruce thistle") {
+		twenty += w + "\n"
+	}
+	miscounted := "--- a/notes.txt\n+++ b/notes.txt\n@@ -1,2 +1,2 @@\n apple\n-birch\n+BIRCH\n cedar\n"
+	changed := "--- a/notes.txt\n+++ b/notes.txt\n@@ -1,3 +1,3 @@\n apple\n-birch\n+BIRCH\n CEDAR\n"
+	ok := map[string]any{"big_a.js": patch(controlsOffsetPatch("big_a.js", 1, 0)), "big_b.js": patch(controlsOffsetPatch("big_b.js", 1, 0))}
+	addWrong := map[string]any{"big_a.js": patch(controlsOffsetPatch("big_a.js", 0, 7))}
+	run := func(p string) []string {
+		correct := map[string]any{"notes.txt": patch(p)}
+		for k, v := range ok {
+			correct[k] = v
+		}
+		c, _ := controlsLargeCandidate(t, correct, addWrong, map[string]any{"big_b.js": patch(controlsOffsetPatch("big_b.js", 0, 7))})
+		c.base["notes.txt"] = twenty
+		return controlsLargeLines(t, c)
+	}
+	t.Run("hunk counts one too small apply", func(t *testing.T) {
+		if lines := run(miscounted); len(lines) != 0 {
+			t.Fatalf("lines = %q", lines)
+		}
+	})
+	t.Run("a changed context line is still refused with the failed hunk", func(t *testing.T) {
+		want := "- controls.json: the correct implementation: notes.txt: the patch does not apply to the candidate tree: error: patch failed: notes.txt:1: @@ -1,3 +1,3 @@: notes.txt from line 1 is: [1] apple [2] birch [3] cedar [4] dune [5] elm [6] fern [7] grove [8] heath"
+		if lines := run(changed); len(lines) != 1 || lines[0] != want {
+			t.Fatalf("lines = %q", lines)
+		}
+	})
+}
