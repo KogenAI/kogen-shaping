@@ -699,10 +699,22 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 
 	// audited are the lines of the invented contract and failure mode audit, once the review is parsed.
 	var audited contractConfirmed
+	// A request that declares a repair of named failing checks on main: the named checks that
+	// fail on the starting revision are the target and never kept; a named check that passes
+	// there is refused.
+	repair := observeRepair(repairNames(sh.request), sh.ready)
+	for _, name := range repair.targets {
+		sh.progress(repairProgress(name))
+	}
+	if len(repair.targets) > 0 || len(repair.refusals) > 0 {
+		sh.ev.Record(map[string]any{"event": "repair_declared", "package": hash, "targets": nonNilStrings(repair.targets), "not_failing": len(repair.refusals)})
+	}
 	incomplete := func(reason string, findings, evidenced int, items []contractItem, envItems []contractEnvItem) (contractConfirmed, error) {
 		sh.progress("kogen: contract check incomplete (" + reason + "); the candidate goes on")
 		sh.ev.Record(contractEvent(hash, "incomplete", reason, findings, evidenced, 0, items, envItems))
-		return audited, nil
+		out := audited
+		out.properties = append(slices.Clone(out.properties), repair.refusals...)
+		return out, nil
 	}
 
 	args, why, err := sh.contractCall(ctx, "review", reviewInput)
@@ -737,6 +749,9 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 	for i, p := range props {
 		if p.kind == "kept" && p.observable && propertyCounts(p, sh.request, questions) {
 			for _, name := range ev.declaredScenarios(p.scenarios) {
+				if slices.Contains(repair.targets, name) {
+					continue
+				}
 				kept[name] = true
 				keptLines[name] = append(keptLines[name], p.keptSteps...)
 				if !slices.Contains(keptOwners[name], i) {
@@ -845,14 +860,14 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 		}
 	}
 	// A kept step the unchanged tree disproves is refused whatever the reviewer says.
-	proven := contractConfirmed{properties: baselineRefusals}
+	proven := contractConfirmed{properties: slices.Concat(repair.refusals, baselineRefusals)}
 	proven.addAudit(audited)
 	if len(evidenced) == 0 {
 		result := "clean"
 		if !proven.empty() {
 			result = "refused"
 		}
-		sh.ev.Record(contractEvent(hash, result, "", total, 0, len(baselineRefusals)+len(audited.contradictions), items, envItems))
+		sh.ev.Record(contractEvent(hash, result, "", total, 0, len(repair.refusals)+len(baselineRefusals)+len(audited.contradictions), items, envItems))
 		recordProperties()
 		return proven, nil
 	}
@@ -873,7 +888,7 @@ func (sh *shaping) contractCheck(ctx context.Context, hash, observations string)
 	}
 	lines := applyVerdicts(items, envItems, verdicts)
 	lines.addAudit(audited)
-	lines.properties = append(applyPropertyVerdicts(props, problems, sent+1, verdicts), baselineRefusals...)
+	lines.properties = append(applyPropertyVerdicts(props, problems, sent+1, verdicts), slices.Concat(repair.refusals, baselineRefusals)...)
 	result := "clean"
 	confirmed := len(lines.contradictions) + len(lines.environment)
 	if !lines.empty() {

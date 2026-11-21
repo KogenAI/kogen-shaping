@@ -1,0 +1,1 @@
+{"deferred":"The correct implementation changes Shape's readiness, kept-check and timing-report code across several shape/ files and the Shape journey harness; writing it honestly exceeds the shaping budget, so the Build writes it."}

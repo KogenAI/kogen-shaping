@@ -289,6 +289,8 @@ type staticGateRunner struct {
 	// both nil (Approve) measure and record nothing.
 	now       func() time.Time
 	uncharged func(time.Duration)
+	// timedOut receives the name of a check that ended in a timeout.
+	timedOut func(string)
 }
 
 // staticTimeoutMemo remembers, for one Shape session only, the checks whose run timed out: by check
@@ -634,6 +636,9 @@ func (g *staticGateRunner) run(ctx context.Context, head, tree, sha string) (*st
 			return nil, err
 		}
 		c.WallMS = time.Since(checkStart).Milliseconds()
+		if res.TimedOut && g.timedOut != nil {
+			g.timedOut(c.Name)
+		}
 		if res.TimedOut && g.uncharged != nil {
 			g.uncharged(min(g.shapingNow().Sub(shapingStart), verify.StepTimeout))
 		}
@@ -776,7 +781,7 @@ func (sh *shaping) staticChecks(ctx context.Context, hash string) (string, outco
 			sh.staticTimeouts = &staticTimeoutMemo{}
 		}
 		g.timeouts, g.round = sh.staticTimeouts, sh.submissions
-		g.now, g.uncharged = sh.ev.clock, sh.ev.StaticUncharged
+		g.now, g.uncharged, g.timedOut = sh.ev.clock, sh.ev.StaticUncharged, sh.ev.CheckTimedOut
 		if run, err = g.run(ctx, head, tree, hash); err != nil {
 			return "", outcome{}, err
 		}
