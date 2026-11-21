@@ -379,6 +379,10 @@ type contractConfirmed struct {
 	// wrong are the lines of the wrong-implementation check, with their headline.
 	wrong         []string
 	wrongHeadline string
+	// reference are the lines that tell the shaper its reference or test is at fault when the
+	// correct implementation of controls.json fails a scenario; they follow the refusal's lines
+	// in its feedback and are not among its problem lines.
+	reference []string
 	// invented is true when the contradictions hold an invented_contract refusal of this review.
 	invented bool
 }
@@ -475,6 +479,7 @@ func contractFeedback(c contractConfirmed) string {
 	if len(c.wrong) > 0 {
 		out = append(append(out, c.wrongHeadline), c.wrong...)
 	}
+	out = append(out, c.reference...)
 	return strings.Join(out, "\n")
 }
 
@@ -611,6 +616,7 @@ func (sh *shaping) contractRefusal(hash string) (string, outcome, bool) {
 	}
 	lines := confirmed.all()
 	sh.contractLines = lines
+	sh.referenceRefusal = len(confirmed.reference) > 0
 	sh.refused(contractGate, lines)
 	return contractFeedback(confirmed), outcome{kind: outInvalid, problems: lines}, true
 }

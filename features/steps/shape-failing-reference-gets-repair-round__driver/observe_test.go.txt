@@ -1,0 +1,132 @@
+package shape
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/KogenAI/kogen-loop/sys"
+)
+
+// This supplied harness observes Shape with a fake client, a fake clock and scripted checks (a real local cucumber run for the
+// acceptance command); it is not a test the implementation must write. The reference-red candidate is a package whose controls.json
+// correct overlay does not pass its scenario, so the acceptance command exits 1 with the assertion message "new range is not implemented".
+const sfrExtraLine = "reference and test were not repaired in the extra round"
+
+func sfrMessage(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	if e, ok := sys.AsError(err); ok {
+		msg += "\n" + e.Detail + "\n" + strings.Join(e.Lines, "\n")
+	}
+	return msg
+}
+
+func TestShapeFailingReferenceObservation(t *testing.T) {
+	out := map[string]any{}
+	w := responsesWire
+	const request = "Read later bytes."
+	const stepLine = "Then is-even: the later range is later page"
+	steps := `const {Then}=require('@cucumber/cucumber'); const assert=require('node:assert/strict');
+Then('is-even: the later range is later page',function(){
+ assert.strictEqual(require('../../reader').read(80000),'later page','new range is not implemented');
+});
+`
+	feature := "Feature: Read ranges\n  Scenario: A later range\n    " + stepLine + "\n"
+	pack := func(correct string) map[string]any {
+		intent := strings.ReplaceAll(shpScopedIntentMD, "calc.is_even(n) returns True for even integers.", request)
+		controls, _ := json.Marshal(map[string]any{
+			"correct": map[string]any{"files": map[string]any{"reader.js": "exports.read = () => " + fmt.Sprintf("%q", correct) + ";\n"}},
+			"wrong":   []any{map[string]any{"name": "first page", "scenario": "A later range", "step": stepLine, "files": map[string]any{"reader.js": "exports.read = () => 'first page';\n"}}}})
+		return map[string]any{"files": []any{
+			map[string]any{"path": ccIntentPath, "content": intent},
+			map[string]any{"path": ccFeaturePath, "content": feature},
+			map[string]any{"path": ccStepsPath, "content": steps},
+			map[string]any{"path": ".kogen/intents/is-even/controls.json", "content": string(controls)}}}
+	}
+	contradiction := func(name string) shpStep {
+		return w.shapeSubmit(name, map[string]any{"files": []any{map[string]any{"path": name + ".go", "content": "x\n"}}})
+	}
+	// run scripts one shaping; each shaper request advances the fake clock by step and is counted.
+	run := func(step time.Duration, reference bool, seq ...shpStep) (*shpFx, int, error, *int, *[]string) {
+		f := newShpFx(t)
+		node, modules := os.Getenv("KOGEN_NODE"), os.Getenv("KOGEN_CUCUMBER")
+		f.write("reader.js", "exports.read = () => 'first page';\n")
+		f.write("features/steps/calc_steps.js", "// existing\n")
+		f.write("accept.sh", fmt.Sprintf("#!/bin/sh\ncase \"$KOGEN_ACCEPTANCE_FEATURES\" in */check.feature) : > \"$KOGEN_ACCEPTANCE_REPORT\"; exit 0;; esac\nNODE_PATH='%s' '%s' '%s' --strict --require 'features/steps/*.js' --format \"message:$KOGEN_ACCEPTANCE_REPORT\" \"$KOGEN_ACCEPTANCE_FEATURES\"\n", modules, node, filepath.Join(modules, "@cucumber/cucumber/bin/cucumber.js")))
+		f.git("add", "-A")
+		f.git("commit", "-qm", "reference fixture")
+		prop := map[string]any{"property": "later range", "request": "Read later bytes", "kind": "new", "observable": true, "scenarios": []any{"A later range"}, "decision": "", "issues": []any{}, "kept_steps": []any{}}
+		for i := 0; i < 8; i++ {
+			f.Prov.contract = append(f.Prov.contract, shpAnswer(shpCall(fmt.Sprint("review", i), SubmitContractReviewTool, map[string]any{"findings": []any{}, "environment": []any{}, "properties": []any{prop}})))
+		}
+		f.Prov.seq = seq
+		clock := &shpClock{t: time.Unix(1_800_000_000, 0)}
+		f.Now = clock.now
+		n := 0
+		var bodies []string
+		f.Prov.route = func(req map[string]any) *shpStep {
+			if !decisionRequest(req) && !literalRequest(req) && contractKind(req) == "" {
+				clock.t = clock.t.Add(step)
+				n++
+				bodies = append(bodies, shpBody(req))
+			}
+			return nil
+		}
+		exit, err := f.shape(request)
+		return f, exit, err, &n, &bodies
+	}
+	// 1: a round ending at 1300 s with a failing reference; the feedback names command, exit code and assertion lines.
+	{
+		_, _, _, n, bodies := run(1300*time.Second, true, shpSubmit("first", pack("oops")), shpSubmit("second", pack("oops2")), shpSubmit("third", pack("oops3")))
+		second := ""
+		if len(*bodies) > 1 {
+			second = strings.ToLower((*bodies)[1])
+		}
+		out["named"] = map[string]any{"requests": min(*n, 2) * sfrInt(*n >= 2),
+			"names_command":                   strings.Contains(second, "accept.sh"),
+			"names_exit_code":                 regexp.MustCompile(`exit (code |status )?:?\s*1\b`).MatchString(second),
+			"names_assertion_lines":           strings.Contains(second, "new range is not implemented"),
+			"says_reference_or_test_at_fault": strings.Contains(second, "reference") && strings.Contains(second, "at fault")}
+	}
+	// 2: the second request fixes the reference; the repaired draft is acknowledged and passes.
+	{
+		_, exit, err, n, _ := run(1300*time.Second, true, shpSubmit("first", pack("oops")), shpSubmit("second", pack("later page")), shpSubmit("third", pack("later page")))
+		out["repaired"] = map[string]any{"exit": exit, "failed": err != nil, "shaper_requests_at_least_two": *n >= 2}
+	}
+	// 3: the second request does not fix it.
+	{
+		_, _, err, n, _ := run(1300*time.Second, true, shpSubmit("first", pack("oops")), shpSubmit("second", pack("oops2")), shpSubmit("third", pack("oops3")), shpSubmit("fourth", pack("oops4")))
+		msg := sfrMessage(err)
+		lines := strings.Split(strings.TrimRight(msg, "\n"), "\n")
+		out["unrepaired"] = map[string]any{"failed": err != nil, "requests": *n,
+			"ends_with_extra_line": len(lines) > 0 && strings.HasSuffix(strings.TrimSpace(lines[len(lines)-1]), sfrExtraLine),
+			"extra_line_once":      strings.Count(msg, sfrExtraLine) == 1}
+	}
+	// 4: three consecutive refusals at one gate that are not about the reference end shaping as today, with no extra round.
+	{
+		_, _, err, n, _ := run(time.Second, false, contradiction("a"), contradiction("b"), contradiction("c"), contradiction("d"))
+		out["other"] = map[string]any{"failed": err != nil, "requests": *n, "mentions_extra_line": strings.Contains(sfrMessage(err), sfrExtraLine)}
+	}
+	raw, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(os.Getenv("SFR_OUT"), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func sfrInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}

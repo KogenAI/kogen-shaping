@@ -573,6 +573,10 @@ type shaping struct {
 
 	retry        retryBudget
 	retryStopped bool
+	// referenceRefusal is true while the contract refusal being recorded is a reference failure;
+	// referenceSeen is true once one was recorded (its extra round granted), and referenceStop
+	// when a second one ended the shaping.
+	referenceRefusal, referenceSeen, referenceStop bool
 	// batch collects the refusals of one submission's independent gates while they all run;
 	// batching is false outside that.
 	batch    []heldRefusal
@@ -870,10 +874,17 @@ func (sh *shaping) shape(ctx context.Context, st *state) (int, error) {
 			for p := range sh.originals {
 				files = append(files, p)
 			}
-			return 0, draftDiagnostic(sh.root, sh.slug, "not_ready", "the Intent is not ready to build", 1, append([]string{"Refusing check: " + sh.lastGate}, problems...), files)
+			diagnostic := draftDiagnostic(sh.root, sh.slug, "not_ready", "the Intent is not ready to build", 1, append([]string{"Refusing check: " + sh.lastGate}, problems...), files)
+			if e, ok := sys.AsError(diagnostic); ok && sh.referenceStop {
+				e.Lines = append(e.Lines, referenceUnrepairedLine)
+			}
+			return 0, diagnostic
 		}
 		e := sys.Fail("shape", "invalid_output", fmt.Sprintf("the shaper's output was not a valid Intent after %d attempts", submissionRetryLimit), 1)
 		e.Lines = append(append(slices.Clone(res.problems), sh.earliestLines()...), sh.refusalCountsLines()...)
+		if sh.referenceStop {
+			e.Lines = append(e.Lines, referenceUnrepairedLine)
+		}
 		return 0, e
 	case outNoTool:
 		e := sys.Fail("shape", "invalid_output", res.detail, 1)
@@ -1532,7 +1543,7 @@ func (sh *shaping) submit(ctx context.Context, args map[string]any) (string, out
 	sh.submissions++
 	sh.packageKey, sh.unchangedOf, sh.unchanged = "", 0, false
 	sh.priorRefusal, sh.lastCounted, sh.sameOf = sh.lastCounted, nil, 0
-	sh.contractRan = false
+	sh.contractRan, sh.referenceRefusal = false, false
 	text, out, err := sh.submitOne(ctx, args)
 	if err == nil && len(sh.notes) > 0 && out.kind != outQuestions {
 		text = "note:\n" + strings.Join(sh.notes, "\n") + "\n" + text
@@ -1612,7 +1623,13 @@ func (sh *shaping) recordRefusals(held []heldRefusal) {
 		for i, h := range held {
 			set[i] = gateProblems{gate: h.gate, problems: h.problems}
 		}
-		sh.retryStopped = sh.retry.refuseSet(set)
+		if sh.referenceRefusal && first.gate == contractGate {
+			sh.retryStopped = sh.retry.refuseReference(set, sh.referenceSeen)
+			sh.referenceStop = sh.referenceSeen
+			sh.referenceSeen = true
+		} else {
+			sh.retryStopped = sh.retry.refuseSet(set)
+		}
 		event["consecutive"] = sh.retry.consecutive
 		event["total"] = sh.retry.total
 	}
@@ -2020,6 +2037,7 @@ func (sh *shaping) checkSubmission(ctx context.Context, files []string) (string,
 			sh.ready = nil
 			sh.contractRefused[hash] = confirmed
 			sh.contractLines = lines
+			sh.referenceRefusal = len(confirmed.reference) > 0
 			sh.refused(contractGate, lines)
 			return contractFeedback(confirmed), outcome{kind: outInvalid, problems: lines}, nil
 		}

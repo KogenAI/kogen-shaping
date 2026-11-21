@@ -500,6 +500,10 @@ type controlsRunResult struct {
 	cutOff   bool                // the time cap ended the run
 	roots    []string            // the copy's path as given and with symlinks resolved
 	patch    *controlsPatchError // a patch of an overlay did not apply
+	// accept is the acceptance command of the run, its exit code and its output.
+	accept       string
+	acceptStatus int
+	acceptOutput string
 }
 
 func controlsEnvPath(p string) string {
@@ -639,6 +643,7 @@ func (sh *shaping) controlsRun(ctx context.Context, expected []project.Scenario,
 	}
 	// command runs one command in the copy within the time that remains; ran is false when the
 	// time cap ended it or left no time to start it.
+	var lastOutput string
 	command := func(cmd string, extra map[string]string) (status int, ran bool, err error) {
 		remaining := deadline.Sub(sh.ev.clock())
 		if remaining <= 0 {
@@ -660,6 +665,7 @@ func (sh *shaping) controlsRun(ctx context.Context, expected []project.Scenario,
 			res.cutOff = true
 			return 0, false, nil
 		}
+		lastOutput = r.Output
 		return r.Status, true, nil
 	}
 	for _, cmd := range sh.cfg.Setup {
@@ -678,13 +684,15 @@ func (sh *shaping) controlsRun(ctx context.Context, expected []project.Scenario,
 	if existing := sh.s.Getenv("NODE_OPTIONS"); existing != "" {
 		nodeOptions += " " + existing
 	}
-	if _, ran, err := command(sh.cfg.Acceptance.Run, map[string]string{
+	status, ran, err := command(sh.cfg.Acceptance.Run, map[string]string{
 		"KOGEN_ACCEPTANCE_FEATURES": controlsFeatureSelector(project.FeaturePath(sh.slug), expected, narrow),
 		"KOGEN_ACCEPTANCE_REPORT":   report,
 		"NODE_OPTIONS":              nodeOptions,
-	}); err != nil || !ran {
+	})
+	if err != nil || !ran {
 		return res, err
 	}
+	res.accept, res.acceptStatus, res.acceptOutput = sh.cfg.Acceptance.Run, status, lastOutput
 	text, err := os.ReadFile(report)
 	if err != nil {
 		return res, nil
@@ -856,6 +864,51 @@ func controlsUnreachable(props []controlsProp, scenarios []project.Scenario, fea
 	return lines
 }
 
+// referenceFailureLines are the lines that tell the shaper its reference or its test is at fault,
+// given the correct run of a candidate whose checked properties it did not pass: the failing
+// command, its exit code and the first failing assertion lines. They are nil when the correct run
+// passed every scenario of the checked properties.
+func referenceFailureLines(props []controlsProp, scenarios []project.Scenario, feature []string, correct controlsRunResult) []string {
+	evidence := ""
+	if correct.complete {
+		for _, p := range props {
+			for _, k := range p.scenarios {
+				c := correct.cases[scenarios[k].Line]
+				if c.status() == "passed" {
+					continue
+				}
+				first := c.firstUnpassed()
+				message := ""
+				if first != nil {
+					message = controlsFailureMessage(first.message)
+				}
+				evidence = fmt.Sprintf("first failing assertion lines (scenario \"%s\", at \"%s\"): %s",
+					normalizeWhitespace(scenarios[k].Name), controlsStepLabel(first, feature), message)
+				break
+			}
+			if evidence != "" {
+				break
+			}
+		}
+	} else if len(props) > 0 {
+		var lines []string
+		for _, l := range strings.Split(correct.acceptOutput, "\n") {
+			if l = normalizeWhitespace(l); l != "" && len(lines) < 3 {
+				lines = append(lines, l)
+			}
+		}
+		evidence = "the run did not report every scenario as passed or failed; first output lines: " + strings.Join(lines, " | ")
+	}
+	if evidence == "" || correct.accept == "" {
+		return nil
+	}
+	return []string{
+		fmt.Sprintf("Reference failure: the acceptance command `%s` exited with exit code %d with the correct implementation of controls.json in place.", normalizeWhitespace(correct.accept), correct.acceptStatus),
+		evidence,
+		"The reference (the \"correct\" implementation of controls.json) or the test is at fault, not the product: repair it so that every scenario passes with the correct implementation in place.",
+	}
+}
+
 // ---- the check ----
 
 // wrongHeadline is the first line of the wrong-implementation part of a refusal of n problems.
@@ -925,6 +978,7 @@ func (sh *shaping) wrongImplementationCheck(ctx context.Context, hash string) (c
 	}
 	event := map[string]any{"event": "wrong_implementation_check", "package": hash, "result": result, "runs": started,
 		"seconds": int(sh.ev.clock().Sub(begin).Seconds()), "problems": recorded, "controls": controls}
+	confirmed.reference = plan.reference
 	if plan.runs > 0 {
 		event["time_cap_seconds"], event["planned_runs"] = plan.seconds, plan.runs
 	}
@@ -970,7 +1024,11 @@ func controlsEvidenceOf(w controlsImpl, scenarios []project.Scenario, feature []
 }
 
 // controlsPlan is the time cap and the planned runs of a check that planned runs.
-type controlsPlan struct{ seconds, runs int }
+type controlsPlan struct {
+	seconds, runs int
+	// reference are the lines that name a failing reference; nil unless the correct run failed.
+	reference []string
+}
 
 // controlsCapFor is the time cap of a candidate of n planned runs: the larger of the base and
 // the time per planned run.
@@ -1157,6 +1215,7 @@ func (sh *shaping) controlsCheck(ctx context.Context, intent *project.Intent, sc
 		if i == 0 {
 			correctTook = sh.ev.clock().Sub(begin)
 			if lines := controlsUnreachable(props, scenarios, feature, run); len(lines) > 0 {
+				plan.reference = referenceFailureLines(props, scenarios, feature, run)
 				return lines, evidence, plan, nil
 			}
 		} else {

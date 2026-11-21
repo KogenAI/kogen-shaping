@@ -57,3 +57,25 @@ func stillRefused(previous, now []gateProblems) bool {
 	}
 	return true
 }
+
+// referenceUnrepairedLine ends the refusal of a draft that still fails with the reference in place
+// after the extra round its first reference failure was granted.
+const referenceUnrepairedLine = "reference and test were not repaired in the extra round"
+
+// refuseReference counts a submission refused because the correct implementation of controls.json
+// fails a scenario. The first such failure is never a repeated failure and never ends the shaping,
+// whatever was refused before: the shaper gets an extra round. A later one (again true) is counted
+// as any refusal and ends the shaping.
+func (b *retryBudget) refuseReference(set []gateProblems, again bool) bool {
+	if again {
+		b.refuseSet(set)
+		return true
+	}
+	b.consecutive = 1
+	if len(set) > 0 {
+		b.gate = set[0].gate
+	}
+	b.last = set
+	b.total++
+	return false
+}
