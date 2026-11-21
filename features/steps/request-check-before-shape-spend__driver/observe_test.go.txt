@@ -1,0 +1,146 @@
+package shape
+
+import (
+	"encoding/json"
+	"os"
+	"regexp"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/KogenAI/kogen-loop/sys"
+)
+
+const rcsRepair = "Add calc.is_even(n) to `calc.js`.\nEdit `guard.txt` to record the change.\n\n## Acceptance\n1. Evenness. Outcome: is_even(4) returns true.\n"
+const rcsDuplicate = "Add calc.is_even(n) to `calc.js`.\n\n## Acceptance\n1. Four is even. Outcome: is_even(4) returns true.\n2. Even accepted. Outcome: true is returned by is_even(4).\n"
+const rcsNoOutcome = "Add calc.is_even(n) to `calc.js`.\n\n## Acceptance\n1. Evenness. Outcome: is_even(4) returns true.\n2. Parity helper.\n"
+const rcsMissing = "Add calc.is_even(n) next to `src/missing/calc.py`.\n\n## Acceptance\n1. Evenness. Outcome: is_even(4) returns true.\n"
+const rcsClean = "Add calc.is_even(n) to `calc.js`.\n\n## Acceptance\n1. Evenness. Outcome: is_even(4) returns true.\n2. Oddness. Outcome: is_even(3) returns false.\n"
+
+type rcsResult struct {
+	text, stored   string
+	stdout, stderr string
+	events         []string
+	calls          int
+	body           string
+}
+
+var (
+	rcsDuration = regexp.MustCompile(`[0-9]+(\.[0-9]+)? s\b`)
+	rcsWall     = regexp.MustCompile(`wall_ms=[0-9]+`)
+)
+
+func rcsNormalize(s string) string {
+	return rcsWall.ReplaceAllString(rcsDuration.ReplaceAllString(s, "T s"), "wall_ms=W")
+}
+
+func rcsObserve(t *testing.T, request string) rcsResult {
+	f := newShpFx(t, shpSubmit("q1", map[string]any{"questions": []any{shpQuestion("Which wording?", "keep", "shorter")}}), shpUI(1))
+	f.signIn()
+	f.withGuard()
+	_, err := f.shape(request)
+	text := f.Stdout.String() + f.Stderr.String()
+	if err != nil {
+		text += "\n" + err.Error()
+		if e, ok := sys.AsError(err); ok {
+			text += "\n" + strings.Join(e.Lines, "\n")
+		}
+	}
+	r := rcsResult{text: text, stdout: f.Stdout.String(), stderr: rcsNormalize(f.Stderr.String()), events: []string{}}
+	f.Prov.mu.Lock()
+	r.calls = len(f.Prov.raws)
+	for _, raw := range f.Prov.raws {
+		r.body += string(raw.body)
+	}
+	f.Prov.mu.Unlock()
+	if b, err := os.ReadFile(f.Root + "/.kogen/local/shaping/" + shpSlug + "/events.ndjson"); err == nil {
+		for _, line := range strings.Split(string(b), "\n") {
+			var ev map[string]any
+			if line != "" && json.Unmarshal([]byte(line), &ev) == nil {
+				if name, ok := ev["event"].(string); ok {
+					r.events = append(r.events, name)
+				}
+			}
+		}
+	}
+	if b, err := os.ReadFile(f.Root + "/.kogen/local/shaping/" + shpSlug + "/state.json"); err == nil {
+		var doc struct{ Request string }
+		_ = json.Unmarshal(b, &doc)
+		r.stored = doc.Request
+	}
+	return r
+}
+
+func rcsReceived(r rcsResult, stored string) bool {
+	if stored == "" {
+		return false
+	}
+	esc, _ := json.Marshal(stored)
+	return strings.Contains(r.body, strings.Trim(string(esc), `"`))
+}
+
+func rcsRefusal(r rcsResult, pattern string) map[string]any {
+	after := ""
+	if i := strings.Index(r.text, "request/needs_rewrite:"); i >= 0 {
+		after = r.text[i:]
+	}
+	return map[string]any{"marker": after != "", "names": after != "" && regexp.MustCompile(pattern).MatchString(after), "calls": r.calls}
+}
+
+func TestRequestCheckObservation(t *testing.T) {
+	out := map[string]any{}
+	var mu sync.Mutex
+	set := func(k string, v any) {
+		mu.Lock()
+		out[k] = v
+		mu.Unlock()
+	}
+	t.Cleanup(func() {
+		b, _ := json.Marshal(out)
+		if err := os.WriteFile(os.Getenv("SRC_OUT"), b, 0o644); err != nil {
+			t.Error(err)
+		}
+	})
+	t.Run("repair", func(t *testing.T) {
+		r := rcsObserve(t, rcsRepair)
+		var kept []string
+		added := 0
+		for _, l := range strings.Split(r.stored, "\n") {
+			if strings.Contains(l, "guard.txt") && strings.Contains(strings.ToLower(l), "must not touch") {
+				added++
+				continue
+			}
+			kept = append(kept, l)
+		}
+		set("repair", map[string]any{
+			"printed":    strings.Contains(r.text, "request repaired:"),
+			"calls":      r.calls > 0,
+			"demand":     r.stored != "" && !strings.Contains(r.stored, "Edit `guard.txt`"),
+			"limit_line": added == 1,
+			"rest":       strings.TrimSpace(strings.Join(kept, "\n")) == "Add calc.is_even(n) to `calc.js`.\n\n## Acceptance\n1. Evenness. Outcome: is_even(4) returns true.",
+			"received":   rcsReceived(r, r.stored),
+		})
+	})
+	t.Run("duplicate", func(t *testing.T) {
+		set("duplicate", rcsRefusal(rcsObserve(t, rcsDuplicate), `(?s)\b1\b.*\b2\b`))
+	})
+	t.Run("nooutcome", func(t *testing.T) {
+		set("nooutcome", rcsRefusal(rcsObserve(t, rcsNoOutcome), `\b2\b`))
+	})
+	t.Run("missing", func(t *testing.T) {
+		set("missing", rcsRefusal(rcsObserve(t, rcsMissing), `src/missing/calc\.py`))
+	})
+	t.Run("clean", func(t *testing.T) {
+		r := rcsObserve(t, rcsClean)
+		set("clean", map[string]any{
+			"printed":  strings.Contains(r.text, "request repaired:"),
+			"refused":  strings.Contains(r.text, "request/needs_rewrite:"),
+			"calls":    r.calls > 0,
+			"stored":   r.stored == rcsClean,
+			"received": rcsReceived(r, rcsClean),
+			"events":   r.events,
+			"stdout":   r.stdout,
+			"stderr":   r.stderr,
+		})
+	})
+}

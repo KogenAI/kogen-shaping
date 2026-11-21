@@ -149,6 +149,11 @@ func shapeRun(ctx context.Context, s *sys.Session, in ShapeInput) (exit int, err
 	}
 	var ledger *decisionLedger
 	if st == nil {
+		// The request check runs before anything is removed, set up or asked of a model.
+		request, err := checkRequest(s, root, cfg, in.Request)
+		if err != nil {
+			return 0, err
+		}
 		if err := os.Remove(filepath.Join(stateDir, questionsFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return 0, err
 		}
@@ -177,7 +182,7 @@ func shapeRun(ctx context.Context, s *sys.Session, in ShapeInput) (exit int, err
 		if sourcePath == "" {
 			sourcePath = "-"
 		}
-		st = &state{Request: in.Request, SourcePath: sourcePath, Rounds: []map[string]any{}, Origin: map[string]any{
+		st = &state{Request: request, SourcePath: sourcePath, Rounds: []map[string]any{}, Origin: map[string]any{
 			"head": origin.Head, "tree": origin.Tree, "configuration": origin.Configuration,
 		}}
 	} else {
