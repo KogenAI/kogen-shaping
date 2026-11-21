@@ -272,7 +272,9 @@ func TestShapeTimeAccount(t *testing.T) {
 	run := func(t *testing.T, modelKnown bool) (*Evidence, []map[string]any) {
 		ev, clock, dir := newTestEvidence(t)
 		ev.AccountTime()
-		_ = ev.Timed("setup", func() error { clock.advance(100); return nil }) // 0-100
+		_ = ev.InitialSetup(func() error { // 0-100: the initial setup, reported as setup_ms only
+			return ev.Timed("setup", func() error { clock.advance(100); return nil })
+		})
 		a := ev.Millis()
 		clock.advance(300) // 100-400: a main round
 		model := int64(250)
@@ -296,14 +298,14 @@ func TestShapeTimeAccount(t *testing.T) {
 		parallel(t)
 		ev, events := run(t, true)
 		n := len(events)
-		want := map[string]any{"event": "shape_time", "elapsed_ms": 720.0, "shaper_ms": 300.0, "shaper_model_ms": 250.0,
-			"shaper_tools_ms": 50.0, "checks_ms": 350.0, "static_ms": 0.0, "static_uncharged_ms": 0.0, "model_checks_ms": 0.0, "contract_ms": 0.0, "readiness_ms": 200.0, "install_ms": 0.0, "gap_ms": 70.0, "own check seconds": 0.35, "acceptance timeout": []any{}, "local_check_ms": 200.0}
+		want := map[string]any{"event": "shape_time", "elapsed_ms": 620.0, "setup_ms": 100.0, "shaper_ms": 300.0, "shaper_model_ms": 250.0,
+			"shaper_tools_ms": 50.0, "checks_ms": 250.0, "static_ms": 0.0, "static_uncharged_ms": 0.0, "model_checks_ms": 0.0, "contract_ms": 0.0, "readiness_ms": 200.0, "install_ms": 0.0, "gap_ms": 70.0, "own check seconds": 0.25, "acceptance timeout": []any{}, "local_check_ms": 200.0}
 		if !reflect.DeepEqual(events[n-2], want) || events[n-1]["event"] != "session_end" {
 			t.Fatalf("events %v, want %v before session_end", events[n-2:], want)
 		}
-		shpEq(t, "session_end elapsed", events[n-1]["elapsed_ms"], want["elapsed_ms"])
+		shpEq(t, "session_end elapsed keeps the whole run", events[n-1]["elapsed_ms"], 720.0)
 		shpEq(t, "readiness phase", phaseWall(events, "readiness")[0], want["readiness_ms"].(float64))
-		shpEq(t, "line", ev.Spent().Line(), "kogen: shape time 0.7 s: shaper 0.3 s (model 0.3 s, tools 0.1 s), Kogen checks 0.4 s (static 0.0 s, model checks 0.0 s, contract review 0.0 s, readiness 0.2 s), gaps 0.1 s")
+		shpEq(t, "line", ev.Spent().Line(), "kogen: shape time 0.6 s: shaper 0.3 s (model 0.3 s, tools 0.1 s), Kogen checks 0.3 s (static 0.0 s, model checks 0.0 s, contract review 0.0 s, readiness 0.2 s), gaps 0.1 s")
 	})
 	t.Run("a round without model time leaves model and tools null", func(t *testing.T) {
 		parallel(t)

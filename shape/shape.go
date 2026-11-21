@@ -215,7 +215,7 @@ func shapeRun(ctx context.Context, s *sys.Session, in ShapeInput) (exit int, err
 	cache := verify.NewBuildCache() // build outputs shared by this run's fresh trees; removed at its end
 	defer cache.Close()
 	rd := &verify.Readiness{Root: root, Repo: repo, Config: cfg, Tools: tools, Evidence: ev, BoundShapeAcceptance: true, Cache: cache}
-	if err := ev.Timed("setup", func() error { return rd.Setup(ctx, s, root, true) }); err != nil {
+	if err := runInitialSetup(ctx, s, rd, root, ev); err != nil {
 		return 0, err
 	}
 	if err := ev.Timed("preparation", func() error { return verify.RequireRunner(ctx, s, tools, root, cfg) }); err != nil {
@@ -231,6 +231,79 @@ func shapeRun(ctx context.Context, s *sys.Session, in ShapeInput) (exit int, err
 		contractSessions: map[string]int{}, contractChecked: map[string]bool{}, contractRefused: map[string]contractConfirmed{},
 		dropInvented: true}
 	return sh.shape(ctx, st)
+}
+
+// setupRetryPause is how long Shape waits after a failed initial setup before it runs the setup once more.
+const setupRetryPause = 10 * time.Second
+
+var setupStatusRe = regexp.MustCompile(`\(status=(-?\d+)\)`)
+
+// setupFailure is a failed setup command as readiness reported it: the command, its exit status
+// and the last 20 lines of its output.
+type setupFailure struct {
+	command string
+	status  int
+	output  string
+}
+
+// setupFailureOf reads a refused setup (environment/setup_failed) back into its parts; ok is false
+// for any other error, which is not a setup failure.
+func setupFailureOf(err error) (setupFailure, bool) {
+	e, ok := sys.AsError(err)
+	if !ok || e.Class != "environment" || e.Reason != "setup_failed" {
+		return setupFailure{}, false
+	}
+	f := setupFailure{}
+	if m := setupStatusRe.FindStringSubmatch(e.Detail); m != nil {
+		f.status, _ = strconv.Atoi(m[1])
+	}
+	lines := e.Lines
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.HasPrefix(lines[i], "commands.setup[") {
+			if _, command, found := strings.Cut(lines[i], "]: "); found {
+				f.command = command
+			}
+			lines = lines[:i]
+			break
+		}
+	}
+	f.output = strings.Join(lines, "\n")
+	return f, true
+}
+
+// runInitialSetup runs the configured setup once before the first model request. A failed setup
+// is recorded as a setup_failure event; after the first failure Shape pauses setupRetryPause (the
+// wait ends early only when the context ends) and runs the whole setup once more. A second failure
+// is the refusal readiness gave it. Its time, the pause included, is the run's setup time and
+// is not part of the Shape elapsed time.
+func runInitialSetup(ctx context.Context, s *sys.Session, rd *verify.Readiness, root string, ev *Evidence) error {
+	return ev.InitialSetup(func() error {
+		return ev.Timed("setup", func() error {
+			attempt := func() error {
+				err := rd.Setup(ctx, s, root, true)
+				if f, ok := setupFailureOf(err); ok {
+					ev.Record(map[string]any{"event": "setup_failure", "command": f.command, "exit_code": f.status, "output": f.output})
+				}
+				return err
+			}
+			err := attempt()
+			if _, failed := setupFailureOf(err); !failed {
+				return err
+			}
+			s.Progress(fmt.Sprintf("kogen: setup failed; running it once more in %d s", int(setupRetryPause/time.Second)))
+			timer := time.NewTimer(setupRetryPause)
+			defer timer.Stop()
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				if ie := s.Err(); ie != nil {
+					return ie
+				}
+				return ctx.Err()
+			}
+			return attempt()
+		})
+	})
 }
 
 // ---- state: the questions and answers of a conversation that spans runs (SHP-6) ----

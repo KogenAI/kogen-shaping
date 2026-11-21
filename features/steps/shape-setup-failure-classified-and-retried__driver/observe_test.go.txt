@@ -1,0 +1,127 @@
+package shape
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-executor/executor"
+	"github.com/KogenAI/kogen-loop/sys"
+)
+
+// The scripted setup is a real shell script: attempt n advances the clock by line n of the
+// advance plan, prints 25 numbered lines and exits with line n of the exit plan.
+const setupScript = `n=$(cat "$1/count" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$1/count"
+sed -n "${n}p" "$1/advance" >> "$1/advanced"
+i=1; while [ $i -le 25 ]; do echo "line $i"; i=$((i+1)); done
+code=$(sed -n "${n}p" "$1/exits"); exit ${code:-0}
+`
+
+func setupAdvanced(aux string) time.Duration {
+	b, _ := os.ReadFile(filepath.Join(aux, "advanced"))
+	var total int64
+	for _, l := range strings.Fields(string(b)) {
+		ms, _ := strconv.ParseInt(l, 10, 64)
+		total += ms
+	}
+	return time.Duration(total) * time.Millisecond
+}
+
+func TestShapeSetupRetryObservation(t *testing.T) {
+	if !isolatedTmp(t) {
+		return
+	}
+	out := map[string]any{}
+
+	run := func(advance, exits string, setupLow float64, shaper time.Duration) map[string]any {
+		f := newShpFx(t)
+		f.useExternalShape()
+		var offset atomic.Int64
+		script := filepath.Join(f.Aux, "setup.sh")
+		for name, content := range map[string]string{"setup.sh": setupScript, "advance": advance, "exits": exits} {
+			if err := os.WriteFile(filepath.Join(f.Aux, name), []byte(content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		command := "sh " + script + " " + f.Aux
+		f.writeLineup("version: 1\ncommands:\n  setup: ['"+command+"']\n  checks: [{name: unit, run: 'true'}]\n  acceptance: {run: sh accept.sh, steps_dir: features/steps}\n", "shape: {executor: claude-code, model: claude-opus-5-5, effort: xhigh}\n")
+		f.git("commit", "-qm", "scripted setup")
+		// The clock is real time plus the scripted advances, so the 10 second pause is really waited.
+		now := func() time.Time { return time.Now().Add(time.Duration(offset.Load()) + setupAdvanced(f.Aux)) }
+		x := &shapeExec{t: t}
+		// The initial setup is over when the first model request starts; readiness runs setup again later on fresh copies.
+		initial := -1
+		x.rounds = []func(int, string) (executor.RoundResult, error){
+			func(n int, root string) (executor.RoundResult, error) {
+				if initial < 0 {
+					b, _ := os.ReadFile(filepath.Join(f.Aux, "count"))
+					initial, _ = strconv.Atoi(strings.TrimSpace(string(b)))
+				}
+				offset.Add(int64(shaper))
+				return result(shpFiles())(n, root)
+			},
+			result(map[string]any{"files": []any{map[string]any{"path": ".kogen/intents/is-even/acceptance.feature", "content": shpFeature}}}),
+		}
+		x.contract = []func(int, string) (executor.RoundResult, error){result(map[string]any{"findings": []any{}, "environment": []any{}})}
+		f.newSession()
+		exit, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug,
+			Request: "Add calc.is_even(n). Non-integers raise TypeError.", Client: f.Client, Now: now,
+			External: func(project.Role) (executor.Executor, error) { return x, nil }})
+		count, _ := os.ReadFile(filepath.Join(f.Aux, "count"))
+		runs, _ := strconv.Atoi(strings.TrimSpace(string(count)))
+		if initial >= 0 {
+			runs = initial
+		}
+		obs := map[string]any{"setup_runs": runs, "setup_failure_events": len(shpNamed(f.events(), "setup_failure")), "model_requests": len(x.inputs)}
+		if err != nil {
+			e, ok := sys.AsError(err)
+			if !ok {
+				t.Fatalf("not a refusal: %v", err)
+			}
+			text := e.Detail + "\n" + strings.Join(e.Lines, "\n")
+			obs["class"] = e.Class
+			obs["mentions_command"] = strings.Contains(text, command)
+			obs["mentions_exit_code"] = strings.Contains(text, "7")
+			obs["first_output_line_in_text"] = "line 6"
+			if !strings.Contains(text, "line 6") {
+				obs["first_output_line_in_text"] = "missing"
+			}
+			obs["has_last_output_line"] = strings.Contains(text, "line 25")
+			obs["has_line_before_last_20"] = strings.Contains(text, "line 5\n") || strings.HasSuffix(text, "line 5")
+			return obs
+		}
+		times := shpNamed(f.events(), "shape_time")
+		if len(times) != 1 {
+			t.Fatalf("%d shape_time events", len(times))
+		}
+		obs["exit"] = exit
+		setup, _ := times[0]["setup_ms"].(float64)
+		elapsed, _ := times[0]["elapsed_ms"].(float64)
+		obs["setup_ms_in_range"] = setup >= setupLow && setup < setupLow+5000
+		obs["elapsed_in_range"] = elapsed >= 100000 && elapsed < 110000
+		return obs
+	}
+
+	// One failure, then a pass: 1 s per attempt, the real 10 s pause, a 100 s shaper request.
+	out["retry"] = run("1000\n1000\n", "7\n0\n", 12000, 100*time.Second)
+	// Two failures with exit status 7.
+	out["twice"] = run("1000\n1000\n", "7\n7\n", 0, 100*time.Second)
+	// A 90 s setup that passes, then a 100 s shaper request.
+	out["elapsed"] = run("90000\n", "0\n", 90000, 100*time.Second)
+
+	b, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(os.Getenv("SSR_OUT"), b, 0o644); err != nil {
+		t.Fatal(fmt.Sprint(err))
+	}
+}

@@ -48,6 +48,7 @@ type Evidence struct {
 	shaperModel int64      // the part of them with a reported model time
 	modelKnown  bool       // false once a shaper span has no model time
 	checkSpans  [][2]int64 // Kogen's own checking spans that no phase interval already holds
+	setupSpans  [][2]int64 // the initial Shape setup, every attempt and the pause between them
 	spent       *TimeAccount
 }
 
@@ -259,10 +260,46 @@ func (e *Evidence) Checking(fn func() error) error {
 	return fn()
 }
 
+// InitialSetup runs fn, Shape's initial setup, and adds its whole span to the setup time. That time
+// is reported as setup_ms and is part of neither the elapsed time nor the checks time.
+func (e *Evidence) InitialSetup(fn func() error) error {
+	t := e.Millis()
+	defer func() {
+		ended := e.Millis()
+		e.mu.Lock()
+		e.setupSpans = append(e.setupSpans, [2]int64{t, ended})
+		e.mu.Unlock()
+	}()
+	return fn()
+}
+
+// subtractSpans is spans with every part that lies inside remove cut out.
+func subtractSpans(spans, remove [][2]int64) [][2]int64 {
+	out := spans
+	for _, r := range remove {
+		var next [][2]int64
+		for _, s := range out {
+			if s[1] <= r[0] || s[0] >= r[1] {
+				next = append(next, s)
+				continue
+			}
+			if s[0] < r[0] {
+				next = append(next, [2]int64{s[0], r[0]})
+			}
+			if s[1] > r[1] {
+				next = append(next, [2]int64{r[1], s[1]})
+			}
+		}
+		out = next
+	}
+	return out
+}
+
 // TimeAccount is where a shape's time went, in milliseconds. A nil Model (and so Tools) is
 // unknown.
 type TimeAccount struct {
 	Elapsed, Shaper int64
+	Setup           int64 // the initial setup; not part of Elapsed or Checks
 	Model, Tools    *int64
 	Install         int64
 	StaticUncharged int64
@@ -575,8 +612,11 @@ func (e *Evidence) Finish() error {
 	account := e.account
 	checks := append(slices.Clone(e.checkSpans), intervals["setup"]...)
 	checks = append(checks, intervals["preparation"]...)
+	setupSpans := slices.Clone(e.setupSpans)
+	setupMS := Union(setupSpans)
+	checks = subtractSpans(checks, setupSpans)
 	timedOut := append([]string{}, e.timedOut...)
-	acct := &TimeAccount{Elapsed: elapsed, Install: e.installMS, StaticUncharged: e.unchargedMS, Shaper: e.shaperTotal, Readiness: Union(intervals["readiness"]),
+	acct := &TimeAccount{Elapsed: elapsed - setupMS, Setup: setupMS, Install: e.installMS, StaticUncharged: e.unchargedMS, Shaper: e.shaperTotal, Readiness: Union(intervals["readiness"]),
 		Static: Union(intervals["static"]), LocalCheck: Union(slices.Concat(intervals["readiness"], intervals["static"])), ModelChecks: Union(intervals["model_checks"]), Contract: Union(intervals["contract"])}
 	if e.modelKnown {
 		model, tools := e.shaperModel, e.shaperTotal-e.shaperModel
@@ -585,9 +625,9 @@ func (e *Evidence) Finish() error {
 	e.mu.Unlock()
 	if account {
 		acct.Checks = Union(checks)
-		acct.Gap = max(0, elapsed-acct.Shaper-acct.Checks-acct.Install)
+		acct.Gap = max(0, acct.Elapsed-acct.Shaper-acct.Checks-acct.Install)
 		e.Record(map[string]any{
-			"event": "shape_time", "elapsed_ms": acct.Elapsed, "shaper_ms": acct.Shaper,
+			"event": "shape_time", "elapsed_ms": acct.Elapsed, "setup_ms": acct.Setup, "shaper_ms": acct.Shaper,
 			"shaper_model_ms": nullable(acct.Model), "shaper_tools_ms": nullable(acct.Tools),
 			"install_ms": acct.Install, "checks_ms": acct.Checks,
 			"static_ms": acct.Static, "static_uncharged_ms": acct.StaticUncharged, "model_checks_ms": acct.ModelChecks, "own check seconds": float64(acct.Checks) / 1000, "acceptance timeout": timedOut, "contract_ms": acct.Contract, "readiness_ms": acct.Readiness, "gap_ms": acct.Gap,
