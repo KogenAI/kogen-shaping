@@ -1007,3 +1007,69 @@ func TestControlsProblemsJoinARefusalWithFindings(t *testing.T) {
 		}
 	})
 }
+
+func TestControlsInapplicablePatchShowsFailedHunk(t *testing.T) {
+	patch := func(p string) map[string]any { return map[string]any{"patch": p} }
+	twenty := ""
+	for _, w := range strings.Fields("apple birch cedar dune elm fern grove heath iris juniper kelp larch maple nettle oak pine quince reed spruce thistle") {
+		twenty += w + "\n"
+	}
+	bad := "--- a/notes.txt\n+++ b/notes.txt\n@@ -1,3 +1,3 @@\n apple\n-birch\n+BIRCH\n cedar\n@@ -10,5 +10,5 @@\n juniper\n kelp\n DIFFERENT\n-maple\n+MAPLE\n nettle\n"
+	run := func(t *testing.T, base map[string]string, correct, wrongAdd any) []string {
+		c, _ := controlsLargeCandidate(t, correct, wrongAdd, map[string]any{"big_b.js": patch(controlsOffsetPatch("big_b.js", 0, 7))})
+		for k, v := range base {
+			c.base[k] = v
+		}
+		return controlsLargeLines(t, c)
+	}
+	ok := map[string]any{"big_a.js": patch(controlsOffsetPatch("big_a.js", 1, 0)), "big_b.js": patch(controlsOffsetPatch("big_b.js", 1, 0))}
+	addWrong := map[string]any{"big_a.js": patch(controlsOffsetPatch("big_a.js", 0, 7))}
+	with := func(m map[string]any, k string, v any) map[string]any {
+		n := map[string]any{}
+		for a, b := range m {
+			n[a] = b
+		}
+		n[k] = v
+		return n
+	}
+	t.Run("the correct implementation shows the reported hunk and eight lines", func(t *testing.T) {
+		lines := run(t, map[string]string{"notes.txt": twenty}, with(ok, "notes.txt", patch(bad)), addWrong)
+		want := "- controls.json: the correct implementation: notes.txt: the patch does not apply to the candidate tree: error: patch failed: notes.txt:10: @@ -10,5 +10,5 @@: notes.txt from line 10 is: [10] juniper [11] kelp [12] larch [13] maple [14] nettle [15] oak [16] pine [17] quince"
+		if len(lines) != 1 || lines[0] != want {
+			t.Fatalf("lines = %q", lines)
+		}
+	})
+	t.Run("a wrong implementation keeps its wording and sees the correct tree", func(t *testing.T) {
+		good := "--- a/notes.txt\n+++ b/notes.txt\n@@ -1,3 +1,3 @@\n apple\n-birch\n+BIRCH\n cedar\n"
+		lines := run(t, map[string]string{"notes.txt": twenty}, with(ok, "notes.txt", patch(good)), with(addWrong, "notes.txt", patch("--- a/notes.txt\n+++ b/notes.txt\n@@ -1,3 +1,3 @@\n apple\n-birch\n+X\n cedar\n")))
+		want := "- controls.json: wrong implementation \"add removed\": notes.txt: the patch does not apply to the candidate tree with the correct implementation applied: error: patch failed: notes.txt:1: @@ -1,3 +1,3 @@: notes.txt from line 1 is: [1] apple [2] BIRCH [3] cedar [4] dune [5] elm [6] fern [7] grove [8] heath"
+		if len(lines) != 1 || lines[0] != want {
+			t.Fatalf("lines = %q", lines)
+		}
+	})
+	t.Run("a missing file is named and a short file is not padded", func(t *testing.T) {
+		miss := "--- a/missing.txt\n+++ b/missing.txt\n@@ -2,3 +2,3 @@\n birch\n-cedar\n+CEDAR\n dune\n"
+		lines := run(t, nil, with(ok, "missing.txt", patch(miss)), addWrong)
+		if len(lines) != 1 || !strings.HasSuffix(lines[0], "error: missing.txt: No such file or directory: @@ -2,3 +2,3 @@: missing.txt does not exist in the candidate tree") {
+			t.Fatalf("lines = %q", lines)
+		}
+		short := "--- a/short.txt\n+++ b/short.txt\n@@ -3,3 +3,3 @@\n cedar\n DIFFERENT\n-elm\n+ELM\n"
+		lines = run(t, map[string]string{"short.txt": "apple\nbirch\ncedar\ndune\nelm\n"}, with(ok, "short.txt", patch(short)), addWrong)
+		if len(lines) != 1 || !strings.HasSuffix(lines[0], "@@ -3,3 +3,3 @@: short.txt from line 3 is: [3] cedar [4] dune [5] elm") {
+			t.Fatalf("lines = %q", lines)
+		}
+	})
+	t.Run("a patch with no change to its file names no failed hunk", func(t *testing.T) {
+		other := "--- a/other.txt\n+++ b/other.txt\n@@ -3,3 +3,3 @@\n cedar\n-dune\n+DUNE\n elm\n"
+		lines := run(t, map[string]string{"notes.txt": twenty}, with(ok, "notes.txt", patch(other)), addWrong)
+		want := "- controls.json: the correct implementation: notes.txt: the patch does not apply to the candidate tree: the patch has no change to that file"
+		if len(lines) != 1 || lines[0] != want {
+			t.Fatalf("lines = %q", lines)
+		}
+	})
+	t.Run("a patch without a hunk header adds nothing", func(t *testing.T) {
+		if got := controlsFailedHunk(t.TempDir(), "notes.txt", "garbage\n", "error: x"); got != "" {
+			t.Fatalf("got %q", got)
+		}
+	})
+}

@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -514,7 +515,68 @@ func controlsEnvPath(p string) string {
 }
 
 // controlsPatchError is a patch of an overlay that does not apply.
-type controlsPatchError struct{ path, reason string }
+type controlsPatchError struct {
+	path, reason string
+	// failed names the hunk that did not apply and the file text at its old start line; empty when
+	// the patch has no hunk header.
+	failed string
+}
+
+var (
+	controlsHunkHeader  = regexp.MustCompile(`^@@ -(\d+)(?:,\d+)? \+`)
+	controlsPatchFailed = regexp.MustCompile(`patch failed: .*:(\d+)\s*$`)
+)
+
+// controlsExcerptLines is the most lines of the target file a refusal shows.
+const controlsExcerptLines = 8
+
+// controlsFailedHunk describes the hunk of patch that did not apply, read from the file at
+// target in tree: the hunk header line, then up to controlsExcerptLines numbered lines of the file
+// from the hunk's old start line, or that the file does not exist. The hunk is the one whose old
+// start line git apply reported in reason, else the first. It is empty without a hunk header.
+func controlsFailedHunk(tree, target, patch, reason string) string {
+	reported := -1
+	if m := controlsPatchFailed.FindStringSubmatch(reason); m != nil {
+		reported, _ = strconv.Atoi(m[1])
+	}
+	header, start := "", 0
+	for _, l := range strings.Split(patch, "\n") {
+		l = strings.TrimSuffix(l, "\r")
+		m := controlsHunkHeader.FindStringSubmatch(l)
+		if m == nil {
+			continue
+		}
+		n, _ := strconv.Atoi(m[1])
+		if header == "" || n == reported {
+			header, start = l, n
+			if n == reported {
+				break
+			}
+		}
+	}
+	if header == "" {
+		return ""
+	}
+	raw, err := os.ReadFile(filepath.Join(tree, filepath.FromSlash(target)))
+	if errors.Is(err, fs.ErrNotExist) {
+		return ": " + header + ": " + target + " does not exist in the candidate tree"
+	}
+	if err != nil {
+		return ": " + header + ": " + target + " cannot be read in the candidate tree"
+	}
+	lines := strings.Split(string(raw), "\n")
+	if lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	if start < 1 {
+		start = 1
+	}
+	var shown []string
+	for n := start; n <= len(lines) && len(shown) < controlsExcerptLines; n++ {
+		shown = append(shown, fmt.Sprintf("[%d] %s", n, strings.TrimSuffix(lines[n-1], "\r")))
+	}
+	return fmt.Sprintf(": %s: %s from line %d is: %s", header, target, start, strings.Join(shown, " "))
+}
 
 func (e *controlsPatchError) Error() string { return e.path + ": " + e.reason }
 
@@ -579,15 +641,20 @@ func writeOverlay(tree string, o controlsOverlay) error {
 			out, err := cmd.CombinedOutput()
 			return string(out), err
 		}
+		noChange := false
 		out, err := git("--numstat", "-")
 		if err == nil && strings.TrimSpace(out) == "" {
-			err, out = errors.New("no change"), "the patch has no change to that file"
+			err, out, noChange = errors.New("no change"), "the patch has no change to that file", true
 		}
 		if err == nil {
 			out, err = git("-")
 		}
 		if err != nil {
-			return &controlsPatchError{path: p, reason: controlsFirstLine(out)}
+			reason, failed := controlsFirstLine(out), ""
+			if !noChange { // no hunk of this patch failed to apply
+				failed = controlsFailedHunk(tree, p, patch, reason)
+			}
+			return &controlsPatchError{path: p, reason: reason, failed: failed}
 		}
 	}
 	return nil
@@ -1256,7 +1323,7 @@ func (sh *shaping) controlsCheck(ctx context.Context, intent *project.Intent, sc
 			if i > 0 {
 				who, tail = impl, " with the correct implementation applied"
 			}
-			return []string{fmt.Sprintf("- controls.json: %s: %s: the patch does not apply to the candidate tree%s: %s", who, run.patch.path, tail, run.patch.reason)}, evidence, plan, nil
+			return []string{fmt.Sprintf("- controls.json: %s: %s: the patch does not apply to the candidate tree%s: %s%s", who, run.patch.path, tail, run.patch.reason, run.patch.failed)}, evidence, plan, nil
 		}
 		runs = append(runs, run)
 		if i == 0 {
