@@ -41,8 +41,8 @@ type Evidence struct {
 	attempt     int
 
 	account     bool       // Shape's run: Finish ends the record with a shape_time event
-	installMS   int64      // cold managed runtime preparation, excluded from the shaping budget
-	unchargedMS int64      // wall time of timed-out static checks, excluded from the shaping budget
+	installMS   int64      // cold managed runtime preparation
+	unchargedMS int64      // wall time of timed-out static checks
 	timedOut    []string   // names of the checks that ended in a timeout
 	shaperTotal int64      // the shaper's spans: external rounds, or native model and tool spans
 	shaperModel int64      // the part of them with a reported model time
@@ -272,6 +272,7 @@ type TimeAccount struct {
 	Contract        int64
 	Readiness       int64
 	Gap             int64
+	LocalCheck      int64 // the union of the readiness observation and static check spans
 }
 
 // Spent is the account Finish recorded; nil when it recorded none.
@@ -576,7 +577,7 @@ func (e *Evidence) Finish() error {
 	checks = append(checks, intervals["preparation"]...)
 	timedOut := append([]string{}, e.timedOut...)
 	acct := &TimeAccount{Elapsed: elapsed, Install: e.installMS, StaticUncharged: e.unchargedMS, Shaper: e.shaperTotal, Readiness: Union(intervals["readiness"]),
-		Static: Union(intervals["static"]), ModelChecks: Union(intervals["model_checks"]), Contract: Union(intervals["contract"])}
+		Static: Union(intervals["static"]), LocalCheck: Union(slices.Concat(intervals["readiness"], intervals["static"])), ModelChecks: Union(intervals["model_checks"]), Contract: Union(intervals["contract"])}
 	if e.modelKnown {
 		model, tools := e.shaperModel, e.shaperTotal-e.shaperModel
 		acct.Model, acct.Tools = &model, &tools
@@ -590,6 +591,7 @@ func (e *Evidence) Finish() error {
 			"shaper_model_ms": nullable(acct.Model), "shaper_tools_ms": nullable(acct.Tools),
 			"install_ms": acct.Install, "checks_ms": acct.Checks,
 			"static_ms": acct.Static, "static_uncharged_ms": acct.StaticUncharged, "model_checks_ms": acct.ModelChecks, "own check seconds": float64(acct.Checks) / 1000, "acceptance timeout": timedOut, "contract_ms": acct.Contract, "readiness_ms": acct.Readiness, "gap_ms": acct.Gap,
+			"local_check_ms": acct.LocalCheck,
 		})
 		e.mu.Lock()
 		e.spent = acct

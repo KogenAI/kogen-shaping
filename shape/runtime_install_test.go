@@ -2,7 +2,6 @@ package shape
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,7 +11,6 @@ import (
 	"github.com/KogenAI/kogen-coordinator/project"
 	"github.com/KogenAI/kogen-executor/executor"
 	"github.com/KogenAI/kogen-executor/executor/claudecode"
-	"github.com/KogenAI/kogen-loop/sys"
 )
 
 // runtimeInstallExec prepares a local runtime marker instead of downloading a runtime.
@@ -42,7 +40,6 @@ func TestShapeRuntimeInstallAccounting(t *testing.T) {
 		name                        string
 		warm                        bool
 		preparation, shaper, checks int64
-		refuse                      bool
 		progress                    string
 	}{
 		{name: "historical cold replay", preparation: 115939, shaper: 280916, checks: 511168,
@@ -51,9 +48,9 @@ func TestShapeRuntimeInstallAccounting(t *testing.T) {
 			progress: "kogen: shape time 794.1 s: shaper 280.9 s (model unknown, tools unknown), Kogen checks 511.2 s (static 0.0 s, model checks 0.0 s, contract review 511.2 s, readiness 0.0 s), gaps 2.0 s"},
 		{name: "cold inside boundary", preparation: 115939, shaper: 899999,
 			progress: "kogen: shape time 1015.9 s: shaper 900.0 s (model unknown, tools unknown), Kogen checks 0.0 s (static 0.0 s, model checks 0.0 s, contract review 0.0 s, readiness 0.0 s), gaps 0.0 s, runtime install 115.9 s"},
-		{name: "cold boundary", preparation: 115939, shaper: 900000, refuse: true,
+		{name: "cold boundary", preparation: 115939, shaper: 900000,
 			progress: "kogen: shape time 1015.9 s: shaper 900.0 s (model unknown, tools unknown), Kogen checks 0.0 s (static 0.0 s, model checks 0.0 s, contract review 0.0 s, readiness 0.0 s), gaps 0.0 s, runtime install 115.9 s"},
-		{name: "warm boundary", warm: true, shaper: 900000, refuse: true,
+		{name: "warm boundary", warm: true, shaper: 900000,
 			progress: "kogen: shape time 900.0 s: shaper 900.0 s (model unknown, tools unknown), Kogen checks 0.0 s (static 0.0 s, model checks 0.0 s, contract review 0.0 s, readiness 0.0 s), gaps 0.0 s"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -71,9 +68,6 @@ func TestShapeRuntimeInstallAccounting(t *testing.T) {
 			}
 			base := &shapeExec{t: t}
 			first := shpFiles()
-			if tc.refuse {
-				first = map[string]any{"files": []any{map[string]any{"path": "../outside.txt", "content": "x\n"}}}
-			}
 			base.rounds = []func(int, string) (executor.RoundResult, error){
 				func(n int, root string) (executor.RoundResult, error) {
 					clock.Advance(time.Duration(tc.shaper) * time.Millisecond)
@@ -98,40 +92,11 @@ func TestShapeRuntimeInstallAccounting(t *testing.T) {
 			if tc.warm {
 				install, gap = 0, tc.preparation
 			}
-			if tc.refuse {
-				shpEq(t, "exit", exit, 1)
-				shpEq(t, "rounds", len(base.inputs), 1)
-				e, ok := sys.AsError(err)
-				if !ok {
-					t.Fatalf("expected budget refusal: %v", err)
-				}
-				shpEq(t, "class", e.Class, "shape")
-				shpEq(t, "reason", e.Reason, "invalid_output")
-				shpEq(t, "detail", e.Detail, "the shaper used its 15-minute shaping budget (15 min elapsed, 1 requests) without a submission that passed; shaping stopped")
-				suffix := ""
-				if install > 0 {
-					suffix = fmt.Sprintf(", install_ms=%d", install)
-				}
-				for _, want := range []string{
-					budgetFigureLine + suffix,
-					"attempt 1: gate validation, model request 900 s, Kogen checks 0 s, 0 s remaining" + suffix,
-				} {
-					found := false
-					for _, line := range e.Lines {
-						if line == want {
-							found = true
-						}
-					}
-					if !found {
-						t.Fatalf("missing exact refusal line %q in %v", want, e.Lines)
-					}
-				}
-			} else {
-				if err != nil || exit != 0 {
-					t.Fatalf("exit %d: %v", exit, err)
-				}
-				shpEq(t, "rounds", len(base.inputs), 2)
+			// A shaping at or past the target is never refused for its elapsed time.
+			if err != nil || exit != 0 {
+				t.Fatalf("exit %d: %v", exit, err)
 			}
+			shpEq(t, "rounds", len(base.inputs), 2)
 			accounts := shpNamed(f.events(), "shape_time")
 			shpEq(t, "accounts", len(accounts), 1)
 			a := accounts[0]

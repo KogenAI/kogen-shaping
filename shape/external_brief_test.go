@@ -13,7 +13,7 @@ import (
 // externalGuidanceParts are what every external brief tells the session about time, parallel
 // work, subagents and focus.
 var externalGuidanceParts = []string{
-	"15-minute budget",
+	"a time target for all rounds together: 15 minutes is the usual guidance and 20 minutes is the upper end",
 	"complete package in the first round",
 	"independent reads, searches and commands together",
 	"read-only subagents in parallel on a fast model",
@@ -33,10 +33,10 @@ func TestExternalShapeBriefCarriesBudgetAndParallelGuidance(t *testing.T) {
 	for _, part := range externalGuidanceParts {
 		shpContains(t, "stable brief", x.starts[0].Brief.Stable, part)
 	}
-	shpEq(t, "guidance appears once", strings.Count(x.starts[0].Brief.Stable, "15-minute budget"), 1)
+	shpEq(t, "guidance appears once", strings.Count(x.starts[0].Brief.Stable, "a time target for all rounds together"), 1)
 }
 
-func TestExternalShapeRoundsStateElapsedAndRemainingTime(t *testing.T) {
+func TestExternalShapeRoundsStateElapsedTimeAndTarget(t *testing.T) {
 	parallel(t)
 	f := newShpFx(t)
 	f.useExternalShape()
@@ -54,9 +54,9 @@ func TestExternalShapeRoundsStateElapsedAndRemainingTime(t *testing.T) {
 	if len(x.inputs) < 2 {
 		t.Fatalf("%d rounds, want 2", len(x.inputs))
 	}
-	shpContains(t, "round 1 dynamic text", x.starts[0].Brief.Dynamic, "Time: 0 min elapsed, 15 min remaining of the 15-minute shaping budget.")
+	shpContains(t, "round 1 dynamic text", x.starts[0].Brief.Dynamic, "Time: 0 min elapsed. Target: 15 minutes usual, 20 minutes upper end.")
 	shpEq(t, "round 1 feedback", x.inputs[0].Feedback, "")
-	shpContains(t, "round 2 feedback", x.inputs[1].Feedback, "Time: 6 min elapsed, 9 min remaining of the 15-minute shaping budget.")
+	shpContains(t, "round 2 feedback", x.inputs[1].Feedback, "Time: 6 min elapsed. Target: 15 minutes usual, 20 minutes upper end.")
 }
 
 func TestExternalRefineBriefCarriesGuidanceAndTime(t *testing.T) {
@@ -81,8 +81,8 @@ func TestExternalRefineBriefCarriesGuidanceAndTime(t *testing.T) {
 	for _, part := range externalGuidanceParts {
 		shpContains(t, "stable brief", x.starts[0].Brief.Stable, part)
 	}
-	shpContains(t, "round 1 dynamic text", x.starts[0].Brief.Dynamic, "Time: 0 min elapsed, 15 min remaining")
-	shpContains(t, "round 2 feedback", x.inputs[1].Feedback, "Time: 6 min elapsed, 9 min remaining of the 15-minute shaping budget.")
+	shpContains(t, "round 1 dynamic text", x.starts[0].Brief.Dynamic, "Time: 0 min elapsed. Target: 15 minutes usual, 20 minutes upper end.")
+	shpContains(t, "round 2 feedback", x.inputs[1].Feedback, "Time: 6 min elapsed. Target: 15 minutes usual, 20 minutes upper end.")
 }
 
 // noTimeLine is an external round's feedback without the leading time line.

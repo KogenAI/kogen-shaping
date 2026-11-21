@@ -1,0 +1,219 @@
+package shape
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"regexp"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/KogenAI/kogen-loop/sys"
+	"github.com/KogenAI/kogen-verification/verify"
+)
+
+// This supplied harness observes Shape and Evidence with fake clocks; it is not a test the implementation must write.
+func TestShapeTimeTargetObservation(t *testing.T) {
+	out := map[string]any{}
+	re := regexp.MustCompile(`Time: [^"\\]*\.`)
+	min := time.Minute
+	lastLines := func(f *shpFx) []string {
+		var lines []string
+		for _, r := range f.Prov.requests() {
+			all := re.FindAllString(shpBody(r), -1)
+			if len(all) > 0 {
+				lines = append(lines, all[len(all)-1])
+			}
+		}
+		return lines
+	}
+	w := responsesWire
+	bad := func(p string) shpStep {
+		return w.shapeSubmit(p, map[string]any{"files": []any{map[string]any{"path": p, "content": "x\n"}}})
+	}
+	// 1 and 3: a draft crosses 15, 20 and 45 minutes of wall clock; a later valid draft passes.
+	{
+		f := w.newShape(t, w.readReadme("r1"), w.readReadme("r2"), w.readReadme("r3"), w.shapeSubmit("ok", shpFiles()))
+		f.setReport("PASSED", 0)
+		clock := &shpClock{t: time.Unix(1_800_000_000, 0)}
+		f.Now = clock.now
+		sched := []time.Duration{15 * min, 5 * min, 25 * min}
+		n := 0
+		f.Prov.route = func(req map[string]any) *shpStep {
+			if !decisionRequest(req) && !literalRequest(req) {
+				if n < len(sched) {
+					clock.t = clock.t.Add(sched[n])
+				}
+				n++
+			}
+			return nil
+		}
+		exit, err := f.shape("Add calc.is_even(n).")
+		lines := lastLines(f)
+		out["target"] = map[string]any{"exit": exit, "failed": err != nil, "requests": len(f.Prov.requests()), "time_lines": lines}
+		first, last := "", ""
+		if len(lines) > 0 {
+			first, last = lines[0], lines[len(lines)-1]
+		}
+		out["text"] = map[string]any{"first": first, "last": last}
+	}
+	// 2: cancellation ends further work and is not a timeout or a target outcome.
+	{
+		f := w.newShape(t, w.readReadme("r1"), w.readReadme("r2"), w.readReadme("r3"), w.readReadme("r4"))
+		ctx, cancel := context.WithCancel(context.Background())
+		n := 0
+		f.Prov.route = func(req map[string]any) *shpStep {
+			if !decisionRequest(req) && !literalRequest(req) {
+				n++
+				if n == 2 {
+					cancel()
+				}
+			}
+			return nil
+		}
+		f.newSession()
+		_, err := Shape(ctx, f.S, ShapeInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug, Request: "Add calc.is_even(n).", Client: f.Client, Now: f.Now})
+		msg := ""
+		if err != nil {
+			msg = strings.ToLower(err.Error())
+			if e, ok := sys.AsError(err); ok {
+				msg += " " + strings.ToLower(e.Reason+" "+e.Detail+" "+strings.Join(e.Lines, " "))
+			}
+		}
+		out["cancel"] = map[string]any{"failed": err != nil, "requests": len(f.Prov.requests()),
+			"mentions_cancellation":             strings.Contains(msg, "cancel"),
+			"mentions_target_budget_or_timeout": strings.Contains(msg, "budget") || strings.Contains(msg, "ceiling") || strings.Contains(msg, "timed out") || strings.Contains(msg, "timeout")}
+	}
+	// 6 (shaping part): three long rounds of 500 s each, two of them refused submissions (at most two
+	// consecutive refusals at one gate, below the fixed invalid-submission retry limit of 3, which this
+	// feature does not change), then a fourth request. The 1500 s of wall clock is past every target.
+	{
+		f := w.newShape(t, bad("a.go"), bad("b.go"), w.readReadme("r3"), w.readReadme("r4"))
+		clock := &shpClock{t: time.Unix(1_800_000_000, 0)}
+		f.Now = clock.now
+		f.Prov.route = func(req map[string]any) *shpStep {
+			if !decisionRequest(req) && !literalRequest(req) {
+				clock.t = clock.t.Add(500 * time.Second)
+			}
+			return nil
+		}
+		_, err := f.shape("Bound shaping.")
+		msg := ""
+		if err != nil {
+			msg = strings.ToLower(err.Error())
+			if e, ok := sys.AsError(err); ok {
+				msg += " " + strings.ToLower(e.Detail+" "+strings.Join(e.Lines, " "))
+			}
+		}
+		out["rounds_requests"] = map[string]any{"at_least_four_requests": len(f.Prov.requests()) >= 4,
+			"names_budget_or_ceiling": strings.Contains(msg, "budget") || strings.Contains(msg, "ceiling")}
+	}
+	// 3: a required under-120-second literal weakened to 125 seconds stays refused; the literal check takes no clock input.
+	{
+		req := "The build must finish in under 120 seconds."
+		model := []literalItem{litItem("under 120 seconds", "request", "under 120 seconds", "required", "")}
+		status := func(pkg string) string {
+			items := withRequestLiterals(req, model)
+			ev, _ := literalOutcome(items, map[string]string{"request": req}, []packageFile{{"intent.md", pkg}}, verify.NewRedactor(nil, ""))
+			for _, raw := range ev["items"].([]any) {
+				m := raw.(map[string]any)
+				if m["literal"] == "under 120 seconds" {
+					return m["status"].(string)
+				}
+			}
+			return "absent"
+		}
+		out["literal_replay"] = map[string]any{"kept": status("The build finishes in under 120 seconds."), "weakened": status("The build finishes in under 125 seconds.")}
+	}
+	account := func(build func(ev *Evidence, clock *shpClock)) map[string]any {
+		ev, clock, dir := newTestEvidence(t)
+		ev.AccountTime()
+		build(ev, clock)
+		if err := ev.Finish(); err != nil {
+			t.Fatal(err)
+		}
+		got := shpNamed(readEvents(t, dir), "shape_time")
+		if len(got) != 1 {
+			t.Fatalf("shape_time events: %d", len(got))
+		}
+		return got[0]
+	}
+	round := func(ev *Evidence, clock *shpClock, ms int64) {
+		a := ev.Millis()
+		clock.advance(ms)
+		ev.ShaperRound(a, ev.Millis(), nil)
+	}
+	// The shape_time fields the event has before this change. The one field the change adds (named in the
+	// Intent) is found at run time as the single key outside this set; its value is the local check time.
+	known := map[string]bool{}
+	for _, k := range []string{"event", "elapsed_ms", "shaper_ms", "shaper_model_ms", "shaper_tools_ms", "install_ms", "checks_ms", "static_ms", "static_uncharged_ms", "model_checks_ms", "own check seconds", "acceptance timeout", "contract_ms", "readiness_ms", "gap_ms"} {
+		known[k] = true
+	}
+	splitAdded := func(m map[string]any) (map[string]any, int, any) {
+		rest := map[string]any{}
+		n := 0
+		var v any
+		for k, x := range m {
+			if known[k] {
+				rest[k] = x
+			} else {
+				n++
+				v = x
+			}
+		}
+		return rest, n, v
+	}
+	pick := func(m map[string]any) map[string]any {
+		_, n, v := splitAdded(m)
+		return map[string]any{"added_field_count": n, "added_field_ms": v, "elapsed_ms": m["elapsed_ms"]}
+	}
+	// 4: overlapping spans count once.
+	out["overlap_together"] = pick(account(func(ev *Evidence, clock *shpClock) {
+		round(ev, clock, 100000)
+		b := ev.Millis()
+		clock.advance(300000)
+		ev.Interval("readiness", b, b+300000)
+		ev.Interval("static", b, b+120000)
+		ev.CheckSpan(b, b+300000)
+	}))
+	out["overlap_staggered"] = pick(account(func(ev *Evidence, clock *shpClock) {
+		round(ev, clock, 100000)
+		b := ev.Millis()
+		clock.advance(320000)
+		ev.Interval("readiness", b, b+300000)
+		ev.Interval("static", b+200000, b+320000)
+		ev.CheckSpan(b, b+320000)
+	}))
+	// 5: a decision check alone is not local check time; every field the event had stays unchanged.
+	{
+		m := account(func(ev *Evidence, clock *shpClock) {
+			round(ev, clock, 100000)
+			b := ev.Millis()
+			clock.advance(60000)
+			ev.Interval("model_checks", b, b+60000)
+			ev.CheckSpan(b, b+60000)
+		})
+		rest, n, v := splitAdded(m)
+		rest["added_field_count"] = n
+		rest["added_field_ms"] = v
+		out["decision_only"] = rest
+	}
+	// 6 (accounting part): three readiness observations of 400 s.
+	out["rounds_account"] = pick(account(func(ev *Evidence, clock *shpClock) {
+		for i := 0; i < 3; i++ {
+			round(ev, clock, 100000)
+			b := ev.Millis()
+			clock.advance(400000)
+			ev.Interval("readiness", b, b+400000)
+			ev.CheckSpan(b, b+400000)
+		}
+	}))
+	b, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(os.Getenv("STT_OUT"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}

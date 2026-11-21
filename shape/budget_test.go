@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/KogenAI/kogen-executor/executor"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -55,9 +54,9 @@ func TestBudgetLineOnEveryNativeRequest(t *testing.T) {
 	}
 	reqs := f.Prov.requests()
 	for i, want := range []string{
-		"Time: 0 min elapsed, 15 min remaining of the 15-minute shaping budget.",
-		"Time: 4 min elapsed, 11 min remaining of the 15-minute shaping budget.",
-		"Time: 8 min elapsed, 7 min remaining of the 15-minute shaping budget.",
+		"Time: 0 min elapsed. Target: 15 minutes usual, 20 minutes upper end.",
+		"Time: 4 min elapsed. Target: 15 minutes usual, 20 minutes upper end.",
+		"Time: 8 min elapsed. Target: 15 minutes usual, 20 minutes upper end.",
 	} {
 		shpContains(t, fmt.Sprint("request ", i+1), shpBody(reqs[i]), want)
 	}
@@ -72,40 +71,32 @@ func TestBudgetLineOnEveryNativeRequest(t *testing.T) {
 	}
 }
 
-func TestBudgetEndsBeforeTheNextRequest(t *testing.T) {
+// TestElapsedTargetNeverRefusesTheNextNativeRequest: crossing the 15, 20 and 45 minute points of wall
+// clock refuses no request; the later valid draft is accepted.
+func TestElapsedTargetNeverRefusesTheNextNativeRequest(t *testing.T) {
 	w := responsesWire
-	steps := make([]shpStep, 10)
-	for i := range steps {
-		steps[i] = w.readReadme(fmt.Sprint("r", i))
+	f := budgetFx(t, 20*time.Minute, w.readReadme("r1"), w.readReadme("r2"), w.readReadme("r3"), w.shapeSubmit("ok", shpFiles()))
+	f.setReport("PASSED", 0)
+	if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 0 {
+		t.Fatalf("exit %d: %v", exit, err)
 	}
-	f := budgetFx(t, 5*time.Minute, steps...)
-	exit, err := f.shape("Bound shaping.")
-	e := shpWantError(t, err, "shape", "invalid_output", "15-minute", 1)
-	shpEq(t, "exit", exit, 1)
-	shpEq(t, "requests", len(f.Prov.requests()), 3)
-	text := fmt.Sprint(e.Detail, "\n", strings.Join(e.Lines, "\n"))
-	for _, want := range []string{"15 min elapsed", "3 requests", budgetFigureLine} {
-		shpContains(t, "message", text, want)
-	}
-	if strings.Contains(text, "attempt ") {
-		t.Fatalf("no submission was refused, so no attempt is listed:\n%s", text)
+	reqs := f.Prov.requests()
+	shpEq(t, "requests", len(reqs), 4)
+	for i, want := range []string{"0 min", "20 min", "40 min", "60 min"} {
+		shpContains(t, fmt.Sprint("request ", i+1), shpBody(reqs[i]), "Time: "+want+" elapsed. Target: 15 minutes usual, 20 minutes upper end.")
 	}
 	counts := shpNamed(f.events(), "shaping_turn_counts")
-	shpEq(t, "requests", counts[0]["requests"], any(float64(3)))
-	shpEq(t, "elapsed", counts[0]["elapsed_seconds"], any(float64(900)))
-	shapeAbsent(t, f)
-}
-
-func TestBudgetStopNamesTheLastRefusal(t *testing.T) {
-	w := responsesWire
-	both := map[string]any{"questions": []any{shpQuestion("Q?")}, "files": shpFiles()["files"]}
-	f := budgetFx(t, 8*time.Minute, w.shapeSubmit("bad", both), w.readReadme("r"), w.readReadme("r2"))
-	_, err := f.shape("Bound shaping.")
-	e := shpWantError(t, err, "shape", "invalid_output", "15-minute", 1)
-	text := fmt.Sprint(e.Detail, "\n", strings.Join(e.Lines, "\n"))
-	shpContains(t, "message", text, "2 requests")
-	shpContains(t, "message", text, "last refusal")
-	shpEq(t, "requests", len(f.Prov.requests()), 2)
+	shpEq(t, "counts", len(counts), 1)
+	if got, _ := counts[0]["elapsed_seconds"].(float64); got < 3600 {
+		t.Fatalf("elapsed_seconds = %v, want at least 3600", counts[0]["elapsed_seconds"])
+	}
+	for _, r := range reqs {
+		for _, gone := range []string{"remaining of the", "min remaining", "used its"} {
+			if strings.Contains(shpBody(r), gone) {
+				t.Fatalf("a request still says %q", gone)
+			}
+		}
+	}
 }
 
 func TestBudgetLetsTheInFlightRequestFinish(t *testing.T) {
@@ -117,7 +108,9 @@ func TestBudgetLetsTheInFlightRequestFinish(t *testing.T) {
 	}
 }
 
-func TestBudgetEndsTheExternalShapingBeforeTheNextRound(t *testing.T) {
+// TestElapsedTargetNeverRefusesTheNextExternalRound: a refused first round of 16 minutes does not
+// end the external shaping; the next round is made with the elapsed time and the target.
+func TestElapsedTargetNeverRefusesTheNextExternalRound(t *testing.T) {
 	parallel(t)
 	f := newShpFx(t)
 	f.useExternalShape()
@@ -128,74 +121,21 @@ func TestBudgetEndsTheExternalShapingBeforeTheNextRound(t *testing.T) {
 			clock.t = clock.t.Add(16 * time.Minute)
 			return result(bad)(n, root)
 		},
+		func(n int, root string) (executor.RoundResult, error) {
+			clock.t = clock.t.Add(30 * time.Minute)
+			return result(shpFiles())(n, root)
+		},
 		result(shpFiles()),
 	}}
 	f.newSession()
-	exit, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug,
+	Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug,
 		Request: "Add calc.is_even(n).", Client: f.Client, External: x.external(), Now: clock.now})
-	e := shpWantError(t, err, "shape", "invalid_output", "15-minute", 1)
-	shpEq(t, "exit", exit, 1)
-	shpEq(t, "rounds", len(x.inputs), 1)
-	lines := strings.Join(e.Lines, "\n")
-	shpContains(t, "message", lines, "last refusal")
-	shpContains(t, "message", lines, budgetFigureLine)
-	// The round took 960 s of the 900 s budget: the remaining budget is never below 0.
-	shpContains(t, "message", lines, "attempt 1: gate ")
-	shpContains(t, "message", lines, ", model request 960 s, Kogen checks 0 s, 0 s remaining")
+	if len(x.inputs) < 3 {
+		t.Fatalf("%d rounds, want at least 3", len(x.inputs))
+	}
+	shpContains(t, "round 2 feedback", x.inputs[1].Feedback, "Time: 16 min elapsed. Target: 15 minutes usual, 20 minutes upper end.")
+	shpContains(t, "round 3 feedback", x.inputs[2].Feedback, "Time: 46 min elapsed. Target: 15 minutes usual, 20 minutes upper end.")
 }
-
-// TestBudgetStopListsTheLastSubmissionChecks: a last submission that was checked without a gate
-// refusal is listed after the refused attempts, with 0 s remaining and the seconds over the budget.
-func TestBudgetStopListsTheLastSubmissionChecks(t *testing.T) {
-	parallel(t)
-	f := newShpFx(t)
-	f.useExternalShape()
-	clock := &shpClock{t: time.Unix(1_800_000_000, 0)}
-	bad := map[string]any{"questions": []any{shpQuestion("Q?")}, "files": shpFiles()["files"]}
-	advance := func(d time.Duration, next func(int, string) (executor.RoundResult, error)) func(int, string) (executor.RoundResult, error) {
-		return func(n int, root string) (executor.RoundResult, error) {
-			clock.t = clock.t.Add(d)
-			return next(n, root)
-		}
-	}
-	contractCalls := 0
-	review := result(map[string]any{"findings": []any{}, "environment": []any{}})
-	x := &shapeExec{t: t,
-		rounds: []func(int, string) (executor.RoundResult, error){
-			advance(10*time.Minute, result(bad)),
-			advance(4*time.Minute, result(shpFiles())),
-		},
-		contract: []func(int, string) (executor.RoundResult, error){
-			func(n int, root string) (executor.RoundResult, error) {
-				contractCalls++
-				if contractCalls == 1 {
-					clock.t = clock.t.Add(2 * time.Minute)
-				}
-				return review(n, root)
-			},
-		},
-	}
-	f.newSession()
-	_, err := Shape(context.Background(), f.S, ShapeInput{Project: f.Root, Tools: fixtureTools(f.S), Slug: shpSlug,
-		Request: "Add calc.is_even(n).", Client: f.Client, External: x.external(), Now: clock.now})
-	e := shpWantError(t, err, "shape", "invalid_output", "15-minute", 1)
-	var attempts []string
-	for _, l := range e.Lines {
-		if strings.HasPrefix(l, "attempt ") {
-			attempts = append(attempts, strings.ReplaceAll(l, "\n", " "))
-		}
-	}
-	want := []string{
-		"attempt 1: gate validation, model request 600 s, Kogen checks 0 s, 300 s remaining",
-		"attempt 2: gate contract, model request 240 s, Kogen checks 120 s, 0 s remaining, 60 s over",
-	}
-	if !slices.Equal(attempts, want) {
-		t.Fatalf("attempt lines:\n%s\nwant:\n%s", strings.Join(attempts, "\n"), strings.Join(want, "\n"))
-	}
-}
-
-// budgetFigureLine is the refusal line that states the shaping budget and names the other budget.
-const budgetFigureLine = "shaping budget: 900 s (15 min, wall-clock for the whole shaping, all rounds; the response_budget event is the separate limit on one provider response wait)"
 
 // withBudgetEnv sets KOGEN_SHAPE_BUDGET_MINUTES in the fixture's session environment; nil unsets it.
 func withBudgetEnv(f *shpFx, value *string) {
@@ -246,7 +186,7 @@ func TestBudgetEnvSetsTimeLineAndEvent(t *testing.T) {
 			if err != nil || exit != 0 {
 				t.Fatalf("exit %d: %v", exit, err)
 			}
-			want := fmt.Sprintf("Time: 0 min 10 s elapsed, %d min 50 s remaining of the %d-minute shaping budget.", c.minutes-1, c.minutes)
+			want := fmt.Sprintf("Time: 0 min 10 s elapsed. Target: %d minutes usual, %d minutes upper end.", c.minutes, c.minutes+5)
 			shpEq(t, "time line", budgetSecondLine(f), want)
 			counts := shpNamed(f.events(), "shaping_turn_counts")
 			shpEq(t, "events", len(counts), 1)
@@ -255,24 +195,18 @@ func TestBudgetEnvSetsTimeLineAndEvent(t *testing.T) {
 	}
 }
 
-func TestBudgetEnvSpentBoundary(t *testing.T) {
+// TestBudgetEnvChangesGuidanceOnly: whatever the configured minutes, a shaping whose wall clock is far
+// past the target makes every request.
+func TestBudgetEnvChangesGuidanceOnly(t *testing.T) {
 	parallel(t)
-	requests := func(value *string, seconds int) int {
-		steps := make([]shpStep, 10)
-		for i := range steps {
-			steps[i] = responsesWire.readReadme(fmt.Sprint("r", i))
-		}
-		f := budgetFx(t, time.Duration(seconds)*time.Second, steps...)
+	for _, value := range []*string{nil, budgetValue("5"), budgetValue("25"), budgetValue("45")} {
+		f := budgetFx(t, 50*time.Minute, responsesWire.readReadme("r1"), responsesWire.readReadme("r2"), responsesWire.shapeSubmit("ok", shpFiles()))
+		f.setReport("PASSED", 0)
 		withBudgetEnv(f, value)
-		f.shape("Bound shaping.")
-		return len(f.Prov.requests())
-	}
-	for _, c := range []struct {
-		value *string
-		secs  int
-		spent bool
-	}{{nil, 899, false}, {nil, 900, true}, {budgetValue("25"), 900, false}, {budgetValue("25"), 1499, false}, {budgetValue("25"), 1500, true}} {
-		shpEq(t, fmt.Sprintf("spent at %d s", c.secs), requests(c.value, c.secs) == 1, c.spent)
+		if exit, err := f.shape("Add calc.is_even(n)."); err != nil || exit != 0 {
+			t.Fatalf("exit %d: %v", exit, err)
+		}
+		shpEq(t, "requests", len(f.Prov.requests()), 3)
 	}
 }
 
@@ -295,10 +229,10 @@ func TestBudgetEnvIsNotSharedBetweenShapings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	shpContains(t, "25", budgetSecondLine(f), "of the 25-minute shaping budget.")
+	shpContains(t, "25", budgetSecondLine(f), "Target: 25 minutes usual, 30 minutes upper end.")
 	g, _, err := budgetRun(t, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	shpContains(t, "unset", budgetSecondLine(g), "of the 15-minute shaping budget.")
+	shpContains(t, "unset", budgetSecondLine(g), "Target: 15 minutes usual, 20 minutes upper end.")
 }
