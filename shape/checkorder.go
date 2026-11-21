@@ -40,7 +40,9 @@ func cutProblems(problems []string) []string {
 	cut := make([]string, len(problems))
 	for i, p := range problems {
 		if r := []rune(p); len(r) > 300 {
-			if at := strings.Index(p, " | why: "); at >= 0 {
+			if short, ok := cutRequestText(p); ok {
+				p = short
+			} else if at := strings.Index(p, " | why: "); at >= 0 {
 				why := []rune(p[at:])
 				why = why[:min(len(why), 150)]
 				p = string(r[:300-5-len(why)]) + " ... " + string(why)
@@ -51,6 +53,29 @@ func cutProblems(problems []string) []string {
 		cut[i] = p
 	}
 	return cut
+}
+
+// cutRequestText shortens the quoted request text of a "| request: ... | problem: ..." line to fit
+// 300 characters, with the cut marker, and keeps the problem and what follows it whole. It reports
+// false when the line has no such structure or the problem leaves no room for any request text.
+func cutRequestText(p string) (string, bool) {
+	const requestMark, problemMark = " | request: ", " | problem: "
+	start := strings.Index(p, requestMark)
+	if start < 0 {
+		return "", false
+	}
+	start += len(requestMark)
+	end := strings.Index(p[start:], problemMark)
+	if end < 0 {
+		return "", false
+	}
+	end += start
+	head, request, rest := []rune(p[:start]), []rune(p[start:end]), []rune(p[end:])
+	keep := 300 - len(head) - 5 - len(rest)
+	if keep <= 0 || keep >= len(request) {
+		return "", false
+	}
+	return string(head) + string(request[:keep]) + " ... " + string(rest), true
 }
 
 // runModelChecks runs the decision, literal and example checks together and waits for all of

@@ -1,0 +1,25 @@
+package shape
+
+import (
+	"encoding/json"
+	"os"
+	"testing"
+)
+
+// TestKeptRefusalFixHarness builds the refusal line of one kept property with the line's own
+// producer, passes it through the cut that records refusals, and writes both for the steps.
+func TestKeptRefusalFixHarness(t *testing.T) {
+	var in struct{ Property, Request, Problem string }
+	if err := json.Unmarshal([]byte(os.Getenv("SKRKFS_IN")), &in); err != nil {
+		t.Fatal(err)
+	}
+	line := controlsPropertyLine(propertyReport{property: in.Property, kind: "kept", request: in.Request}, in.Problem)
+	cut := cutProblems([]string{line})
+	out, err := json.Marshal(map[string]any{"line": line, "cut": cut})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(os.Getenv("SKRKFS_OUT"), out, 0o666); err != nil {
+		t.Fatal(err)
+	}
+}
