@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1106,4 +1107,58 @@ func TestControlsPatchWithWrongHunkCountsApplies(t *testing.T) {
 			t.Fatalf("lines = %q", lines)
 		}
 	})
+}
+
+// ---- a scenario field that repeats the Gherkin keyword ----
+
+func TestParseControlsScenarioKeyword(t *testing.T) {
+	const text = "Feature: Calc\n  Scenario: Add keeps working\n    Then k: add\n  Scenario Outline: Mul <a> times <b>\n    Then k: mul <a>\n    Examples:\n      | a | b |\n      | 2 | 3 |\n      | 3 | 3 |\n  Scenario: Scenario: odd\n    Then k: odd\n  Scenario: odd\n    Then k: odd\n"
+	scenarios, err := project.ParseGherkin(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	feature := strings.Split(text, "\n")
+	rules := controlsRules{steps: "features/steps"}
+	tests := []struct {
+		field, step string
+		scenario    string
+		witness     []int
+		problem     string
+	}{
+		{"Add keeps working", "Then k: add", "Add keeps working", []int{0}, ""},
+		{"Scenario: Add keeps working", "Then k: add", "Add keeps working", []int{0}, ""},
+		{"Scenario:   Add keeps working", "Then k: add", "Add keeps working", []int{0}, ""},
+		{"Mul <a> times <b>", "Then k: mul <a>", "Mul <a> times <b>", []int{1, 2}, ""},
+		{"Scenario Outline: Mul <a> times <b>", "Then k: mul <a>", "Mul <a> times <b>", []int{1, 2}, ""},
+		{"Scenario Template: Mul <a> times <b>", "Then k: mul <a>", "Mul <a> times <b>", []int{1, 2}, ""},
+		{"Scenario: odd", "Then k: odd", "Scenario: odd", []int{3}, ""},
+		{"odd", "Then k: odd", "odd", []int{4}, ""},
+		{"Scenario: Scenario: odd", "Then k: odd", "Scenario: odd", []int{3}, ""},
+		{"Missing", "Then k: add", "", nil, `scenario "Missing" is not a scenario of acceptance.feature`},
+		{"Scenario: Missing", "Then k: add", "", nil, `scenario "Scenario: Missing" is not a scenario of acceptance.feature`},
+		{"Scenario: Scenario: Add keeps working", "Then k: add", "", nil, `scenario "Scenario: Scenario: Add keeps working" is not a scenario of acceptance.feature`},
+		{"Scenario:Add keeps working", "Then k: add", "", nil, `scenario "Scenario:Add keeps working" is not a scenario of acceptance.feature`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.field, func(t *testing.T) {
+			raw := controlsJSON(`{"c.js":"y"}`, fmt.Sprintf(`{"name":"n1","scenario":%q,"step":%q,"files":{"c.js":"x"}}`, tt.field, tt.step))
+			cf, got := parseControls(raw, scenarios, feature, rules)
+			if tt.problem != "" {
+				want := `- controls.json: wrong implementation "n1": ` + tt.problem
+				if cf != nil || len(got) != 1 || got[0] != want {
+					t.Fatalf("controls %+v, problems %q, want %q", cf, got, want)
+				}
+				return
+			}
+			if len(got) != 0 || cf == nil || len(cf.wrong) != 1 {
+				t.Fatalf("controls %+v, problems %q", cf, got)
+			}
+			if cf.wrong[0].scenario != tt.scenario {
+				t.Fatalf("scenario = %q, want %q", cf.wrong[0].scenario, tt.scenario)
+			}
+			if w := controlsWitness(scenarios, cf.wrong[0], feature); !slices.Equal(w, tt.witness) {
+				t.Fatalf("witness = %v, want %v", w, tt.witness)
+			}
+		})
+	}
 }

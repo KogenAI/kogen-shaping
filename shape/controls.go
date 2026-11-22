@@ -184,6 +184,26 @@ func controlsScenarios(scenarios []project.Scenario, name string) []int {
 	return out
 }
 
+// controlsScenarioKeywords are the Gherkin keywords a scenario field may repeat from the scenario line.
+var controlsScenarioKeywords = []string{"Scenario Outline:", "Scenario Template:", "Scenario:"}
+
+// controlsResolve resolves a scenario field to the plain name of the scenario or outline it names
+// and its indices: by the name as written first, and only when that finds nothing with one leading
+// keyword removed (followed by whitespace). It returns no indices when nothing matches.
+func controlsResolve(scenarios []project.Scenario, field string) (string, []int) {
+	name := normalizeWhitespace(field)
+	if idx := controlsScenarios(scenarios, name); len(idx) > 0 {
+		return name, idx
+	}
+	for _, kw := range controlsScenarioKeywords {
+		if rest, ok := strings.CutPrefix(name, kw+" "); ok {
+			plain := normalizeWhitespace(rest)
+			return plain, controlsScenarios(scenarios, plain)
+		}
+	}
+	return name, nil
+}
+
 // controlsWitness are the indices of the scenarios a wrong implementation runs against: the
 // scenarios its scenario field names that contain its step, every example of an outline that has it.
 func controlsWitness(scenarios []project.Scenario, w controlsImpl, feature []string) []int {
@@ -296,11 +316,11 @@ func parseControls(raw []byte, scenarios []project.Scenario, feature []string, r
 		overlay, ps := rules.checkFiles(label, e.m["files"])
 		problems = append(problems, ps...)
 		scenario := normalizeWhitespace(e.scenario)
-		idx := controlsScenarios(scenarios, scenario)
+		plain, idx := controlsResolve(scenarios, scenario)
 		if len(idx) == 0 {
 			problems = append(problems, fmt.Sprintf("- controls.json: %s: scenario \"%s\" is not a scenario of acceptance.feature", label, scenario))
 		} else if !slices.ContainsFunc(idx, func(k int) bool { return len(controlsStepLines(scenarios[k], e.step, feature)) > 0 }) {
-			problem := fmt.Sprintf("- controls.json: %s: step \"%s\" is not a step of scenario \"%s\"", label, normalizeWhitespace(e.step), scenario)
+			problem := fmt.Sprintf("- controls.json: %s: step \"%s\" is not a step of scenario \"%s\"", label, normalizeWhitespace(e.step), plain)
 			for _, k := range idx {
 				for _, st := range scenarios[k].Steps {
 					if normalizeWhitespace(e.step) != "" && normalizeWhitespace(e.step) == normalizeWhitespace(st.Text) {
@@ -318,7 +338,7 @@ func parseControls(raw []byte, scenarios []project.Scenario, feature []string, r
 			}
 			problems = append(problems, problem)
 		}
-		cf.wrong = append(cf.wrong, controlsImpl{name: name, scenario: scenario, step: normalizeWhitespace(e.step), overlay: overlay})
+		cf.wrong = append(cf.wrong, controlsImpl{name: name, scenario: plain, step: normalizeWhitespace(e.step), overlay: overlay})
 	}
 	if len(problems) > 0 {
 		return nil, problems
