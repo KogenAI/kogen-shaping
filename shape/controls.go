@@ -910,6 +910,16 @@ func controlsPropertyLine(p propertyReport, reason string) string {
 	return fmt.Sprintf("- %s (%s) | request: %s | problem: %s", normalizeWhitespace(p.property), p.kind, normalizeWhitespace(p.request), reason)
 }
 
+// controlsUnnamedReason is the reason for a property that no wrong implementation names a
+// scenario of: the plain reason and one sentence saying what to add.
+func controlsUnnamedReason(kind string) string {
+	const reason = "no wrong implementation in controls.json names a scenario of it. "
+	if kind == "kept" {
+		return reason + "Add a wrong implementation to controls.json that breaks this unchanged behaviour and names a scenario of it and the step line that must reject it."
+	}
+	return reason + "Add a wrong implementation to controls.json that gets this property wrong and names a scenario of it and the step line that must reject it."
+}
+
 // controlsJudgeAll are the problem lines of the properties no wrong implementation is evidence
 // for, given the run results of every implementation (index 0 is the correct one, which ran the
 // whole feature; each wrong one ran only its witness).
@@ -958,7 +968,7 @@ func controlsJudgeAll(props []controlsProp, cf *controlsFile, scenarios []projec
 			continue
 		}
 		if len(reasons) == 0 {
-			reasons = []string{"no wrong implementation in controls.json names a scenario of it"}
+			reasons = []string{controlsUnnamedReason(p.report.kind)}
 		}
 		for _, r := range reasons {
 			lines = append(lines, controlsPropertyLine(p.report, r))

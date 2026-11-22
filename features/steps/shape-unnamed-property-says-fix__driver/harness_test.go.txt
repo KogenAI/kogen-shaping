@@ -1,0 +1,90 @@
+package shape
+
+import (
+	"encoding/json"
+	"os"
+	"testing"
+
+	"github.com/KogenAI/kogen-coordinator/project"
+)
+
+const unnamedFeature = "Feature: Calc\n  Scenario: Add keeps working\n    Then is-even: add of 2 and 3 is 5\n    And is-even: sub of 5 and 3 is 2\n  Scenario: Mul works\n    Then is-even: mul of 2 and 3 is 6\n"
+
+// TestUnnamedPropertyHarness judges one property of a two-scenario feature with
+// controlsJudgeAll, as the check of controls.json does, and writes the refusal lines it
+// returns and the same lines after the cut that records refusals.
+func TestUnnamedPropertyHarness(t *testing.T) {
+	var in struct{ Kind, Property, Request, Wrong string }
+	if err := json.Unmarshal([]byte(os.Getenv("SUPSF_IN")), &in); err != nil {
+		t.Fatal(err)
+	}
+	scenarios, err := project.ParseGherkin(unnamedFeature)
+	if err != nil {
+		t.Fatal(err)
+	}
+	feature := []string{}
+	for _, l := range splitLines(unnamedFeature) {
+		feature = append(feature, l)
+	}
+	idx := 0 // the property is the scenario "Add keeps working"
+	if in.Kind == "new" {
+		idx = 1
+	}
+	props := []controlsProp{{report: propertyReport{property: in.Property, kind: in.Kind, request: in.Request}, scenarios: []int{idx}}}
+	step := "/tmp/c/features/steps/is-even__steps.js"
+	stepFiles := []string{"features/steps/is-even__steps.js"}
+	failAt := func(line int) *controlsCase {
+		return &controlsCase{steps: []controlsStep{{line: line, status: "FAILED", kind: "AssertionError", message: "no", stack: "AssertionError: no\n    at W (" + step + ":1:1)"}}}
+	}
+	run := func(cases map[int]*controlsCase) controlsRunResult {
+		return controlsRunResult{cases: cases, complete: true, roots: []string{"/tmp/c"}}
+	}
+	passed := func(lines ...int) *controlsCase {
+		c := &controlsCase{}
+		for _, l := range lines {
+			c.steps = append(c.steps, controlsStep{line: l, status: "PASSED"})
+		}
+		return c
+	}
+	correct := run(map[int]*controlsCase{2: passed(3, 4), 5: passed(6)})
+	cf := &controlsFile{}
+	runs := []controlsRunResult{correct}
+	addWrong := controlsImpl{name: "w1", scenario: "Add keeps working", step: "Then is-even: add of 2 and 3 is 5"}
+	switch in.Wrong {
+	case "none":
+	case "another":
+		cf.wrong = []controlsImpl{addWrong}
+		runs = append(runs, run(map[int]*controlsCase{2: failAt(3)}))
+	case "incomplete":
+		cf.wrong = []controlsImpl{addWrong}
+		runs = append(runs, controlsRunResult{complete: false})
+	case "elsewhere":
+		cf.wrong = []controlsImpl{addWrong}
+		runs = append(runs, run(map[int]*controlsCase{2: failAt(4)}))
+	case "rejected":
+		cf.wrong = []controlsImpl{addWrong}
+		runs = append(runs, run(map[int]*controlsCase{2: failAt(3)}))
+	default:
+		t.Fatalf("unknown wrong %q", in.Wrong)
+	}
+	lines := controlsJudgeAll(props, cf, scenarios, feature, runs, stepFiles)
+	out, err := json.Marshal(map[string]any{"lines": lines, "cut": cutProblems(lines)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(os.Getenv("SUPSF_OUT"), out, 0o666); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func splitLines(s string) []string {
+	var out []string
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\n' {
+			out = append(out, s[start:i])
+			start = i + 1
+		}
+	}
+	return append(out, s[start:])
+}

@@ -222,7 +222,7 @@ func TestControlsJudgeAll(t *testing.T) {
 			t.Fatalf("lines = %q, want %q", lines, want)
 		}
 		lines = controlsJudgeAll(props, &controlsFile{wrong: cf.wrong[:1]}, scenarios, feature, []controlsRunResult{correct, w1}, stepFiles)
-		want = "- mul (new) | request: mul | problem: no wrong implementation in controls.json names a scenario of it"
+		want = "- mul (new) | request: mul | problem: no wrong implementation in controls.json names a scenario of it. Add a wrong implementation to controls.json that gets this property wrong and names a scenario of it and the step line that must reject it."
 		if len(lines) != 1 || lines[0] != want {
 			t.Fatalf("lines = %q, want %q", lines, want)
 		}
@@ -438,8 +438,8 @@ func TestWrongImplementationRealRuns(t *testing.T) {
 				`- sub keeps working (kept) | request: sub | problem: no pass is reachable: with the correct implementation in place, scenario "Sub keeps working" fails at "Then is-even: sub of 5 and 3 is 2": Expected values to be strictly equal:`}, 1},
 		{"no wrong implementation", controlsCandidate{feature: controlsCalcFeature(exact), steps: controlsExactDef, correct: correct},
 			[]string{
-				"- add keeps working (kept) | request: add | problem: no wrong implementation in controls.json names a scenario of it",
-				"- sub keeps working (kept) | request: sub | problem: no wrong implementation in controls.json names a scenario of it"}, 1},
+				"- add keeps working (kept) | request: add | problem: no wrong implementation in controls.json names a scenario of it. Add a wrong implementation to controls.json that breaks this unchanged behaviour and names a scenario of it and the step line that must reject it.",
+				"- sub keeps working (kept) | request: sub | problem: no wrong implementation in controls.json names a scenario of it. Add a wrong implementation to controls.json that breaks this unchanged behaviour and names a scenario of it and the step line that must reject it."}, 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
