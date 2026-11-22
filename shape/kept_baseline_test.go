@@ -119,3 +119,54 @@ func TestKeptBaselineRefusalCases(t *testing.T) {
 		t.Fatalf("transient red refused: %v", got)
 	}
 }
+
+func TestKeptBaselineBlockedStepsShareOneRefusal(t *testing.T) {
+	steps := func(ls ...int) []verify.StepRecord {
+		var out []verify.StepRecord
+		for _, l := range ls {
+			out = append(out, verify.StepRecord{Line: l})
+		}
+		return out
+	}
+	detail := "AssertionError: protected output lacks repaired text"
+	ready := func(name string, all []int, blocked ...int) verify.ScenarioResult {
+		d := detail
+		return verify.ScenarioResult{Name: name, Line: 1, Status: "failed", Detail: &d, Steps: steps(all...), UnexercisedSteps: steps(blocked...)}
+	}
+	// Property P names 6,5,4,3 of S: line 3 is red, 4 and 5 are blocked in both, 6 is not seen in the second.
+	kept := map[string][]int{"S": {6, 5, 4, 3}}
+	props := []propertyReport{{property: "P", kind: "kept", keptSteps: []int{6, 5, 4, 3}}}
+	a := keptStepStates(&verify.Ready{Scenarios: []verify.ScenarioResult{ready("S", []int{3, 4, 5, 6}, 4, 5, 6)}}, kept)
+	b := keptStepStates(&verify.Ready{Scenarios: []verify.ScenarioResult{ready("S", []int{3, 4, 5}, 4, 5)}}, kept)
+	got := keptBaselineRefusals(a, b, props)
+	if len(got) != 2 {
+		t.Fatalf("want 2 refusals: %v", got)
+	}
+	if !strings.Contains(got[0], "line 3 asserts unchanged behaviour but is red") || strings.Contains(got[0], "lines") {
+		t.Fatalf("red step: %s", got[0])
+	}
+	if !strings.Contains(got[1], "scenario \"S\" lines 4 and 5 is meant to assert unchanged behaviour") || strings.Contains(got[1], "6") {
+		t.Fatalf("blocked group: %s", got[1])
+	}
+
+	// Three blocked steps give one line with the failure text once; separate properties and scenarios stay apart.
+	kept = map[string][]int{"S": {3, 4, 5, 6}, "T": {13, 14}}
+	props = []propertyReport{
+		{property: "Alpha", kind: "kept", keptSteps: []int{3, 4, 5}},
+		{property: "Beta", kind: "kept", keptSteps: []int{6}},
+		{property: "Gamma", kind: "kept", keptSteps: []int{13, 14}},
+	}
+	obs := keptStepStates(&verify.Ready{Scenarios: []verify.ScenarioResult{ready("S", []int{2, 3, 4, 5, 6}, 3, 4, 5, 6), ready("T", []int{12, 13, 14}, 13, 14)}}, kept)
+	got = keptBaselineRefusals(obs, obs, props)
+	if len(got) != 3 {
+		t.Fatalf("want 3 refusals: %v", got)
+	}
+	for i, want := range []string{"- Alpha (kept)", "- Beta (kept)", "- Gamma (kept)"} {
+		if !strings.Contains(got[i], want) || strings.Count(got[i], detail) != 1 {
+			t.Fatalf("refusal %d: %s", i, got[i])
+		}
+	}
+	if !strings.Contains(got[0], "lines 3, 4 and 5 is meant") || !strings.Contains(got[1], "line 6 is meant") || !strings.Contains(got[2], "scenario \"T\" lines 13 and 14 is meant") {
+		t.Fatalf("lines: %v", got)
+	}
+}

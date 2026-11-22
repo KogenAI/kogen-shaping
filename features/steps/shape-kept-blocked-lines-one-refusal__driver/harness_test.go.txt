@@ -1,0 +1,72 @@
+package shape
+
+import (
+	"encoding/json"
+	"os"
+	"testing"
+
+	"github.com/KogenAI/kogen-verification/verify"
+)
+
+type skblorObservation struct {
+	Scenarios []struct {
+		Name        string
+		Status      string
+		Detail      string
+		Steps       []int
+		Unexercised []int
+	}
+}
+
+type skblorInput struct {
+	First, Second skblorObservation
+	Props         []struct {
+		Property  string
+		KeptSteps []int
+		Scenarios []string
+	}
+}
+
+func skblorReady(o skblorObservation) *verify.Ready {
+	r := &verify.Ready{}
+	for _, s := range o.Scenarios {
+		d := s.Detail
+		sc := verify.ScenarioResult{Name: s.Name, Line: 1, Status: s.Status, Detail: &d}
+		for _, l := range s.Steps {
+			sc.Steps = append(sc.Steps, verify.StepRecord{Line: l})
+		}
+		for _, l := range s.Unexercised {
+			sc.UnexercisedSteps = append(sc.UnexercisedSteps, verify.StepRecord{Line: l})
+		}
+		r.Scenarios = append(r.Scenarios, sc)
+	}
+	return r
+}
+
+// TestKeptBlockedLinesHarness runs keptStepStates and keptBaselineRefusals on the observations in
+// SKBLOR_IN and writes the refusals as JSON to SKBLOR_OUT.
+func TestKeptBlockedLinesHarness(t *testing.T) {
+	var in skblorInput
+	if err := json.Unmarshal([]byte(os.Getenv("SKBLOR_IN")), &in); err != nil {
+		t.Fatal(err)
+	}
+	kept := map[string][]int{}
+	var props []propertyReport
+	for _, p := range in.Props {
+		props = append(props, propertyReport{property: p.Property, kind: "kept", keptSteps: p.KeptSteps, scenarios: p.Scenarios})
+		for _, sc := range p.Scenarios {
+			kept[sc] = append(kept[sc], p.KeptSteps...)
+		}
+	}
+	got := keptBaselineRefusals(keptStepStates(skblorReady(in.First), kept), keptStepStates(skblorReady(in.Second), kept), props)
+	if got == nil {
+		got = []string{}
+	}
+	b, err := json.Marshal(map[string]any{"refusals": got})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(os.Getenv("SKBLOR_OUT"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
