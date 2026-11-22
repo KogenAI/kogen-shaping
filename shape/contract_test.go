@@ -173,7 +173,7 @@ func TestShapeBlockedReportRecognizesProtectedPathsMatchedByAGlob(t *testing.T) 
 	}
 	shpEq(t, "stdout", f.Stdout.String(), "shape/protected_conflict: required edits touch protected files: settings/check.cfg\n"+
 		"the requested verification definition cannot be changed in Build\n"+
-		"Next: revise the request, or review and commit .kogen/project.yaml outside Build, then shape again; preserve checks and actual check configuration. There is no protected-edit override.\n")
+		"Next: revise the request so it needs no edit to the files listed above, or review and commit those files outside Build, then shape again; preserve checks and actual check configuration. There is no protected-edit override.\n")
 	shpEq(t, "requests", len(f.Prov.requests()), 1)
 	if f.exists(".kogen/intents/glob-conflict/intent.md") || f.exists(".kogen/local/approvals/glob-conflict.json") || f.exists(".kogen/local/runs") {
 		t.Fatal("a blocked report writes no Intent, no approval and starts no run")

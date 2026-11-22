@@ -25,9 +25,10 @@ const kbrNone = "none of the reported paths is protected: withdraw the blocked r
 
 const kbrSome = "keep only the protected paths in the blocked report, with its reason, or withdraw the report and submit the Intent files if no protected edit is required"
 
-const kbrNext = "Next: revise the request, or review and commit .kogen/project.yaml outside Build, then shape again; preserve checks and actual check configuration. There is no protected-edit override.\n"
+const kbrNext = "Next: revise the request so it needs no edit to the files listed above, or review and commit those files outside Build, then shape again; preserve checks and actual check configuration. There is no protected-edit override.\n"
 
-const kbrBoth = "[\".kogen/project.yaml\", \"config/deploy.cfg\"]"
+const kbrAuto = "[\".kogen/project.yaml\", \".kogen/models.yaml\"]"
+const kbrBoth = "[\".kogen/project.yaml\", \".kogen/models.yaml\", \"config/deploy.cfg\"]"
 
 func kbrSet(list string) string {
 	return "protected paths under the current contract (configured protect patterns and automatic baseline): " + list
@@ -112,7 +113,7 @@ func kbrJudge(mode string, o kbrObs) []string {
 	case "automatic":
 		p = append(p, kbrWant(o, "b1", "invalid submission:\n"+
 			"blocked path calc.js"+kbrEditable+"\n"+
-			kbrSet("[\".kogen/project.yaml\"]")+"\n"+kbrNone+kbrNoRetain)...)
+			kbrSet(kbrAuto)+"\n"+kbrNone+kbrNoRetain)...)
 		result(0)
 		if !o.published {
 			p = append(p, "the files submitted after the refusal were not published")
@@ -145,7 +146,7 @@ func kbrGood() map[string]kbrObs {
 	o.exit, o.requests = 5, 3
 	g["malformed"] = o
 	o = untouched
-	o.outputs = map[string]string{"b1": "invalid submission:\nblocked path calc.js" + kbrEditable + "\n" + kbrSet("[\".kogen/project.yaml\"]") + "\n" + kbrNone + kbrNoRetain}
+	o.outputs = map[string]string{"b1": "invalid submission:\nblocked path calc.js" + kbrEditable + "\n" + kbrSet(kbrAuto) + "\n" + kbrNone + kbrNoRetain}
 	o.published, o.written, o.requests = true, true, 2
 	g["automatic"] = o
 	return g
@@ -197,7 +198,7 @@ func kbrBad() []struct {
 	})
 	add("malformed", "a wrong exit", func(o *kbrObs) { o.exit = 1 })
 	add("automatic", "an empty automatic set", func(o *kbrObs) {
-		o.outputs["b1"] = strings.Replace(o.outputs["b1"], "[\".kogen/project.yaml\"]", "[]", 1)
+		o.outputs["b1"] = strings.Replace(o.outputs["b1"], kbrAuto, "[]", 1)
 	})
 	add("automatic", "files not published", func(o *kbrObs) { o.published = false })
 	return out
