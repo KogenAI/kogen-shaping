@@ -920,6 +920,46 @@ func controlsUnnamedReason(kind string) string {
 	return reason + "Add a wrong implementation to controls.json that gets this property wrong and names a scenario of it and the step line that must reject it."
 }
 
+// controlsUnnamedFix is the fix line that follows the problem line of a property no wrong
+// implementation names a scenario of: it quotes the scenarios the review declared for the
+// property (at most three, then the count of the rest), or says to add one when none is declared.
+func controlsUnnamedFix(p controlsProp, scenarios []project.Scenario) string {
+	const step = "whose step is the Then step that fails when the behaviour is broken"
+	name := normalizeWhitespace(p.report.property)
+	var quoted []string
+	for _, k := range p.scenarios {
+		if k >= 0 && k < len(scenarios) {
+			quoted = append(quoted, fmt.Sprintf("\"%s\"", normalizeWhitespace(scenarios[k].Name)))
+		}
+	}
+	if len(quoted) == 0 {
+		return fmt.Sprintf("- fix for property %s: add a scenario for it to acceptance.feature, then add a wrong implementation to controls.json whose scenario is that scenario and %s", name, step)
+	}
+	which := quoted[0]
+	switch {
+	case len(quoted) > 3:
+		which = fmt.Sprintf("one of %s and %d more", strings.Join(quoted[:3], ", "), len(quoted)-3)
+	case len(quoted) > 1:
+		which = fmt.Sprintf("one of %s and %s", strings.Join(quoted[:len(quoted)-1], ", "), quoted[len(quoted)-1])
+	}
+	fix := fmt.Sprintf("- fix for property %s: add a wrong implementation to controls.json whose scenario is %s and %s", name, which, step)
+	if p.report.kind == "kept" {
+		fix += "; the wrong implementation must break the kept behaviour"
+	}
+	return fix
+}
+
+// countProblemLines is the number of lines that are not fix lines.
+func countProblemLines(lines []string) int {
+	n := 0
+	for _, l := range lines {
+		if !strings.HasPrefix(l, "- fix for ") {
+			n++
+		}
+	}
+	return n
+}
+
 // controlsJudgeAll are the problem lines of the properties no wrong implementation is evidence
 // for, given the run results of every implementation (index 0 is the correct one, which ran the
 // whole feature; each wrong one ran only its witness).
@@ -967,11 +1007,15 @@ func controlsJudgeAll(props []controlsProp, cf *controlsFile, scenarios []projec
 		if satisfied {
 			continue
 		}
-		if len(reasons) == 0 {
+		unnamed := len(reasons) == 0
+		if unnamed {
 			reasons = []string{controlsUnnamedReason(p.report.kind)}
 		}
 		for _, r := range reasons {
 			lines = append(lines, controlsPropertyLine(p.report, r))
+		}
+		if unnamed {
+			lines = append(lines, controlsUnnamedFix(p, scenarios))
 		}
 	}
 	return lines
@@ -1114,7 +1158,7 @@ func (sh *shaping) wrongImplementationCheck(ctx context.Context, hash string) (c
 	var confirmed contractConfirmed
 	if len(lines) > 0 {
 		result = "refused"
-		confirmed = contractConfirmed{wrong: lines, wrongHeadline: wrongHeadline(len(lines), sh.slug, seconds)}
+		confirmed = contractConfirmed{wrong: lines, wrongHeadline: wrongHeadline(countProblemLines(lines), sh.slug, seconds)}
 	}
 	recorded := lines
 	if recorded == nil {
@@ -1270,7 +1314,7 @@ func (sh *shaping) withControlsProblems(confirmed contractConfirmed) (contractCo
 		return confirmed, err
 	}
 	confirmed.wrong = lines
-	confirmed.wrongHeadline = wrongHeadline(len(lines), sh.slug, int(controlsTimeCap/time.Second))
+	confirmed.wrongHeadline = wrongHeadline(countProblemLines(lines), sh.slug, int(controlsTimeCap/time.Second))
 	return confirmed, nil
 }
 

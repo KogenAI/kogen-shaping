@@ -104,7 +104,8 @@ func TestPropertyVerdictsAndText(t *testing.T) {
 		t.Errorf("confirm line %q", got)
 	}
 	lines := applyPropertyVerdicts(props, problems, 3, []contractVerdict{{3, "confirmed", "yes\n sure"}, {3, "refuted", "ignored"}, {9, "confirmed", "range"}})
-	if want := []string{"- A a (new) | request: make it fast | problem: no scenario exercises it | confirmed: yes sure"}; !reflect.DeepEqual(lines, want) {
+	if want := []string{"- A a (new) | request: make it fast | problem: no scenario exercises it | confirmed: yes sure",
+		"- fix for property A a: add a scenario whose Then step observes it, or, when no automatic step can observe it, record in a Decision that it needs human evaluation"}; !reflect.DeepEqual(lines, want) {
 		t.Errorf("lines %q", lines)
 	}
 	if problems[0].verdict != "confirmed" || problems[1].verdict != "refuted" || problems[1].confirmation != nil {
@@ -191,7 +192,8 @@ func TestContractCheckNumbersPropertyProblemsAfterContradictions(t *testing.T) {
 	shpContains(t, "confirmation", ccInput(reqs[1]), "\n\n# Findings to verify\n\n1. scenario: Even numbers")
 	shpContains(t, "confirmation", ccInput(reqs[1]), "\n2. property: is_even is kept (kept) | request: calc.is_even(n) | problem: no scenario exercises it")
 	feedback := shpOutputs(f.Prov.requests()[1])["c1"]
-	shpEq(t, "feedback", feedback, propertyHeadline(1)+"\n- is_even is kept (kept) | request: calc.is_even(n) | problem: no scenario exercises it | confirmed: no scenario")
+	shpEq(t, "feedback", feedback, propertyHeadline(1)+"\n- is_even is kept (kept) | request: calc.is_even(n) | problem: no scenario exercises it | confirmed: no scenario\n"+
+		"- fix for property is_even is kept: add a scenario whose Then step observes it, or, when no automatic step can observe it, record in a Decision that it needs human evaluation")
 	reviews := ccReviews(f)
 	if len(reviews) != 2 || reviews[0]["result"] != "refused" || reviews[0]["evidenced"] != float64(1) || reviews[0]["confirmed"] != float64(0) {
 		t.Fatalf("contract_review events %v", reviews)

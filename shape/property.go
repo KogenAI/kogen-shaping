@@ -260,6 +260,12 @@ func propertyItemLine(p propertyReport, pr propertyProblem, confirmation string)
 		normalizeWhitespace(p.property), p.kind, normalizeWhitespace(p.request), pr.text, normalizeWhitespace(confirmation))
 }
 
+// propertyUncoveredFix is the fix line that follows the item line of a confirmed property no
+// scenario exercises.
+func propertyUncoveredFix(p propertyReport) string {
+	return fmt.Sprintf("- fix for property %s: add a scenario whose Then step observes it, or, when no automatic step can observe it, record in a Decision that it needs human evaluation", normalizeWhitespace(p.property))
+}
+
 // propertyHeadline is the first line of the property part of a refusal of n confirmed problems.
 func propertyHeadline(n int) string {
 	return fmt.Sprintf("Property check: %d problem(s) with how acceptance covers the properties the request asks for; nothing was published. "+
@@ -293,6 +299,9 @@ func applyPropertyVerdicts(props []propertyReport, problems []propertyProblem, f
 		pr.confirmation = &why
 		if v.verdict == "confirmed" {
 			lines = append(lines, propertyItemLine(props[pr.prop], *pr, v.why))
+			if pr.reason == "uncovered" {
+				lines = append(lines, propertyUncoveredFix(props[pr.prop]))
+			}
 		}
 	}
 	return lines

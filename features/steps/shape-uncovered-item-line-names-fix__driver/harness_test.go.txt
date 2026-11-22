@@ -1,0 +1,71 @@
+package shape
+
+import (
+	"encoding/json"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/KogenAI/kogen-coordinator/project"
+)
+
+const uncoveredFeature = "Feature: Calc\n  Scenario: Add keeps working\n    Then is-even: add of 2 and 3 is 5\n  Scenario: Mul works\n    Then is-even: mul of 2 and 3 is 6\n  Scenario: Sub works\n    Then is-even: sub of 5 and 3 is 2\n  Scenario: Div works\n    Then is-even: div of 6 and 3 is 2\n  Scenario: Neg works\n    Then is-even: neg of 2 is -2\n"
+
+// TestUncoveredFixHarness judges one property either with controlsJudgeAll, the judging of
+// controls.json (Mode "controls"), or with applyPropertyVerdicts, the confirmed property
+// problems (Mode "property"), and writes the lines it returns to UIFIX_OUT.
+func TestUncoveredFixHarness(t *testing.T) {
+	var in struct {
+		Mode, Kind, Property, Request, Wrong, Reason, Text string
+		Declared                                           []int
+	}
+	if err := json.Unmarshal([]byte(os.Getenv("UIFIX_IN")), &in); err != nil {
+		t.Fatal(err)
+	}
+	var lines []string
+	if in.Mode == "property" {
+		props := []propertyReport{{property: in.Property, kind: in.Kind, request: in.Request}}
+		problems := []propertyProblem{{prop: 0, reason: in.Reason, text: in.Text}}
+		lines = applyPropertyVerdicts(props, problems, 1, []contractVerdict{{1, "confirmed", "no scenario"}})
+	} else {
+		scenarios, err := project.ParseGherkin(uncoveredFeature)
+		if err != nil {
+			t.Fatal(err)
+		}
+		feature := strings.Split(uncoveredFeature, "\n")
+		props := []controlsProp{{report: propertyReport{property: in.Property, kind: in.Kind, request: in.Request}, scenarios: in.Declared}}
+		step := "/tmp/c/features/steps/is-even__steps.js"
+		stepFiles := []string{"features/steps/is-even__steps.js"}
+		run := func(cases map[int]*controlsCase) controlsRunResult {
+			return controlsRunResult{cases: cases, complete: true, roots: []string{"/tmp/c"}}
+		}
+		passed := func(line int) *controlsCase {
+			return &controlsCase{steps: []controlsStep{{line: line, status: "PASSED"}}}
+		}
+		failAt := func(line int) *controlsCase {
+			return &controlsCase{steps: []controlsStep{{line: line, status: "FAILED", kind: "AssertionError", message: "no", stack: "AssertionError: no\n    at W (" + step + ":1:1)"}}}
+		}
+		correct := run(map[int]*controlsCase{2: passed(3), 4: passed(5), 6: passed(7), 8: passed(9), 10: passed(11)})
+		cf := &controlsFile{}
+		runs := []controlsRunResult{correct}
+		switch in.Wrong {
+		case "none":
+		case "another":
+			cf.wrong = []controlsImpl{{name: "w1", scenario: "Neg works", step: "Then is-even: neg of 2 is -2"}}
+			runs = append(runs, run(map[int]*controlsCase{10: failAt(11)}))
+		case "rejected":
+			cf.wrong = []controlsImpl{{name: "w1", scenario: "Add keeps working", step: "Then is-even: add of 2 and 3 is 5"}}
+			runs = append(runs, run(map[int]*controlsCase{2: failAt(3)}))
+		default:
+			t.Fatalf("unknown wrong %q", in.Wrong)
+		}
+		lines = controlsJudgeAll(props, cf, scenarios, feature, runs, stepFiles)
+	}
+	out, err := json.Marshal(map[string]any{"lines": lines})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(os.Getenv("UIFIX_OUT"), out, 0o666); err != nil {
+		t.Fatal(err)
+	}
+}

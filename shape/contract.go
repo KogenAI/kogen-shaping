@@ -474,7 +474,7 @@ func contractFeedback(c contractConfirmed) string {
 		out = append(append(out, environmentHeadline(len(c.environment))), c.environment...)
 	}
 	if len(c.properties) > 0 {
-		out = append(append(out, propertyHeadline(len(c.properties))), c.properties...)
+		out = append(append(out, propertyHeadline(countProblemLines(c.properties))), c.properties...)
 	}
 	if len(c.wrong) > 0 {
 		out = append(append(out, c.wrongHeadline), c.wrong...)

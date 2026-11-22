@@ -223,8 +223,12 @@ func TestControlsJudgeAll(t *testing.T) {
 		}
 		lines = controlsJudgeAll(props, &controlsFile{wrong: cf.wrong[:1]}, scenarios, feature, []controlsRunResult{correct, w1}, stepFiles)
 		want = "- mul (new) | request: mul | problem: no wrong implementation in controls.json names a scenario of it. Add a wrong implementation to controls.json that gets this property wrong and names a scenario of it and the step line that must reject it."
-		if len(lines) != 1 || lines[0] != want {
-			t.Fatalf("lines = %q, want %q", lines, want)
+		wantFix := `- fix for property mul: add a wrong implementation to controls.json whose scenario is one of "Mul 2 times 3" and "Mul 3 times 3" and whose step is the Then step that fails when the behaviour is broken`
+		if len(lines) != 2 || lines[0] != want || lines[1] != wantFix {
+			t.Fatalf("lines = %q, want %q and %q", lines, want, wantFix)
+		}
+		if got, want := wrongHeadline(countProblemLines(lines), "x", 1), wrongHeadline(1, "x", 1); got != want {
+			t.Errorf("the headline counts the fix lines: %q", got)
 		}
 	})
 	t.Run("one example is enough for an outline", func(t *testing.T) {
@@ -439,7 +443,9 @@ func TestWrongImplementationRealRuns(t *testing.T) {
 		{"no wrong implementation", controlsCandidate{feature: controlsCalcFeature(exact), steps: controlsExactDef, correct: correct},
 			[]string{
 				"- add keeps working (kept) | request: add | problem: no wrong implementation in controls.json names a scenario of it. Add a wrong implementation to controls.json that breaks this unchanged behaviour and names a scenario of it and the step line that must reject it.",
-				"- sub keeps working (kept) | request: sub | problem: no wrong implementation in controls.json names a scenario of it. Add a wrong implementation to controls.json that breaks this unchanged behaviour and names a scenario of it and the step line that must reject it."}, 1},
+				`- fix for property add keeps working: add a wrong implementation to controls.json whose scenario is "Add keeps working" and whose step is the Then step that fails when the behaviour is broken; the wrong implementation must break the kept behaviour`,
+				"- sub keeps working (kept) | request: sub | problem: no wrong implementation in controls.json names a scenario of it. Add a wrong implementation to controls.json that breaks this unchanged behaviour and names a scenario of it and the step line that must reject it.",
+				`- fix for property sub keeps working: add a wrong implementation to controls.json whose scenario is "Sub keeps working" and whose step is the Then step that fails when the behaviour is broken; the wrong implementation must break the kept behaviour`}, 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1158,6 +1164,32 @@ func TestParseControlsScenarioKeyword(t *testing.T) {
 			}
 			if w := controlsWitness(scenarios, cf.wrong[0], feature); !slices.Equal(w, tt.witness) {
 				t.Fatalf("witness = %v, want %v", w, tt.witness)
+			}
+		})
+	}
+}
+
+func TestControlsUnnamedFix(t *testing.T) {
+	parallel(t)
+	scenarios := mustScenarios(t, "Feature: F\n  Scenario: A\n    Then s: a\n  Scenario: B\n    Then s: b\n  Scenario: C\n    Then s: c\n  Scenario: D\n    Then s: d\n  Scenario: E\n    Then s: e\n")
+	const step = "whose step is the Then step that fails when the behaviour is broken"
+	tests := []struct {
+		name, kind string
+		declared   []int
+		want       string
+	}{
+		{"one", "new", []int{0}, `- fix for property p: add a wrong implementation to controls.json whose scenario is "A" and ` + step},
+		{"one kept", "kept", []int{1}, `- fix for property p: add a wrong implementation to controls.json whose scenario is "B" and ` + step + "; the wrong implementation must break the kept behaviour"},
+		{"two", "new", []int{0, 1}, `- fix for property p: add a wrong implementation to controls.json whose scenario is one of "A" and "B" and ` + step},
+		{"three", "new", []int{0, 1, 2}, `- fix for property p: add a wrong implementation to controls.json whose scenario is one of "A", "B" and "C" and ` + step},
+		{"five", "kept", []int{0, 1, 2, 3, 4}, `- fix for property p: add a wrong implementation to controls.json whose scenario is one of "A", "B", "C" and 2 more and ` + step + "; the wrong implementation must break the kept behaviour"},
+		{"none", "kept", nil, "- fix for property p: add a scenario for it to acceptance.feature, then add a wrong implementation to controls.json whose scenario is that scenario and " + step},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := controlsProp{report: propertyReport{property: "p", kind: tt.kind, request: "p"}, scenarios: tt.declared}
+			if got := controlsUnnamedFix(p, scenarios); got != tt.want {
+				t.Errorf("fix = %q, want %q", got, tt.want)
 			}
 		})
 	}

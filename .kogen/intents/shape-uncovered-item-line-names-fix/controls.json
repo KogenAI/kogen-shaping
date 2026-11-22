@@ -1,0 +1,1 @@
+{"deferred":"The correct implementation edits three large Go files (shape/controls.go, shape/property.go and the headline count in shape/contract.go) and their Go tests; patches against files of that size could not be written and checked inside the shaping budget, so the Build writes the implementation and the acceptance harness exercises it through the real functions."}
