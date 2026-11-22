@@ -177,13 +177,26 @@ func TestSelfcheckStderrRedactedBeforeTail(t *testing.T) {
 }
 
 func TestSelfcheckObserverDetail(t *testing.T) {
-	for _, tc := range []struct{ stderr, want string }{
-		{"", "exit 7, recorded exit 0"},
-		{"specific failure\n", "exit 7, recorded exit 0\nstderr: specific failure\n"},
+	for _, tc := range []struct{ stderr, stdout, want string }{
+		{"", "", "exit 7, recorded exit 0"},
+		{"specific failure\n", "", "exit 7, recorded exit 0\nstderr: specific failure\n"},
+		{"", "usage\n", "exit 7, recorded exit 0\nstdout: usage\n"},
+		{"err\n", "out\n", "exit 7, recorded exit 0\nstderr: err\nstdout: out\n"},
+		{"err", "out", "exit 7, recorded exit 0\nstderr: err\nstdout: out"},
 	} {
-		if got := selfcheckObserverDetail(7, 0, tc.stderr); got != tc.want {
+		if got := selfcheckObserverDetail(7, 0, tc.stderr, tc.stdout); got != tc.want {
 			t.Errorf("got %q, want %q", got, tc.want)
 		}
+	}
+}
+
+func TestSelfcheckObserverDetailStdoutRedactedBeforeTail(t *testing.T) {
+	redactor := verify.NewRedactor([]string{"TOKEN=boundary-secret-123456"}, "")
+	stdout := "boundary-secret-123456" + strings.Repeat("x", 4090) + "界"
+	detail := selfcheckObserverDetail(2, 0, "", redactor.Redact(stdout))
+	line := strings.TrimPrefix(detail, "exit 2, recorded exit 0\nstdout: ")
+	if strings.Contains(detail, "secret-123456") || len(line) > 4096 || !utf8.ValidString(line) || !strings.HasSuffix(line, "x界") {
+		t.Fatalf("stdout line must be redacted, valid and at most 4096 bytes: %d bytes", len(line))
 	}
 }
 

@@ -5,7 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -298,9 +301,18 @@ func (sh *shaping) observerItems(ctx context.Context, intent *project.Intent) ([
 			continue
 		}
 		for _, c := range d.Checks {
+			var stdout string
 			r, err := sh.ev.Probe(func() (verify.ProbeResult, error) {
-				r, err := (verify.Probe{Root: sh.root, Command: "{\n" + c.Command + "\n} >/dev/null", Tools: sh.rd.Tools}).Run(ctx, sh.s)
+				// Each control writes its stdout to a file of its own, outside the probe's project copy.
+				dir, err := os.MkdirTemp("", "kogen-observer-stdout-")
+				if err != nil {
+					return verify.ProbeResult{}, err
+				}
+				defer os.RemoveAll(dir)
+				file := filepath.Join(dir, "stdout")
+				r, err := (verify.Probe{Root: sh.root, Command: "{\n" + c.Command + "\n} >" + shellQuote(file), Tools: sh.rd.Tools}).Run(ctx, sh.s)
 				r.Output = redactor.Redact(r.Output)
+				stdout = redactor.Redact(readTail(file, selfcheckStdoutRead))
 				return r, err
 			})
 			if err != nil {
@@ -308,7 +320,7 @@ func (sh *shaping) observerItems(ctx context.Context, intent *project.Intent) ([
 			}
 			it := verify.StepItem{Check: "observer", Target: d.ID + " " + c.Name, OK: r.Status == c.Exit && !r.TimedOut}
 			if !it.OK {
-				it.Detail = selfcheckObserverDetail(r.Status, c.Exit, r.Output)
+				it.Detail = selfcheckObserverDetail(r.Status, c.Exit, r.Output, stdout)
 				if r.TimedOut {
 					it.Detail += fmt.Sprintf(", timed out: %s/%s (%v) exceeds the %d-second limit", d.ID, c.Name, d.Observers, int(verify.ProbeTimeout.Seconds()))
 				}
@@ -331,10 +343,46 @@ func selfcheckStderrTail(stderr string) string {
 	return stderr
 }
 
-func selfcheckObserverDetail(actual, expected int, stderr string) string {
+// selfcheckStdoutRead bounds how much of a control's stdout is read back before redaction.
+const selfcheckStdoutRead = 1 << 20
+
+// readTail returns the last max bytes of a file, from a character boundary; "" when it cannot be read.
+func readTail(path string, max int64) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	if st, err := f.Stat(); err == nil && st.Size() > max {
+		if _, err := f.Seek(st.Size()-max, io.SeekStart); err != nil {
+			return ""
+		}
+	}
+	b, _ := io.ReadAll(f)
+	tail := string(b)
+	for len(tail) > 0 && !utf8.RuneStart(tail[0]) {
+		tail = tail[1:]
+	}
+	return tail
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// selfcheckObserverDetail is the detail of a control whose exit code differs from the recorded one:
+// the exit line, then the stderr line and the stdout line when they are not empty. Both texts are
+// already redacted.
+func selfcheckObserverDetail(actual, expected int, stderr, stdout string) string {
 	detail := fmt.Sprintf("exit %d, recorded exit %d", actual, expected)
 	if tail := selfcheckStderrTail(stderr); tail != "" {
 		detail += "\nstderr: " + tail
+	}
+	if tail := selfcheckStderrTail(stdout); tail != "" {
+		if !strings.HasSuffix(detail, "\n") {
+			detail += "\n"
+		}
+		detail += "stdout: " + tail
 	}
 	return detail
 }

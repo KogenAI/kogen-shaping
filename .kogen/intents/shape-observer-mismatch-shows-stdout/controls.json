@@ -1,0 +1,1 @@
+{"deferred":"The stdout of the control cannot be told from its stderr in the probe's combined output, so the correct implementation needs a new capture mechanism in the probe command of shape/stepcheck.go that this shaping session could not build and probe within its time budget; the Build writes it and the acceptance scenarios exercise it."}
