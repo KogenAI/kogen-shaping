@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -144,9 +145,22 @@ func auditPayload(args map[string]any) (map[string]any, auditReport, string) {
 	return rest, rep, ""
 }
 
-// auditInventedFix is the remedy a refused invented literal is given.
+var (
+	auditPathLiteral = regexp.MustCompile(`^[^\s/]*(/[^\s/]*)+\.[A-Za-z0-9]+$`)
+	auditNameLiteral = regexp.MustCompile(`^[A-Za-z0-9_.]+$`)
+)
+
+// auditInventedFix is the remedy a refused invented literal is given, chosen by the kind of the
+// literal: a file path, a name of code the request asks to add, or any other literal.
 func auditInventedFix(literal string) string {
-	return fmt.Sprintf("- fix for invented literal \"%s\": find it at run time (for example find the form or link by its visible text), assert only what the request states, or move it to a Decision and stop asserting it", auditOneLine(literal))
+	lit := auditOneLine(literal)
+	switch {
+	case auditPathLiteral.MatchString(lit):
+		return fmt.Sprintf("- fix for invented literal \"%s\": list the directory at run time, drive the file found there and do not assert the file name", lit)
+	case strings.HasPrefix(lit, "alias ") || auditNameLiteral.MatchString(lit):
+		return fmt.Sprintf("- fix for invented literal \"%s\": record the name in a Decision of intent.md as the Shaper choice for the new code, so the approval card lists it, and assert only the behaviour", lit)
+	}
+	return fmt.Sprintf("- fix for invented literal \"%s\": find it at run time (for example find the form or link by its visible text), assert only what the request states, or move it to a Decision and stop asserting it", lit)
 }
 
 func auditOneLine(s string) string { return normalizeWhitespace(s) }

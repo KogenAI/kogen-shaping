@@ -65,3 +65,46 @@ func TestAuditFailureLinesCountOnlyFailingScenariosWithThenAssertions(t *testing
 		t.Fatalf("a guarantee the request does not contain counted: %q", lines)
 	}
 }
+
+func TestAuditInventedFixChoosesRemedyByLiteralKind(t *testing.T) {
+	parallel(t)
+	defaultFix := func(l string) string {
+		return `- fix for invented literal "` + l + `": find it at run time (for example find the form or link by its visible text), assert only what the request states, or move it to a Decision and stop asserting it`
+	}
+	for _, l := range []string{"test/acceptance/external-stall-outcome.test.cjs", "a/b.js"} {
+		fix := auditInventedFix(l)
+		for _, want := range []string{`"` + l + `"`, "list the directory at run time", "do not assert the file name"} {
+			if !strings.Contains(fix, want) {
+				t.Errorf("path literal %q: fix %q lacks %q", l, fix, want)
+			}
+		}
+		if strings.Contains(fix, "visible text") {
+			t.Errorf("path literal %q: fix %q names visible text", l, fix)
+		}
+	}
+	for _, l := range []string{"alias Studio.Loop.Fairness", "hard_quota", "Studio.Loop"} {
+		fix := auditInventedFix(l)
+		for _, want := range []string{`"` + l + `"`, "Decision of intent.md", "Shaper choice", "approval card", "assert only the behaviour"} {
+			if !strings.Contains(fix, want) {
+				t.Errorf("code name %q: fix %q lacks %q", l, fix, want)
+			}
+		}
+		for _, bad := range []string{"visible text", "list the directory"} {
+			if strings.Contains(fix, bad) {
+				t.Errorf("code name %q: fix %q contains %q", l, fix, bad)
+			}
+		}
+	}
+	for _, l := range []string{
+		"The table has one column each for Shape, Build and Review",
+		"a path with/space.txt",
+		"dir/file",
+		"dir/",
+		"Save changes",
+		"",
+	} {
+		if got := auditInventedFix(l); got != defaultFix(l) {
+			t.Errorf("literal %q: fix %q, want the default sentence", l, got)
+		}
+	}
+}
