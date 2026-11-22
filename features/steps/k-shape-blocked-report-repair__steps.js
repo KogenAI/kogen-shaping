@@ -25,7 +25,7 @@ const kbrNone = "none of the reported paths is protected: withdraw the blocked r
 
 const kbrSome = "keep only the protected paths in the blocked report, with its reason, or withdraw the report and submit the Intent files if no protected edit is required"
 
-const kbrNext = "Next: revise the request so it needs no edit to the files listed above, or review and commit those files outside Build, then shape again; preserve checks and actual check configuration. There is no protected-edit override.\n"
+const kbrNext = "Next: revise the request, or review and commit .kogen/project.yaml outside Build, then shape again; preserve checks and actual check configuration. There is no protected-edit override.\n"
 
 const kbrAuto = "[\".kogen/project.yaml\", \".kogen/models.yaml\"]"
 const kbrBoth = "[\".kogen/project.yaml\", \".kogen/models.yaml\", \"config/deploy.cfg\"]"
