@@ -1,0 +1,139 @@
+package shape
+
+import (
+	"encoding/json"
+	"os"
+	"regexp"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/KogenAI/kogen-loop/sys"
+	"github.com/KogenAI/kogen-verification/verify"
+)
+
+// This supplied harness observes the shaper prompts, Shape and Evidence with fake clocks; it is not a test the implementation must write.
+func TestShapeTimeTargetKeepsSubmitEarlyObservation(t *testing.T) {
+	out := map[string]any{}
+	re := regexp.MustCompile(`Time: [^"\\]*\.`)
+	w := responsesWire
+	bad := func(p string) shpStep {
+		return w.shapeSubmit(p, map[string]any{"files": []any{map[string]any{"path": p, "content": "x\n"}}})
+	}
+	has := func(text string, parts ...string) bool {
+		for _, p := range parts {
+			if !strings.Contains(text, p) {
+				return false
+			}
+		}
+		return true
+	}
+	late := "submit the best complete package you have and spend later rounds only on the refusals Kogen names, with no new exploration of files you have not read."
+	gate := "A late package is still checked by every ordinary gate."
+	native := shaperPrompt("shaper")
+	out["native_prompt"] = map[string]any{
+		"first_rounds":             has(native, "submit a complete package in the first rounds"),
+		"late_instruction":         has(native, "Once the elapsed time stated in the turn is within about 3 minutes of the usual target or past it, "+late),
+		"late_package_checked":     has(native, gate),
+		"never_a_stop":             has(native, "Crossing the target is never a stop"),
+		"old_advice_sentence_gone": !has(native, "The target is advice, not a stop"),
+	}
+	ext15, ext25 := externalBriefFor(15*time.Minute), externalBriefFor(25*time.Minute)
+	out["external_guidance"] = map[string]any{
+		"first_rounds":             has(ext15, "submit a complete package in the first rounds"),
+		"late_instruction_15":      has(ext15, "Once the elapsed time stated in the round is within about 3 minutes of the usual target of 15 minutes or past it, "+late),
+		"late_instruction_25":      has(ext25, "Once the elapsed time stated in the round is within about 3 minutes of the usual target of 25 minutes or past it, "+late),
+		"late_package_checked":     has(ext15, gate),
+		"never_a_stop":             has(ext15, "Crossing the target is never a stop"),
+		"old_advice_sentence_gone": !has(ext15, "The target is advice, not a stop"),
+		"placeholders_filled":      !strings.Contains(ext15, "{{"),
+	}
+	// Three long rounds of 500 s each, two of them refused submissions, then a read round: a fourth request is made.
+	{
+		f := w.newShape(t, bad("a.go"), bad("b.go"), w.readReadme("r3"), w.readReadme("r4"))
+		clock := &shpClock{t: time.Unix(1_800_000_000, 0)}
+		f.Now = clock.now
+		f.Prov.route = func(req map[string]any) *shpStep {
+			if !decisionRequest(req) && !literalRequest(req) {
+				clock.t = clock.t.Add(500 * time.Second)
+			}
+			return nil
+		}
+		_, err := f.shape("Bound shaping.")
+		msg := ""
+		if err != nil {
+			msg = strings.ToLower(err.Error())
+			if e, ok := sys.AsError(err); ok {
+				msg += " " + strings.ToLower(e.Detail+" "+strings.Join(e.Lines, " "))
+			}
+		}
+		var lines []string
+		for _, r := range f.Prov.requests() {
+			all := re.FindAllString(shpBody(r), -1)
+			if len(all) > 0 {
+				lines = append(lines, all[len(all)-1])
+			}
+		}
+		if len(lines) > 4 {
+			lines = lines[:4]
+		}
+		out["rounds"] = map[string]any{"at_least_four_requests": len(f.Prov.requests()) >= 4, "first_four_time_lines": lines,
+			"names_budget_or_ceiling": strings.Contains(msg, "budget") || strings.Contains(msg, "ceiling")}
+	}
+	{
+		req := "The build must finish in under 120 seconds."
+		model := []literalItem{litItem("under 120 seconds", "request", "under 120 seconds", "required", "")}
+		status := func(pkg string) string {
+			items := withRequestLiterals(req, model)
+			ev, _ := literalOutcome(items, map[string]string{"request": req}, []packageFile{{"intent.md", pkg}}, verify.NewRedactor(nil, ""))
+			for _, raw := range ev["items"].([]any) {
+				m := raw.(map[string]any)
+				if m["literal"] == "under 120 seconds" {
+					return m["status"].(string)
+				}
+			}
+			return "absent"
+		}
+		out["literal_replay"] = map[string]any{"kept": status("The build finishes in under 120 seconds."), "weakened": status("The build finishes in under 125 seconds.")}
+	}
+	account := func(build func(ev *Evidence, clock *shpClock)) map[string]any {
+		ev, clock, dir := newTestEvidence(t)
+		ev.AccountTime()
+		build(ev, clock)
+		if err := ev.Finish(); err != nil {
+			t.Fatal(err)
+		}
+		got := shpNamed(readEvents(t, dir), "shape_time")
+		if len(got) != 1 {
+			t.Fatalf("shape_time events: %d", len(got))
+		}
+		return got[0]
+	}
+	round := func(ev *Evidence, clock *shpClock, ms int64) {
+		a := ev.Millis()
+		clock.advance(ms)
+		ev.ShaperRound(a, ev.Millis(), nil)
+	}
+	out["event_decision_only"] = account(func(ev *Evidence, clock *shpClock) {
+		round(ev, clock, 100000)
+		b := ev.Millis()
+		clock.advance(60000)
+		ev.Interval("model_checks", b, b+60000)
+		ev.CheckSpan(b, b+60000)
+	})
+	out["event_readiness_and_static"] = account(func(ev *Evidence, clock *shpClock) {
+		round(ev, clock, 100000)
+		b := ev.Millis()
+		clock.advance(320000)
+		ev.Interval("readiness", b, b+300000)
+		ev.Interval("static", b+200000, b+320000)
+		ev.CheckSpan(b, b+320000)
+	})
+	b, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(os.Getenv("STT_OUT"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
