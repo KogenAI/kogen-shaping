@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/KogenAI/kogen-coordinator/project"
 )
@@ -45,14 +46,14 @@ func (e *Evidence) RetainDocumentation(args map[string]any, text string) map[str
 }
 
 // DocumentationProgress are the two progress lines of a retained lookup: what was asked
-// (with line breaks in the reference made spaces) and how it ended; a retrieved search also
+// (with every control character in the reference made a space) and how it ended; a retrieved search also
 // names how many sources it returned.
 func DocumentationProgress(row map[string]any) (started, finished string) {
 	operation, _ := row["operation"].(string)
 	reference := "-"
 	for _, key := range []string{"url", "query"} {
 		if v, _ := row[key].(string); v != "" {
-			reference = strings.NewReplacer("\r", " ", "\n", " ").Replace(v)
+			reference = strings.Map(controlToSpace, v)
 			break
 		}
 	}
@@ -66,6 +67,14 @@ func DocumentationProgress(row map[string]any) (started, finished string) {
 		finished += " (" + strconv.Itoa(len(sources)) + noun + ")"
 	}
 	return "kogen: documentation: " + operation + " " + reference, finished
+}
+
+// controlToSpace maps every Unicode control character to one space and keeps all other runes.
+func controlToSpace(r rune) rune {
+	if unicode.IsControl(r) {
+		return ' '
+	}
+	return r
 }
 
 func documentationRecord(args map[string]any, text string) map[string]any {

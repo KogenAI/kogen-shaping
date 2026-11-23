@@ -1,0 +1,41 @@
+{
+ "correct": {
+  "files": {
+   "shape/documentation.go": {
+    "patch": "--- a/shape/documentation.go\n+++ b/shape/documentation.go\n@@ -8,6 +8,7 @@ import (\n \t\"slices\"\n \t\"strconv\"\n \t\"strings\"\n+\t\"unicode\"\n \n \t\"github.com/KogenAI/kogen-coordinator/project\"\n )\n@@ -52,7 +53,12 @@ func DocumentationProgress(row map[string]any) (started, finished string) {\n \treference := \"-\"\n \tfor _, key := range []string{\"url\", \"query\"} {\n \t\tif v, _ := row[key].(string); v != \"\" {\n-\t\t\treference = strings.NewReplacer(\"\\r\", \" \", \"\\n\", \" \").Replace(v)\n+\t\t\treference = strings.Map(func(r rune) rune {\n+\t\t\t\tif unicode.IsControl(r) {\n+\t\t\t\t\treturn ' '\n+\t\t\t\t}\n+\t\t\t\treturn r\n+\t\t\t}, v)\n \t\t\tbreak\n \t\t}\n \t}\n"
+   }
+  }
+ },
+ "wrong": [
+  {
+   "name": "escape-left",
+   "scenario": "Carriage return, line feed, tab, NUL and ESC become spaces",
+   "step": "Then documentation-progress-strips-controls: the started progress line is one line without control characters",
+   "files": {
+    "shape/documentation.go": {
+     "patch": "--- a/shape/documentation.go\n+++ b/shape/documentation.go\n@@ -54,7 +54,7 @@ func DocumentationProgress(row map[string]any) (started, finished string) {\n \tfor _, key := range []string{\"url\", \"query\"} {\n \t\tif v, _ := row[key].(string); v != \"\" {\n \t\t\treference = strings.Map(func(r rune) rune {\n-\t\t\t\tif unicode.IsControl(r) {\n+\t\t\t\tif unicode.IsControl(r) && r != 0x1b {\n \t\t\t\t\treturn ' '\n \t\t\t\t}\n \t\t\t\treturn r\n"
+    }
+   }
+  },
+  {
+   "name": "unicode-replaced",
+   "scenario": "Ordinary spaces and printable Unicode stay intact",
+   "step": "Then documentation-progress-strips-controls: the started progress line is \"kogen: documentation: search café  €5 — 日本語 😀\"",
+   "files": {
+    "shape/documentation.go": {
+     "patch": "--- a/shape/documentation.go\n+++ b/shape/documentation.go\n@@ -54,7 +54,7 @@ func DocumentationProgress(row map[string]any) (started, finished string) {\n \tfor _, key := range []string{\"url\", \"query\"} {\n \t\tif v, _ := row[key].(string); v != \"\" {\n \t\t\treference = strings.Map(func(r rune) rune {\n-\t\t\t\tif unicode.IsControl(r) {\n+\t\t\t\tif unicode.IsControl(r) || r > 0x7e {\n \t\t\t\t\treturn ' '\n \t\t\t\t}\n \t\t\t\treturn r\n"
+    }
+   }
+  },
+  {
+   "name": "line-breaks-dropped",
+   "scenario": "A line break in the reference still becomes one space",
+   "step": "Then documentation-progress-strips-controls: the started progress line is \"kogen: documentation: search missing provider\"",
+   "files": {
+    "shape/documentation.go": {
+     "patch": "--- a/shape/documentation.go\n+++ b/shape/documentation.go\n@@ -55,6 +55,9 @@ func DocumentationProgress(row map[string]any) (started, finished string) {\n \t\tif v, _ := row[key].(string); v != \"\" {\n \t\t\treference = strings.Map(func(r rune) rune {\n \t\t\t\tif unicode.IsControl(r) {\n+\t\t\t\t\tif r == '\\r' || r == '\\n' {\n+\t\t\t\t\t\treturn -1\n+\t\t\t\t\t}\n \t\t\t\t\treturn ' '\n \t\t\t\t}\n \t\t\t\treturn r\n"
+    }
+   }
+  }
+ ]
+}

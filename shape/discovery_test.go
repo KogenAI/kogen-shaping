@@ -366,6 +366,15 @@ func TestADocumentationLookupIsRetainedWithoutTheDocumentBody(t *testing.T) {
 	if started != "kogen: documentation: search missing provider" || finished != "kogen: documentation result: search unsupported" {
 		t.Errorf("progress %q / %q", started, finished)
 	}
+	for _, c := range []struct{ key, in, want string }{
+		{"query", "cache\r\n\t\x00\x1bcontrols\x7f\u0085end", "kogen: documentation: search cache     controls  end"},
+		{"url", "https://example.test/a\x1b[2Jb", "kogen: documentation: search https://example.test/a [2Jb"},
+		{"query", "café  €5 — 日本語 😀", "kogen: documentation: search café  €5 — 日本語 😀"},
+	} {
+		if s, _ := DocumentationProgress(map[string]any{"operation": "search", c.key: c.in}); s != c.want {
+			t.Errorf("progress for %q = %q, want %q", c.in, s, c.want)
+		}
+	}
 	if s, _ := DocumentationProgress(map[string]any{"operation": "fetch"}); s != "kogen: documentation: fetch -" {
 		t.Errorf("no reference %q", s)
 	}
