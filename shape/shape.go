@@ -713,9 +713,14 @@ type shaping struct {
 	decisionChecks    int                 // decision check calls made
 	decisionAnswers   decisionAnswerCache // the model answers of this run, by decision-check input
 	pendingMarks      []assumptionMark    // lines the last decision check found to be assumptions
-	notes             []string            // advisory notes for the shaper's next answer
-	decisionUsage     provider.Usage      // the native decision checks' tokens
-	decisionRounds    int                 // the external decision check sessions' rounds
+	// guaranteeReports maps each explicit guarantee a decision check reported as contradicted by a
+	// crash Decision to the first submission that reported it; guaranteeAsk is set when a second
+	// submission reported the same one.
+	guaranteeReports map[string]int
+	guaranteeAsk     *guaranteeConflict
+	notes            []string       // advisory notes for the shaper's next answer
+	decisionUsage    provider.Usage // the native decision checks' tokens
+	decisionRounds   int            // the external decision check sessions' rounds
 
 	rounds        []map[string]any // the questions and answers of the shaping state, in round order
 	literalChecks int              // literal check calls made
@@ -2233,6 +2238,15 @@ func (sh *shaping) cheapGates(ctx context.Context, files []string, hash string) 
 		staticRan := sh.staticLast != lastStatic && sh.staticLast != nil && len(sh.staticLast.Checks) > 0
 		run.overlapped = (staticRan && sh.overlapSince(run, "static", staticBefore)) || sh.overlapSince(run, "model_checks", modelBefore)
 	}
+	if ask := sh.guaranteeAsk; ask != nil {
+		// The same guarantee conflict, reported again: the caller decides, not another rewrite.
+		sh.collectBatch()
+		run.stop()
+		if err := sh.leaveDraftProposed(); err != nil {
+			return cheapResult{}, err
+		}
+		return cheapResult{text: "accepted: the guarantee conflict is put to the caller", out: outcome{kind: outQuestions, questions: []map[string]any{ask.question()}}, done: true}, nil
+	}
 	if held := sh.collectBatch(); len(held) > 0 {
 		return cheapResult{held: held, readiness: run}, nil
 	}
@@ -2246,6 +2260,36 @@ func (sh *shaping) cheapGates(ctx context.Context, files []string, hash string) 
 		return cheapResult{}, err
 	}
 	return cheapResult{evidenceHash: evidenceHash, readiness: run}, nil
+}
+
+// leaveDraftProposed puts the project files this run wrote back as they were: the draft is not
+// published while the caller's question is open. The draft stays complete under the shaping
+// folder's proposed directory, with the request in state.json.
+func (sh *shaping) leaveDraftProposed() error {
+	if err := sh.keepProposals(); err != nil {
+		return err
+	}
+	paths := sortedKeys(sh.originals)
+	for _, p := range paths {
+		o, file := sh.originals[p], filepath.Join(sh.root, p)
+		if o.absent {
+			if err := os.RemoveAll(file); err != nil {
+				return err
+			}
+		} else if err := os.WriteFile(file, o.content, 0o666); err != nil {
+			return err
+		}
+	}
+	for _, p := range paths {
+		// Directories this run created go with their files; os.Remove leaves any that is not empty.
+		for dir := filepath.Dir(filepath.Join(sh.root, p)); dir != sh.root && strings.HasPrefix(dir, sh.root); dir = filepath.Dir(dir) {
+			if os.Remove(dir) != nil {
+				break
+			}
+		}
+	}
+	sh.s.Puts(fmt.Sprintf("kogen: the draft is kept under %s: %s", proposedDir(sh.slug), strings.Join(sortedKeys(sh.proposed), ", ")))
+	return nil
 }
 
 // unwrittenTestsError is the refusal of a candidate whose acceptance runs named tests that did

@@ -567,10 +567,63 @@ func (sh *shaping) decisionCheckWithEvidence(ctx context.Context, intent, eviden
 		sh.refusedStatements = refusedStatements
 		sh.pendingMarks = normalizedMarks
 		sh.ev.Record(event)
+		sh.noteGuaranteeConflicts(items)
 		sh.pendingMarks = append(sh.pendingMarks, marks...)
 		sh.notes = append(sh.notes, notes...)
 	})
 	return lines, nil
+}
+
+// decisionCrashRe matches a statement that says what happens after a crash.
+var decisionCrashRe = regexp.MustCompile(`(?i)\bcrash`)
+
+// guaranteeConflict is a contradiction between an explicit guarantee of the request and a draft
+// Decision about a crash that two submissions of one run reported.
+type guaranteeConflict struct {
+	requestValue, intentValue string
+}
+
+// noteGuaranteeConflicts counts, once per submission, each contradicts item of the decision check
+// whose request_value is an explicit guarantee and whose statement mentions a crash. The same
+// guarantee value reported by a second submission of the run is the repeated conflict: the
+// shaper is not asked to rewrite it again, the caller is asked (guaranteeConflict.question).
+func (sh *shaping) noteGuaranteeConflicts(items []decisionItem) {
+	for _, it := range items {
+		if it.verdict != "contradicts" || !decisionGuaranteeRe.MatchString(it.requestValue) || !decisionCrashRe.MatchString(it.statement) {
+			continue
+		}
+		key := strings.ToLower(normalizeNotation(it.requestValue))
+		first, seen := sh.guaranteeReports[key]
+		if !seen {
+			if sh.guaranteeReports == nil {
+				sh.guaranteeReports = map[string]int{}
+			}
+			sh.guaranteeReports[key] = sh.submissions
+			continue
+		}
+		if first != sh.submissions && sh.guaranteeAsk == nil {
+			sh.guaranteeAsk = &guaranteeConflict{requestValue: normalizeNotation(it.requestValue), intentValue: normalizeNotation(it.intentValue)}
+			sh.ev.Record(map[string]any{"event": "guarantee_conflict_escalated", "request_value": it.requestValue, "intent_value": it.intentValue,
+				"first_submission": first, "submission": sh.submissions})
+		}
+	}
+}
+
+// question is the one question for the caller after a repeated guarantee conflict: which
+// crash behavior is required. Neither option is recommended.
+func (c *guaranteeConflict) question() map[string]any {
+	text := fmt.Sprintf("The request requires the guarantee %q, but the draft states %q for what happens after a crash. After a crash during a delivery that was not confirmed, which behavior is required?", c.requestValue, c.intentValue)
+	if c.intentValue == "" {
+		text = fmt.Sprintf("The request requires the guarantee %q, but the draft states a weaker behavior for what happens after a crash. After a crash during a delivery that was not confirmed, which behavior is required?", c.requestValue)
+	}
+	return map[string]any{
+		"question": text,
+		"kind":     "product",
+		"options": []any{
+			map[string]any{"label": "Retry the unconfirmed delivery (it may then arrive more than once)", "recommended": false},
+			map[string]any{"label": "Leave the unconfirmed delivery unresent (it may then not arrive at all)", "recommended": false},
+		},
+	}
 }
 
 // askDecisionCheck gives the decision check's input to the model, or to the external executor, and
