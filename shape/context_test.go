@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/KogenAI/kogen-coordinator/project"
+	"github.com/KogenAI/kogen-loop/sys"
 )
 
 func renderExcerpt(t *testing.T, bytes string) (map[string]any, string) {
@@ -378,6 +379,27 @@ func TestShapeCommonHelpers(t *testing.T) {
 	shpEq(t, "shape role", roles[0].Model, "gpt-6.1-sol")
 	shpEq(t, "exit of an unknown error", ExitCode(os.ErrNotExist), 70)
 	shpEq(t, "exit of an error", ExitCode(project.RequireIntentDir(t.TempDir(), "x")), 2)
+}
+
+func TestExitCodeOfWrappedKogenError(t *testing.T) {
+	parallel(t)
+	inner := &sys.Error{Class: "provider", Reason: "refused", Detail: "refused", Exit: 4}
+	wrapped := fmt.Errorf("outer: %w", fmt.Errorf("middle: %w", inner))
+	shpEq(t, "exit of a wrapped Kogen error", ExitCode(wrapped), 4)
+}
+
+func TestExitCodeOfWrappedInterruption(t *testing.T) {
+	parallel(t)
+	for signal, code := range map[string]int{"SIGINT": 130, "SIGTERM": 143} {
+		wrapped := fmt.Errorf("outer: %w", fmt.Errorf("middle: %w", &sys.Interrupted{Signal: signal}))
+		shpEq(t, "exit of a wrapped "+signal, ExitCode(wrapped), code)
+	}
+}
+
+func TestExitCodeOfWrappedUnrelatedError(t *testing.T) {
+	parallel(t)
+	wrapped := fmt.Errorf("outer: %w", fmt.Errorf("middle: %w", os.ErrNotExist))
+	shpEq(t, "exit of a wrapped unrelated error", ExitCode(wrapped), 70)
 }
 
 // Ports test/kogen/shape_context_test.exs "navigation has fixed shape across empty, small and

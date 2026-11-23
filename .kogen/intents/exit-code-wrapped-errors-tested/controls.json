@@ -1,0 +1,61 @@
+{
+ "correct": {
+  "files": {
+   "shape/context_test.go": {
+    "patch": "--- a/shape/context_test.go\n+++ b/shape/context_test.go\n@@ -10,6 +10,7 @@\n \t\"testing\"\n \n \t\"github.com/KogenAI/kogen-coordinator/project\"\n+\t\"github.com/KogenAI/kogen-loop/sys\"\n )\n \n func renderExcerpt(t *testing.T, bytes string) (map[string]any, string) {\n@@ -433,3 +434,24 @@\n \t\tt.Fatalf(\"a changed candidate keeps its tree: %v\", changed)\n \t}\n }\n+\n+func TestExitCodeOfAWrappedKogenError(t *testing.T) {\n+\tparallel(t)\n+\tkogen := sys.Fail(\"shape\", \"refused\", \"detail\", 4)\n+\twrapped := fmt.Errorf(\"outer: %w\", fmt.Errorf(\"middle: %w\", kogen))\n+\tshpEq(t, \"exit of a wrapped Kogen error\", ExitCode(wrapped), 4)\n+}\n+\n+func TestExitCodeOfAWrappedInterruption(t *testing.T) {\n+\tparallel(t)\n+\tfor signal, want := range map[string]int{\"SIGINT\": 130, \"SIGTERM\": 143, \"SIGHUP\": 129} {\n+\t\twrapped := fmt.Errorf(\"outer: %w\", fmt.Errorf(\"middle: %w\", &sys.Interrupted{Signal: signal}))\n+\t\tshpEq(t, \"exit of a wrapped interruption by \"+signal, ExitCode(wrapped), want)\n+\t}\n+}\n+\n+func TestExitCodeOfAnUnrelatedWrappedError(t *testing.T) {\n+\tparallel(t)\n+\twrapped := fmt.Errorf(\"outer: %w\", fmt.Errorf(\"middle: %w\", os.ErrNotExist))\n+\tshpEq(t, \"exit of an unrelated wrapped error\", ExitCode(wrapped), 70)\n+}\n"
+   }
+  }
+ },
+ "wrong": [
+  {
+   "name": "no-wrapped-kogen-error",
+   "scenario": "A direct type assertion for a Kogen error is rejected",
+   "step": "Then exit-code-wrapped-errors-tested: at least one such test fails",
+   "files": {
+    "shape/context_test.go": {
+     "patch": "--- a/shape/context_test.go\n+++ b/shape/context_test.go\n@@ -435,13 +435,6 @@\n \t}\n }\n \n-func TestExitCodeOfAWrappedKogenError(t *testing.T) {\n-\tparallel(t)\n-\tkogen := sys.Fail(\"shape\", \"refused\", \"detail\", 4)\n-\twrapped := fmt.Errorf(\"outer: %w\", fmt.Errorf(\"middle: %w\", kogen))\n-\tshpEq(t, \"exit of a wrapped Kogen error\", ExitCode(wrapped), 4)\n-}\n-\n func TestExitCodeOfAWrappedInterruption(t *testing.T) {\n \tparallel(t)\n \tfor signal, want := range map[string]int{\"SIGINT\": 130, \"SIGTERM\": 143, \"SIGHUP\": 129} {\n"
+    }
+   }
+  },
+  {
+   "name": "no-wrapped-interruption",
+   "scenario": "Missing interruption handling is rejected",
+   "step": "Then exit-code-wrapped-errors-tested: at least one such test fails",
+   "files": {
+    "shape/context_test.go": {
+     "patch": "--- a/shape/context_test.go\n+++ b/shape/context_test.go\n@@ -442,14 +442,6 @@\n \tshpEq(t, \"exit of a wrapped Kogen error\", ExitCode(wrapped), 4)\n }\n \n-func TestExitCodeOfAWrappedInterruption(t *testing.T) {\n-\tparallel(t)\n-\tfor signal, want := range map[string]int{\"SIGINT\": 130, \"SIGTERM\": 143, \"SIGHUP\": 129} {\n-\t\twrapped := fmt.Errorf(\"outer: %w\", fmt.Errorf(\"middle: %w\", &sys.Interrupted{Signal: signal}))\n-\t\tshpEq(t, \"exit of a wrapped interruption by \"+signal, ExitCode(wrapped), want)\n-\t}\n-}\n-\n func TestExitCodeOfAnUnrelatedWrappedError(t *testing.T) {\n \tparallel(t)\n \twrapped := fmt.Errorf(\"outer: %w\", fmt.Errorf(\"middle: %w\", os.ErrNotExist))\n"
+    }
+   }
+  },
+  {
+   "name": "interruption-unwrapped-only",
+   "scenario": "A direct type assertion for an interruption is rejected",
+   "step": "Then exit-code-wrapped-errors-tested: at least one such test fails",
+   "files": {
+    "shape/context_test.go": {
+     "patch": "--- a/shape/context_test.go\n+++ b/shape/context_test.go\n@@ -445,7 +445,7 @@\n func TestExitCodeOfAWrappedInterruption(t *testing.T) {\n \tparallel(t)\n \tfor signal, want := range map[string]int{\"SIGINT\": 130, \"SIGTERM\": 143, \"SIGHUP\": 129} {\n-\t\twrapped := fmt.Errorf(\"outer: %w\", fmt.Errorf(\"middle: %w\", &sys.Interrupted{Signal: signal}))\n+\t\twrapped := error(&sys.Interrupted{Signal: signal})\n \t\tshpEq(t, \"exit of a wrapped interruption by \"+signal, ExitCode(wrapped), want)\n \t}\n }\n"
+    }
+   }
+  },
+  {
+   "name": "interruption-sigint-only",
+   "scenario": "A fixed code for every interruption is rejected",
+   "step": "Then exit-code-wrapped-errors-tested: at least one such test fails",
+   "files": {
+    "shape/context_test.go": {
+     "patch": "--- a/shape/context_test.go\n+++ b/shape/context_test.go\n@@ -444,7 +444,7 @@\n \n func TestExitCodeOfAWrappedInterruption(t *testing.T) {\n \tparallel(t)\n-\tfor signal, want := range map[string]int{\"SIGINT\": 130, \"SIGTERM\": 143, \"SIGHUP\": 129} {\n+\tfor signal, want := range map[string]int{\"SIGINT\": 130} {\n \t\twrapped := fmt.Errorf(\"outer: %w\", fmt.Errorf(\"middle: %w\", &sys.Interrupted{Signal: signal}))\n \t\tshpEq(t, \"exit of a wrapped interruption by \"+signal, ExitCode(wrapped), want)\n \t}\n"
+    }
+   }
+  },
+  {
+   "name": "no-wrapped-unrelated",
+   "scenario": "Treating any wrapped error as a Kogen error is rejected",
+   "step": "Then exit-code-wrapped-errors-tested: at least one such test fails",
+   "files": {
+    "shape/context_test.go": {
+     "patch": "--- a/shape/context_test.go\n+++ b/shape/context_test.go\n@@ -449,9 +449,3 @@\n \t\tshpEq(t, \"exit of a wrapped interruption by \"+signal, ExitCode(wrapped), want)\n \t}\n }\n-\n-func TestExitCodeOfAnUnrelatedWrappedError(t *testing.T) {\n-\tparallel(t)\n-\twrapped := fmt.Errorf(\"outer: %w\", fmt.Errorf(\"middle: %w\", os.ErrNotExist))\n-\tshpEq(t, \"exit of an unrelated wrapped error\", ExitCode(wrapped), 70)\n-}\n"
+    }
+   }
+  }
+ ]
+}
