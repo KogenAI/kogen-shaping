@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -453,5 +454,70 @@ func TestNavigationHasFixedShapeAcrossEmptySmallAndLargeCandidateTrees(t *testin
 	_, changed, _ := Navigation(f.Repo)
 	if changed["revision"].(map[string]any)["tree"] == before["revision"].(map[string]any)["tree"] || changed["revision"].(map[string]any)["head"] != head {
 		t.Fatalf("a changed candidate keeps its tree: %v", changed)
+	}
+}
+
+// shellArguments evaluates quoted as the arguments of a /bin/sh command and returns the arguments
+// the shell read. The environment holds MARKER, the path that a command substitution would create.
+func shellArguments(t *testing.T, quoted, marker string) []string {
+	t.Helper()
+	cmd := exec.Command("/bin/sh", "-c", "set -- "+quoted+"; for a in \"$@\"; do printf '%s\\0' \"$a\"; done")
+	cmd.Env = append(os.Environ(), "MARKER="+marker)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("/bin/sh rejected %q: %v\n%s", quoted, err, out)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00")
+}
+
+func TestShellQuoteGivesOneEqualArgument(t *testing.T) {
+	parallel(t)
+	for _, value := range []string{"", " ", "two words", "  leading and trailing  ", "a\tb", "it's", "'", "''", "'quoted'", "a'b'c d", `\'`} {
+		got := shellArguments(t, ShellQuote(value), "")
+		if len(got) != 1 || got[0] != value {
+			t.Fatalf("ShellQuote(%q) = %q reads as %q, want exactly one argument equal to the value", value, ShellQuote(value), got)
+		}
+	}
+}
+
+func TestShellQuoteKeepsShellSyntaxLiteral(t *testing.T) {
+	parallel(t)
+	marker := filepath.Join(t.TempDir(), "executed")
+	for _, value := range []string{
+		"$(touch $MARKER)",
+		"`touch $MARKER`",
+		"x; touch $MARKER",
+		"x && touch $MARKER",
+		"x | touch $MARKER",
+		"x > $MARKER",
+		"$MARKER",
+		`"$(touch $MARKER)"`,
+		`\$(touch $MARKER)`,
+		"*",
+		"~",
+		"#comment",
+		"a & b",
+		"it's $(touch $MARKER)",
+	} {
+		got := shellArguments(t, ShellQuote(value), marker)
+		if len(got) != 1 || got[0] != value {
+			t.Fatalf("ShellQuote(%q) = %q reads as %q, want exactly one argument equal to the value", value, ShellQuote(value), got)
+		}
+		if _, err := os.Stat(marker); err == nil {
+			t.Fatalf("ShellQuote(%q) = %q executed a command: %s exists", value, ShellQuote(value), marker)
+		}
+	}
+}
+
+func TestShellQuoteKeepsLineBreaksInOneArgument(t *testing.T) {
+	parallel(t)
+	for _, value := range []string{"\n", "a\nb", "a\n\nb\n", "line one\r\nline two", "it's\nnot $(touch $MARKER)\n"} {
+		got := shellArguments(t, ShellQuote(value), filepath.Join(t.TempDir(), "executed"))
+		if len(got) != 1 || got[0] != value {
+			t.Fatalf("ShellQuote(%q) = %q reads as %q, want exactly one argument equal to the value", value, ShellQuote(value), got)
+		}
 	}
 }
