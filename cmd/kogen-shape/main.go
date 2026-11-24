@@ -57,7 +57,13 @@ func run(args []string) result {
 	if err != nil {
 		return failure(2, fmt.Sprintf("read request: %v", err))
 	}
-	if !utf8.Valid(data) || strings.TrimSpace(string(data)) == "" {
+	if !utf8.Valid(data) {
+		if *request == "-" {
+			return failure(2, "request from stdin must be UTF-8 text")
+		}
+		return failure(2, fmt.Sprintf("request file %s must be UTF-8 text", *request))
+	}
+	if strings.TrimSpace(string(data)) == "" {
 		return failure(2, "request must be nonempty UTF-8 text")
 	}
 	s := sys.New()
