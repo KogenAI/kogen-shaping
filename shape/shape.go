@@ -2879,7 +2879,7 @@ func normalPath(p string) bool {
 func (sh *shaping) printBlocked(res outcome) int {
 	sh.s.Puts("shape/protected_conflict: required edits touch protected files: " + strings.Join(res.paths, ", "))
 	sh.s.Puts(res.reason)
-	sh.s.Puts("Next: revise the request, or review and commit .kogen/project.yaml outside Build, then shape again; preserve checks and actual check configuration. There is no protected-edit override.")
+	sh.s.Puts("Next: revise the request so it needs no edit to the files listed above, or review and commit those files outside Build, then shape again; preserve checks and actual check configuration. There is no protected-edit override.")
 	return 1
 }
 

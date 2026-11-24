@@ -656,7 +656,7 @@ func TestShapeBlockedReportIsPrintedAndWritesNothing(t *testing.T) {
 	}
 	shpEq(t, "stdout", f.Stdout.String(), "shape/protected_conflict: required edits touch protected files: .kogen/project.yaml\n"+
 		"the requested check definition must change\n"+
-		"Next: revise the request, or review and commit .kogen/project.yaml outside Build, then shape again; preserve checks and actual check configuration. There is no protected-edit override.\n")
+		"Next: revise the request so it needs no edit to the files listed above, or review and commit those files outside Build, then shape again; preserve checks and actual check configuration. There is no protected-edit override.\n")
 	if f.exists(".kogen/intents/is-even") || f.exists(".kogen/local/approvals/is-even.json") {
 		t.Fatal("a blocked report writes no Intent and no approval")
 	}
