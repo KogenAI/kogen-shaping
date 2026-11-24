@@ -1,0 +1,47 @@
+package shape
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"testing"
+)
+
+func TestBlockedNextV3Observation(t *testing.T) {
+	var paths []any
+	var reason, protect string
+	switch os.Getenv("BNV3_MODE") {
+	case "glob":
+		paths, reason, protect = []any{"settings/check.cfg"}, "the requested verification definition cannot be changed in Build", "['settings/*.cfg']"
+	case "project":
+		paths, reason = []any{".kogen/project.yaml"}, "the requested check definition must change"
+	case "manifest":
+		paths, reason, protect = []any{"cli/go.mod", "cli/go.sum"}, "the module dependencies must change", "['cli/go.mod', 'cli/go.sum']"
+	default:
+		t.Fatal("unknown BNV3_MODE")
+	}
+	f := newShpFx(t, shpSubmit("b1", map[string]any{"blocked": map[string]any{"paths": paths, "reason": reason}}))
+	if protect != "" {
+		for _, p := range paths {
+			f.write(p.(string), "strict=true\n")
+		}
+		f.write(".kogen/project.yaml", "version: 1\ncommands:\n  checks: [{name: unit, run: 'true'}]\n  acceptance: {run: sh accept.sh, steps_dir: features/steps}\nprotect: "+protect+"\n")
+		f.git("add", "-A")
+		f.git("commit", "-qm", "Configure protected paths")
+	}
+	exit, err := f.shapeAs("blocked-next", "Change the protected files.")
+	problem := ""
+	if err != nil {
+		problem = err.Error()
+	}
+	observation := map[string]any{
+		"exit": exit, "error": problem, "stdout": f.Stdout.String(),
+		"intent":   f.exists(".kogen/intents/blocked-next"),
+		"approval": f.exists(".kogen/local/approvals/blocked-next.json"),
+	}
+	data, err := json.Marshal(observation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Println("BNV3-OBS:" + string(data))
+}
